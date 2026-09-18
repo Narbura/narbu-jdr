@@ -439,17 +439,21 @@ function setupMapInteractions(){
     if(selectedToken){selectedToken=null;render();}
   };
 
-  window.onmousemove=e=>{
+    window.onmousemove=e=>{
     if(panState){
       mapPan.x=panState.origX+(e.clientX-panState.startX); mapPan.y=panState.origY+(e.clientY-panState.startY);
       applyMapTransform(); return;
     }
     if(dragCandidate){
       dragCandidate.moved=true; const pt=mapPoint(e.clientX,e.clientY); const t=inst(dragCandidate.id);
-      if(t){
+      if(t && pt){
+        // CORRECTIF ICI : On sépare bien le X du Y pour que la base de données comprenne
         t.x=pt[0]; t.y=pt[1];
         const el=document.querySelector(`[data-token="${dragCandidate.id}"]`);
-        if(el){el.style.left=(pt[0]*S.map.cell+S.map.cell/2)+'px';el.style.top=(pt[1]*S.map.cell+S.map.cell/2)+'px';}
+        if(el){
+          el.style.left=(pt[0]*S.map.cell+S.map.cell/2)+'px';
+          el.style.top=(pt[1]*S.map.cell+S.map.cell/2)+'px';
+        }
       }
     }
   };
