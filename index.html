@@ -459,6 +459,7 @@ function setupMapInteractions(){
   };
 
   window.onmouseup=async ()=>{
+    const mapWrapEl = document.getElementById('mapWrap');
     if(panState){panState=null;wrap.classList.remove('panning');}
     if(dragCandidate){
       const t=inst(dragCandidate.id);
