@@ -121,6 +121,7 @@ body.stage-fullscreen .targeting-banner{top:64px}
 </aside>
 <main class="main">
 <header class="top"><h1 id="pageTitle">Table de jeu</h1><div class="actions"><button class="btn primary" onclick="render()">🔄 Rafraîchir</button></div></header>
+
 <section class="content" id="content"></section>
 </main>
 </div>
@@ -131,7 +132,7 @@ body.stage-fullscreen .targeting-banner{top:64px}
 
 <script>
 /* ============================= CONFIGURATION SUPABASE ============================= */
-const SUPABASE_URL = "https://supabase.co";
+const SUPABASE_URL = "https://hrnwadoceetyscndbkgx.supabase.co";
 const SUPABASE_KEY = "sb_publishable_Smcvfpk46VOcV5EBJAScuQ_kgv-KRw4";
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -214,7 +215,7 @@ let selectedToken=null;
 let activeAbility=null;
 let hoverCell=null;
 
-/* ============================= LOGIQUE RÉSEAU TIMING REEL ============================= */
+/* ============================= LOGIQUE RÉSEAU TEMPS REEL ============================= */
 async function initGameNetwork() {
   const resChars = await supabaseClient.from('characters').select('*');
   const resAbils = await supabaseClient.from('abilities').select('*');
@@ -231,6 +232,7 @@ async function initGameNetwork() {
     S.abilities = DEFAULT.abilities;
   }
 
+  // Écoute dynamique de Supabase Realtime
   supabaseClient.channel('table-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'instances' }, payload => {
       if (payload.eventType === 'INSERT') {
@@ -247,6 +249,8 @@ async function initGameNetwork() {
 
   render();
 }
+
+
 /* ============================= UTILITAIRES ============================= */
 function toast(t){const e=document.getElementById('toast');if(!e)return;e.textContent=t;e.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>e.classList.remove('show'),1800);}
 function esc(x){return String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
