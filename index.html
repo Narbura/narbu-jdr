@@ -217,20 +217,28 @@ let activeAbility=null;
 let hoverCell=null;
 
 /* ============================= LOGIQUE RÉSEAU TEMPS REEL ============================= */
+
+  /* ============================= LOGIQUE RÉSEAU TEMPS REEL ============================= */
 async function initGameNetwork() {
   const resChars = await supabaseClient.from('characters').select('*');
   const resAbils = await supabaseClient.from('abilities').select('*');
   const resInsts = await supabaseClient.from('instances').select('*');
 
+  // Si on a récupéré des données, on met à jour l'état local S
   if (resChars.data && resChars.data.length > 0) S.characters = resChars.data;
   if (resAbils.data && resAbils.data.length > 0) S.abilities = resAbils.data;
   if (resInsts.data) S.instances = resInsts.data;
 
-  if (!resChars.data || resChars.data.length === 0) {
-    await supabaseClient.from('characters').insert(DEFAULT.characters);
-    await supabaseClient.from('abilities').insert(DEFAULT.abilities);
-    S.characters = DEFAULT.characters;
-    S.abilities = DEFAULT.abilities;
+  // CORRECTIF ICI : On n'insère les données par défaut QUE si la base est strictement vide
+  if ((!resChars.data || resChars.data.length === 0) && (!resAbils.data || resAbils.data.length === 0)) {
+    try {
+      await supabaseClient.from('characters').insert(DEFAULT.characters);
+      await supabaseClient.from('abilities').insert(DEFAULT.abilities);
+      S.characters = DEFAULT.characters;
+      S.abilities = DEFAULT.abilities;
+    } catch (err) {
+      console.log("Données de base déjà initialisées.");
+    }
   }
 
   // Écoute dynamique de Supabase Realtime
@@ -248,8 +256,10 @@ async function initGameNetwork() {
     })
     .subscribe();
 
+  // On lance enfin le dessin de la carte
   render();
 }
+
 
 
 /* ============================= UTILITAIRES ============================= */
