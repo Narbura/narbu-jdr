@@ -134,10 +134,11 @@ const SUPABASE_URL = "https://hrnwadoceetyscndbkgx.supabase.co";
 const SUPABASE_KEY = "sb_publishable_Smcvfpk46VOcV5EBJAScuQ_kgv-KRw4";
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// 1. ON DÉCLARE LES VARIABLES EN PREMIER (Pour éviter le bug)
 let currentUser = null;
 let isSignUpMode = false;
 
-// Vérifier si un utilisateur est déjà connecté au chargement de la page
+// 2. LA VÉRIFICATION DE SESSION
 supabaseClient.auth.getSession().then(({ data: { session } }) => {
   if (session) {
     currentUser = session.user;
@@ -146,6 +147,7 @@ supabaseClient.auth.getSession().then(({ data: { session } }) => {
   }
 });
 
+// 3. LES FONCTIONS DE CONNEXION VIENNENT ENSUITE
 function toggleAuthMode(signUp) {
   isSignUpMode = signUp;
   document.getElementById('authDesc').textContent = signUp ? "Créez votre compte de joueur" : "Connectez-vous pour rejoindre la table de jeu";
