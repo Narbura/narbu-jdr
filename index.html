@@ -217,46 +217,60 @@ let activeAbility=null;
 let hoverCell=null;
 
 /* ============================= LOGIQUE RÉSEAU TEMPS REEL ============================= */
-
-  /* ============================= LOGIQUE RÉSEAU TEMPS REEL ============================= */
 async function initGameNetwork() {
-  const resChars = await supabaseClient.from('characters').select('*');
-  const resAbils = await supabaseClient.from('abilities').select('*');
-  const resInsts = await supabaseClient.from('instances').select('*');
+  try {
+    const resChars = await supabaseClient.from('characters').select('*');
+    const resAbils = await supabaseClient.from('abilities').select('*');
+    const resInsts = await supabaseClient.from('instances').select('*');
 
-  // Si on a récupéré des données, on met à jour l'état local S
-  if (resChars.data && resChars.data.length > 0) S.characters = resChars.data;
-  if (resAbils.data && resAbils.data.length > 0) S.abilities = resAbils.data;
-  if (resInsts.data) S.instances = resInsts.data;
+    if (resChars.data && resChars.data.length > 0) S.characters = resChars.data;
+    else {
+      console.error('Failed to fetch characters data from Supabase.');
+      S.characters = [];
+    }
 
-  // CORRECTIF ICI : On n'insère les données par défaut QUE si la base est strictement vide
-  if ((!resChars.data || resChars.data.length === 0) && (!resAbils.data || resAbils.data.length === 0)) {
-    try {
+    if (resAbils.data && resAbils.data.length > 0) S.abilities = resAbils.data;
+    else {
+      console.error('Failed to fetch abilities data from Supabase.');
+      S.abilities = [];
+    }
+
+    if (resInsts.data) S.instances = resInsts.data || [];
+    else {
+      console.error('Failed to fetch instances data from Supabase.');
+      S.instances = [];
+    }
+
+    if (!S.characters.length && !S.abilities.length) {
       await supabaseClient.from('characters').insert(DEFAULT.characters);
       await supabaseClient.from('abilities').insert(DEFAULT.abilities);
+
       S.characters = DEFAULT.characters;
       S.abilities = DEFAULT.abilities;
-    } catch (err) {
-      console.log("Données de base déjà initialisées.");
+
+      console.log('Default data inserted into Supabase.');
     }
+
+    // Écoute dynamique de Supabase Realtime
+    supabaseClient.channel('table-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'instances' }, payload => {
+        if (payload.eventType === 'INSERT') {
+          S.instances.push(payload.new);
+        } else if (payload.eventType === 'UPDATE') {
+          const idx = S.instances.findIndex(i => i.id === payload.new.id);
+          if (idx !== -1) S.instances[idx] = payload.new;
+        } else if (payload.eventType === 'DELETE') {
+          S.instances = S.instances.filter(i => i.id !== payload.old.id);
+        }
+        render();
+      })
+      .subscribe();
+
+    console.log('Game network initialized successfully.');
+  } catch (error) {
+    console.error('Error initializing game network:', error);
   }
 
-  // Écoute dynamique de Supabase Realtime
-  supabaseClient.channel('table-changes')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'instances' }, payload => {
-      if (payload.eventType === 'INSERT') {
-        S.instances.push(payload.new);
-      } else if (payload.eventType === 'UPDATE') {
-        const idx = S.instances.findIndex(i => i.id === payload.new.id);
-        if (idx !== -1) S.instances[idx] = payload.new;
-      } else if (payload.eventType === 'DELETE') {
-        S.instances = S.instances.filter(i => i.id !== payload.old.id);
-      }
-      render();
-    })
-    .subscribe();
-
-  // On lance enfin le dessin de la carte
   render();
 }
 
