@@ -1,0 +1,827 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NarbuDR — Prototype</title>
+<style>
+:root{
+  --bg:#111216; --panel:#191b20; --panel2:#20232a; --line:#343842;
+  --text:#f3f4f7; --muted:#9da3b0; --accent:#9b4dff; --accent2:#c084fc;
+  --danger:#ef6262; --success:#62d394; --gold:#e7b85c;
+}
+*{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 30% 0,#241b31 0,#111216 42%);color:var(--text);font:14px Inter,Segoe UI,Arial,sans-serif;height:100vh;overflow:hidden}
+button,input,select,textarea{font:inherit} button{cursor:pointer}
+.app{display:grid;grid-template-columns:235px 1fr;height:100vh}
+.sidebar{background:#15161a;border-right:1px solid var(--line);padding:18px 14px;display:flex;flex-direction:column;gap:10px}
+.brand{font-size:20px;font-weight:800;padding:8px 10px 18px;letter-spacing:.2px}.brand span{color:var(--accent2)}
+.nav{display:flex;gap:8px;align-items:center;padding:11px 12px;border-radius:10px;color:#b9bec9;border:0;background:transparent;text-align:left}.nav:hover,.nav.active{background:#2a1d38;color:white}.nav.active{box-shadow:inset 3px 0 var(--accent)}
+.spacer{flex:1}.server{font-size:11px;color:var(--muted);padding:12px;border:1px solid var(--line);border-radius:10px}
+.main{min-width:0;display:flex;flex-direction:column}.top{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:#15161a}.top h1{font-size:17px;margin:0}.actions{display:flex;gap:8px}
+.btn{border:1px solid var(--line);background:#252831;color:#fff;border-radius:9px;padding:9px 13px}.btn:hover{background:#2f333d}.btn.primary{background:var(--accent);border-color:var(--accent)}.btn.primary:hover{background:#8b3ee9}.btn.ghost{background:transparent}
+.content{padding:18px;overflow:auto;height:calc(100vh - 64px)}
+.grid2{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.card{background:rgba(25,27,32,.94);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 12px 35px #0002}.card h2{font-size:15px;margin:0 0 13px}.muted{color:var(--muted)}.tiny{font-size:11px}.row{display:flex;gap:10px;align-items:center}.between{justify-content:space-between}.pill{padding:4px 8px;border-radius:99px;background:#2a2d35;color:#cdd1da;font-size:11px}.statgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.stat{background:#202229;border:1px solid #30333c;border-radius:10px;padding:9px}.stat label{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}.stat strong{font-size:17px}
+.tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin:-2px 0 16px}.tab{padding:9px 12px;background:none;border:0;color:var(--muted);border-bottom:2px solid transparent}.tab.active{color:white;border-color:var(--accent)}
+.side-tabs{display:flex;gap:6px;margin-bottom:10px;border-bottom:1px solid var(--line)}
+.ability{display:flex;align-items:center;gap:10px;padding:11px;border:1px solid var(--line);border-radius:10px;background:#1f2127;margin-bottom:8px}.ability .icon{width:34px;height:34px;border-radius:9px;background:#2b1d3b;display:grid;place-items:center;font-size:17px}.ability-info{flex:1}.ability-info b{display:block}.ability-info small{color:var(--muted)}.ability button{padding:7px 9px}
+.form{display:grid;grid-template-columns:1fr 1fr;gap:11px}.field{display:flex;flex-direction:column;gap:5px}.field.full{grid-column:1/-1}.field label{font-size:11px;color:var(--muted)}.field input,.field select,.field textarea{width:100%;background:#111318;color:white;border:1px solid #3a3e48;border-radius:8px;padding:9px;outline:none}.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}textarea{min-height:170px;resize:vertical}
+.map-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:10px;height:calc(100vh - 101px)}
+.map-card{min-width:0;display:flex;flex-direction:column;position:relative}
+.map-toolbar{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.map-wrap{flex:1;position:relative;overflow:hidden;background:#0d0f13;border:1px solid var(--line);border-radius:12px;cursor:grab}
+.map-wrap.panning{cursor:grabbing}
+.map{position:absolute;top:0;left:0;background:linear-gradient(145deg,#2a3134,#1f2629);border:1px solid #59606a;box-shadow:0 15px 50px #0008;user-select:none;transform-origin:0 0}
+.cell{position:absolute;border-right:1px solid #ffffff18;border-bottom:1px solid #ffffff18;pointer-events:none}
+.zone{position:absolute;pointer-events:none;background:#a44cff38;border:2px solid #c084fc;box-shadow:0 0 25px #a44cff55 inset,0 0 18px #a44cff33;z-index:20}
+.zone-effect{position:absolute;inset:0;display:grid;place-items:center;opacity:.42}
+.token-wrap{position:absolute;z-index:30;pointer-events:none}
+.token{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-weight:800;color:#fff;border:2px solid #fff8;box-shadow:0 5px 12px #0009;cursor:pointer;pointer-events:auto}
+.token.player{background:#3578d4}.token.enemy{background:#b74646}
+.token-wrap.selected .token{outline:3px solid #fff;outline-offset:3px}
+.token-wrap.current-turn .token{outline:2px dashed var(--gold);outline-offset:3px}
+.token-hud{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);width:74px;display:none;flex-direction:column;gap:2px;pointer-events:none;text-align:center}
+.token-wrap.selected .token-hud{display:flex}
+.hud-row{font-size:9px;line-height:1.2;color:#e7e9f0;text-shadow:0 1px 2px #000c}
+.mini-bar{height:4px;width:32px;margin:0 auto;background:#343740;border-radius:5px;overflow:hidden;border:1px solid #0008}
+.mini-bar i{display:block;height:100%}
+.mini-hp i{background:#58cf83}.mini-mana i{background:#5da5ff}.mini-shield i{background:#d4ad57}
+.token-label{position:absolute;left:50%;top:26px;transform:translateX(-50%);width:90px;text-align:center;font-size:10px;color:#c8cdd6;text-shadow:0 1px 2px #000c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;display:none}
+.token-wrap.selected .token-label{display:block}
+.ability-char-item{display:grid;grid-template-columns:18px 1fr;align-items:start;gap:8px;padding:5px 2px}
+.ability-char-item input[type="checkbox"]{margin:2px 0 0 0;width:16px;height:16px}
+.log{max-height:320px;overflow:auto;font-size:12px}.log div{padding:8px 0;border-bottom:1px solid #2b2e35;line-height:1.6}
+.modal-bg{position:fixed;inset:0;background:#0009;display:none;align-items:center;justify-content:center;z-index:100}.modal-bg.open{display:flex}.modal{width:min(720px,92vw);max-height:88vh;overflow:auto;background:#191b20;border:1px solid #414550;border-radius:16px;padding:18px;box-shadow:0 25px 80px #000b}.modal h2{margin:0 0 15px}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px}.modal-header h2{margin:0}
+.modal-close{background:none;border:0;color:var(--muted);font-size:20px;line-height:1;padding:4px 10px;border-radius:8px}.modal-close:hover{background:#2a2d35;color:#fff}
+.targeting-banner{position:fixed;left:50%;top:76px;transform:translateX(-50%);background:#2a1d38;border:1px solid #8e4be5;padding:10px 16px;border-radius:10px;z-index:95;box-shadow:0 10px 30px #0008;display:none}.targeting-banner.show{display:block}.targeting-banner b{color:#fff}
+.toast{position:fixed;right:20px;bottom:20px;background:#252831;border:1px solid #4a4e59;padding:11px 14px;border-radius:10px;display:none;z-index:200}.toast.show{display:block}
+.asset-panel{height:100%;display:flex;flex-direction:column;overflow:auto}.asset-panel h2{font-size:14px;margin:0}
+.asset-section{border-bottom:1px solid var(--line)}.asset-section>button{width:100%;display:flex;justify-content:space-between;align-items:center;background:none;border:0;color:#fff;padding:11px 4px;font-weight:700}
+.asset-list{display:flex;flex-direction:column;gap:3px;padding:0 0 9px}
+.asset-item{display:flex;align-items:center;gap:9px;padding:8px;border-radius:8px;background:#17191e;border:1px solid transparent;cursor:grab}.asset-item:hover{background:#252832;border-color:#3a3e48}.asset-item:active{cursor:grabbing}
+.asset-icon{width:30px;height:30px;border-radius:7px;display:grid;place-items:center;background:#252833;font-size:18px}
+.asset-info{min-width:0;flex:1}.asset-info b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.asset-info small{color:var(--muted)}
+.combat-panel{margin-top:8px;border-top:1px solid var(--line);padding-top:8px}
+.initiative-list{display:flex;flex-direction:column;gap:4px;max-height:190px;overflow:auto}
+.initiative-row{display:flex;justify-content:space-between;gap:8px;padding:6px 8px;background:#20232a;border-radius:7px;font-size:12px}.initiative-row.current{outline:2px solid var(--accent)}
+.turn-banner{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:70;background:#17191fe8;border:1px solid #5a426e;border-radius:9px;padding:7px 12px;box-shadow:0 8px 25px #0008}
+.bottom-abilities{display:flex;gap:6px;overflow-x:auto;padding:7px 2px 0}.bottom-abilities .btn{white-space:nowrap;padding:7px 10px}
+.map-drop-hint{position:absolute;inset:0;display:none;place-items:center;background:#9b4dff18;border:2px dashed #c084fc88;z-index:60;pointer-events:none;font-size:18px;font-weight:700}.map-drop-hint.show{display:grid}
+
+/* Plein écran (mode Table de jeu) — une seule implémentation, indépendante de la Fullscreen API */
+body.stage-fullscreen .app{display:block;height:100vh}
+body.stage-fullscreen .sidebar,body.stage-fullscreen .top{display:none}
+body.stage-fullscreen .main{height:100vh}
+body.stage-fullscreen .content{height:100vh;padding:8px}
+body.stage-fullscreen .map-layout{display:block;height:100%}
+body.stage-fullscreen .map-card{height:100%;padding:0;border:0;background:transparent}
+body.stage-fullscreen .side-panel{display:none}
+body.stage-fullscreen .map-toolbar{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:90;background:#17191fee;border:1px solid #454956;border-radius:12px;padding:7px;max-width:92vw;overflow-x:auto;flex-wrap:nowrap}
+body.stage-fullscreen .bottom-abilities{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);z-index:90;background:#17191fee;border:1px solid #454956;border-radius:12px;padding:7px;max-width:92vw}
+body.stage-fullscreen .map-wrap{height:100%;border:0;border-radius:0}
+body.stage-fullscreen .targeting-banner{top:64px}
+
+@media(max-width:900px){.app{grid-template-columns:70px}.brand{font-size:0}.brand span{font-size:20px}.nav span{display:none}.grid2,.map-layout{grid-template-columns:1fr}.map-layout{height:auto}.map-card{height:600px}}
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="sidebar">
+  <div class="brand">✦ <span>NarbuDR</span></div>
+  <button class="nav active" data-page="table">🗺️ <span>Table de jeu</span></button>
+  <button class="nav" data-page="characters">🧙 <span>Personnages</span></button>
+  <button class="nav" data-page="abilities">✨ <span>Capacités</span></button>
+  <button class="nav" data-page="library">📚 <span>Bibliothèque</span></button>
+  <div class="spacer"></div>
+  <div class="server">Prototype local<br><b>● Sauvegarde automatique</b></div>
+</aside>
+<main class="main">
+<header class="top"><h1 id="pageTitle">Table de jeu</h1><div class="actions"><button class="btn" onclick="resetDemo()">Réinitialiser la démo</button><button class="btn primary" onclick="saveState()">💾 Sauvegarder</button></div></header>
+<section class="content" id="content"></section>
+</main>
+</div>
+
+<div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
+<div class="targeting-banner" id="targetingBanner"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================= DONNÉES ============================= */
+const DEFAULT={
+  characters:[ // Fiches (templates) — jamais de position ni de PV "actuels" ici
+    {id:'p1',name:'Zephyr',type:'player',icon:'🧙',move:6,stats:{Force:40,Magie:76,Agilité:82,Vitesse:41,Artisanat:34},resourcesMax:{Vie:290,Mana:215,Bouclier:100},def:{CA:16,DM:5,'CA naturelle':12},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}},
+    {id:'m1',name:'Golem de cendre',type:'enemy',icon:'👹',move:5,stats:{Force:80,Magie:20,Vitesse:15},resourcesMax:{Vie:50,Mana:0,Bouclier:2},def:{CA:12,DM:2,'CA naturelle':12},res:{Feu:20,Eau:0,Terre:30,Air:0,Glace:10,Foudre:-10,Lumière:0,Ténèbres:0}},
+    {id:'m2',name:'Sorcier gobelin',type:'enemy',icon:'👺',move:6,stats:{Force:35,Magie:55,Vitesse:20},resourcesMax:{Vie:65,Mana:30,Bouclier:0},def:{CA:10,DM:3,'CA naturelle':10},res:{Feu:0,Eau:0,Terre:0,Air:15,Glace:0,Foudre:0,Lumière:0,Ténèbres:20}},
+    {id:'m3',name:'Slime rouge',type:'enemy',icon:'🟠',move:4,stats:{Force:25,Magie:10,Vitesse:8},resourcesMax:{Vie:40,Mana:0,Bouclier:0},def:{CA:8,DM:1,'CA naturelle':8},res:{Feu:50,Eau:-25,Terre:0,Air:0,Glace:-25,Foudre:0,Lumière:0,Ténèbres:0}}
+  ],
+  abilities:[
+    {id:'a1',name:"Balle d'air",icon:'💨',type:'Sort',formula:'3d20',stat:'Magie',defense:'DM',element:'Air',area:'single',areaSize:1,range:8,manaCost:10,characterIds:['p1'],desc:"Projectile perforant.",effect:'💨'},
+    {id:'a2',name:'Explosion de feu',icon:'🔥',type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'square',areaSize:4,range:6,manaCost:30,characterIds:['p1'],desc:"Explosion de feu touchant toutes les créatures dans une zone 4×4.",effect:'🔥'},
+    {id:'a3',name:'Soin de groupe',icon:'💚',type:'Soin',formula:'1d20 + 8',stat:'Magie',defense:'none',element:'Neutre',area:'circle',areaSize:3,range:5,manaCost:25,characterIds:['p1'],desc:"Soigne les alliés dans la zone.",effect:'✨'},
+    {id:'a4',name:'Bouclier arcanique',icon:'🛡',type:'Bouclier',formula:'1d20 + 10',stat:'Magie',defense:'none',element:'Neutre',area:'single',areaSize:1,range:5,manaCost:15,characterIds:['p1'],desc:"Confère un bouclier magique à un allié.",effect:'🛡'}
+  ],
+  instances:[ // Tokens réellement présents sur la carte (une fiche peut avoir 0, 1 ou plusieurs instances)
+    {id:'i_p1',charId:'p1',label:'Zephyr',x:4,y:7,hp:290,hpMax:290,mana:215,manaMax:215,shield:0,shieldMax:100,remainingMove:6},
+    {id:'i_m1',charId:'m1',label:'Golem de cendre',x:9,y:5,hp:50,hpMax:50,mana:0,manaMax:0,shield:2,shieldMax:2,remainingMove:5},
+    {id:'i_m2',charId:'m2',label:'Sorcier gobelin',x:13,y:8,hp:65,hpMax:65,mana:30,manaMax:30,shield:0,shieldMax:0,remainingMove:6},
+    {id:'i_m3',charId:'m3',label:'Slime rouge',x:7,y:10,hp:40,hpMax:40,mana:0,manaMax:0,shield:0,shieldMax:0,remainingMove:4}
+  ],
+  map:{cols:18,rows:12,cell:44},
+  chat:[]
+};
+
+let S=JSON.parse(localStorage.getItem('arcanum-vtt')||'null')||structuredClone(DEFAULT);
+if(!S.instances)S.instances=[]; if(!S.chat)S.chat=[]; if(!S.map)S.map=structuredClone(DEFAULT.map);
+const ELEMENT_RES_KEYS=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres'];
+(S.characters||[]).forEach(c=>{
+  if(!c.res)c.res={};
+  if(c.res.Gel!==undefined&&c.res.Glace===undefined){c.res.Glace=c.res.Gel;}
+  delete c.res.Gel;
+  ELEMENT_RES_KEYS.forEach(k=>{if(c.res[k]===undefined)c.res[k]=0;});
+});
+(S.abilities||[]).forEach(a=>{if(a.element==='Gel')a.element='Glace';});
+
+const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',library:'Bibliothèque'};
+
+let currentPage='table';
+let selectedToken=null;      // id d'instance sélectionnée
+let activeAbility=null;      // id de capacité en cours de ciblage
+let hoverCell=null;          // [x,y] survolé pendant le ciblage
+let mapZoom=1, mapPan={x:0,y:0};
+let combat={active:false,order:[],turn:0,initiatives:{}};
+let collapsedAssets={players:false,enemies:false};
+let sidePanelTab='library';  // 'library' | 'chat'
+let stageFullscreen=false;
+let dragCandidate=null;      // {id,startX,startY,origX,origY,moved}
+let panState=null;           // {startX,startY,origX,origY}
+
+/* ============================= UTILITAIRES ============================= */
+function saveState(){localStorage.setItem('arcanum-vtt',JSON.stringify(S));toast('Sauvegarde effectuée');}
+function resetDemo(){
+  if(!confirm('Réinitialiser les données de démonstration ?'))return;
+  S=structuredClone(DEFAULT); combat={active:false,order:[],turn:0,initiatives:{}};
+  selectedToken=null; activeAbility=null; hoverCell=null;
+  localStorage.setItem('arcanum-vtt',JSON.stringify(S)); render();
+}
+function toast(t){const e=document.getElementById('toast');e.textContent=t;e.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>e.classList.remove('show'),1800);}
+function esc(x){return String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function opt(value,label,current){return `<option value="${esc(value)}" ${value===current?'selected':''}>${esc(label)}</option>`;}
+function parseNum(v){const n=+v;return Number.isFinite(n)?n:0;}
+function char(id){return S.characters.find(c=>c.id===id);}          // fiche / template
+function inst(id){return S.instances.find(i=>i.id===id);}           // instance / token
+function instTemplate(instance){return instance?char(instance.charId):null;}
+function characterAbilities(charId){if(!charId)return [];return S.abilities.filter(a=>(a.characterIds||[]).includes(charId));}
+
+function roll(expr){
+  expr=String(expr).replace(/\s+/g,''); let bonus=0;
+  const b=expr.match(/([+-]\d+)$/); if(b){bonus=+b[1];expr=expr.slice(0,b.index);}
+  const m=expr.match(/(\d*)d(\d+)/i); if(!m)return {total:(+expr||0)+bonus,rolls:[],bonus};
+  const n=+(m[1]||1), sides=+m[2], rolls=[]; for(let i=0;i<n;i++)rolls.push(1+Math.floor(Math.random()*sides));
+  return {total:rolls.reduce((a,x)=>a+x,0)+bonus,rolls,bonus};
+}
+function outcome(d){
+  if(d===100)return ['Échec ultime',0]; if(d>=95)return ['Échec critique',0]; if(d>=90)return ['Échec',0];
+  if(d>=75)return ['Légère réussite',.5]; if(d>=50)return ['Légère réussite',.75]; if(d>=25)return ['Réussite',1];
+  if(d>=5)return ['Grande réussite',1.5]; if(d>=2)return ['Réussite critique',2]; return ['Réussite ultime',4];
+}
+function addLog(html){S.chat.push(html);if(S.chat.length>120)S.chat.shift();}
+function pct(v,m){return m?Math.max(0,Math.min(100,v/m*100)):0;}
+
+/* ============================= INSTANCES (TOKENS) ============================= */
+function isOccupied(x,y,excludeId){return S.instances.some(i=>i.id!==excludeId&&i.x===x&&i.y===y);}
+function findFreeCell(x,y,excludeId){
+  if(!isOccupied(x,y,excludeId))return [x,y];
+  const maxR=Math.max(S.map.cols,S.map.rows);
+  for(let r=1;r<=maxR;r++){
+    for(let dx=-r;dx<=r;dx++)for(let dy=-r;dy<=r;dy++){
+      if(Math.max(Math.abs(dx),Math.abs(dy))!==r)continue;
+      const nx=x+dx, ny=y+dy;
+      if(nx<0||ny<0||nx>=S.map.cols||ny>=S.map.rows)continue;
+      if(!isOccupied(nx,ny,excludeId))return [nx,ny];
+    }
+  }
+  return null;
+}
+function spawnInstance(charId,x,y){
+  const t=char(charId); if(!t)return null;
+  const count=S.instances.filter(i=>i.charId===charId).length+1;
+  const label=t.type==='enemy'?`${t.name} #${count}`:t.name;
+  const rm=t.resourcesMax||{Vie:10,Mana:0,Bouclier:0};
+  const newInst={id:'i'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),charId,label,x,y,
+    hp:rm.Vie||0,hpMax:rm.Vie||0,mana:rm.Mana||0,manaMax:rm.Mana||0,shield:rm.Bouclier||0,shieldMax:rm.Bouclier||0,
+    remainingMove:t.move??6};
+  S.instances.push(newInst); return newInst;
+}
+function removeInstance(id){
+  S.instances=S.instances.filter(i=>i.id!==id);
+  if(selectedToken===id)selectedToken=null;
+  if(combat.active){
+    const idx=combat.order.indexOf(id);
+    if(idx!==-1){
+      combat.order.splice(idx,1); delete combat.initiatives[id];
+      if(idx<combat.turn)combat.turn--;
+      if(!combat.order.length){combat.active=false;combat.turn=0;}
+      else combat.turn=((combat.turn%combat.order.length)+combat.order.length)%combat.order.length;
+    }
+  }
+}
+
+/* ============================= RENDU ============================= */
+function render(){
+  document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.page===currentPage));
+  document.getElementById('pageTitle').textContent=PAGE_TITLES[currentPage];
+  const c=document.getElementById('content');
+  if(currentPage==='table')c.innerHTML=tablePage();
+  else if(currentPage==='characters')c.innerHTML=charactersPage();
+  else if(currentPage==='abilities')c.innerHTML=abilitiesPage();
+  else if(currentPage==='library')c.innerHTML=libraryPage();
+  updateTargetingBanner();
+  if(currentPage==='table')setupMapInteractions();
+}
+function updateTargetingBanner(){
+  const banner=document.getElementById('targetingBanner'); if(!banner)return;
+  const a=activeAbility?S.abilities.find(x=>x.id===activeAbility):null;
+  if(a&&currentPage==='table'){
+    const caster=selectedToken?inst(selectedToken):null;
+    banner.innerHTML=`🎯 <b>${esc(caster?.label||'Lanceur')}</b> — ${a.icon} ${esc(a.name)} : clique sur une cible ou une case (Échap pour annuler)`;
+    banner.classList.add('show');
+  }else{
+    banner.classList.remove('show');
+  }
+}
+
+function tablePage(){
+  return `<div class="map-layout" id="mapLayout">
+  <div class="card map-card">
+    <div class="map-toolbar">
+      <button class="btn" onclick="toggleFullscreen()">${stageFullscreen?'✕ Quitter le plein écran':'⛶ Plein écran'}</button>
+      ${combat.active?`<button class="btn" onclick="endCombat()">⏹ Fin du combat</button><button class="btn" onclick="nextTurn()">⏭ Tour suivant</button>`:`<button class="btn primary" onclick="startCombat()">⚔ Démarrer le combat</button>`}
+    </div>
+    <div class="map-wrap" id="mapWrap">
+      <div class="map-drop-hint" id="mapDropHint">➕ Déposer sur la carte</div>
+      <div class="map" id="map" style="width:${S.map.cols*S.map.cell}px;height:${S.map.rows*S.map.cell}px">${mapCells()}${tokensHtml()}</div>
+      ${combat.active?`<div class="turn-banner">⚔ Tour : <b>${esc(inst(combat.order[combat.turn])?.label||'—')}</b></div>`:''}
+    </div>
+    <div class="bottom-abilities">${(()=>{
+      const selInst=selectedToken?inst(selectedToken):null;
+      if(!selInst)return '<span class="tiny muted">Sélectionne un personnage sur la carte pour voir ses capacités.</span>';
+      const known=characterAbilities(selInst.charId);
+      if(!known.length)return '<span class="tiny muted">Ce personnage ne connaît aucune capacité (à assigner dans sa fiche).</span>';
+      return known.map(a=>`<button class="btn ${activeAbility===a.id?'primary':''}" onclick="startAbility('${a.id}')" title="Portée : ${a.range?a.range+' cases':'illimitée'} · Mana : ${a.manaCost||0}">${a.icon} ${esc(a.name)}</button>`).join('');
+    })()}</div>
+  </div>
+  <div class="card side-panel">${sidePanelHtml()}</div>
+  </div>`;
+}
+function mapCells(){
+  let out=''; const m=S.map;
+  for(let y=0;y<m.rows;y++)for(let x=0;x<m.cols;x++)out+=`<div class="cell" style="left:${x*m.cell}px;top:${y*m.cell}px;width:${m.cell}px;height:${m.cell}px"></div>`;
+  return out;
+}
+function tokensHtml(){
+  return S.instances.map(t=>{
+    const tpl=instTemplate(t); if(!tpl)return '';
+    const px=t.x*S.map.cell+S.map.cell/2, py=t.y*S.map.cell+S.map.cell/2;
+    const isTurn=combat.active&&combat.order[combat.turn]===t.id;
+    return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''}" data-token="${t.id}" style="left:${px}px;top:${py}px">
+      <div class="token-hud">
+        <div class="hud-row">❤️ ${t.hp}/${t.hpMax}</div>
+        <div class="mini-bar mini-hp"><i style="width:${pct(t.hp,t.hpMax)}%"></i></div>
+        ${t.manaMax>0?`<div class="hud-row">💧 ${t.mana}/${t.manaMax}</div><div class="mini-bar mini-mana"><i style="width:${pct(t.mana,t.manaMax)}%"></i></div>`:''}
+        ${t.shieldMax>0?`<div class="hud-row">🛡 ${t.shield}/${t.shieldMax}</div><div class="mini-bar mini-shield"><i style="width:${pct(t.shield,t.shieldMax)}%"></i></div>`:''}
+      </div>
+      <div class="token ${tpl.type}" title="${esc(t.label)}">${tpl.icon}</div>
+      <div class="token-label">${esc(t.label)}</div>
+    </div>`;
+  }).join('');
+}
+function zoneMarkup(a,cell){
+  let size=a.areaSize||3, x=cell[0], y=cell[1];
+  x=Math.max(0,Math.min(S.map.cols-size,x)); y=Math.max(0,Math.min(S.map.rows-size,y));
+  const px=x*S.map.cell, py=y*S.map.cell, d=size*S.map.cell;
+  const radius=a.area==='circle'?'border-radius:50%;':'';
+  const effect=a.effect?`<span class="zone-effect" style="font-size:${Math.max(24,size*8)}px">${esc(a.effect)}</span>`:'';
+  return `<div id="zonePreview" class="zone" style="left:${px}px;top:${py}px;width:${d}px;height:${d}px;${radius}">${effect}</div>`;
+}
+function updateZonePreview(){
+  const map=document.getElementById('map'); if(!map)return;
+  document.getElementById('zonePreview')?.remove();
+  if(!activeAbility||!hoverCell)return;
+  const a=S.abilities.find(x=>x.id===activeAbility);
+  if(!a||a.area==='single')return;
+  map.insertAdjacentHTML('beforeend',zoneMarkup(a,hoverCell));
+}
+
+/* ---- Panneau latéral : Bibliothèque / Chat + combat ---- */
+function sidePanelHtml(){
+  return `<div class="side-tabs">
+    <button class="tab ${sidePanelTab==='library'?'active':''}" onclick="switchSideTab('library')">📚 Bibliothèque</button>
+    <button class="tab ${sidePanelTab==='chat'?'active':''}" onclick="switchSideTab('chat')">💬 Chat</button>
+  </div>
+  <div class="asset-panel">${sidePanelTab==='library'?assetPanel():chatPanel()}${combatPanel()}</div>`;
+}
+function switchSideTab(t){sidePanelTab=t;render();}
+function assetPanel(){
+  const players=S.characters.filter(c=>c.type==='player');
+  const enemies=S.characters.filter(c=>c.type==='enemy');
+  const section=(title,key,items)=>`<div class="asset-section"><button onclick="toggleAssetSection('${key}')"><span>${collapsedAssets[key]?'▸':'▾'} ${title}</span><small>${items.length}</small></button>${collapsedAssets[key]?'':`<div class="asset-list">${items.map(c=>{
+      const count=S.instances.filter(i=>i.charId===c.id).length;
+      return `<div class="asset-item" draggable="true" ondragstart="assetDragStart(event,'${c.id}')" onclick="openCharacter('${c.id}')" title="Glisser sur la carte pour créer un token, cliquer pour modifier la fiche">
+        <div class="asset-icon">${c.icon}</div>
+        <div class="asset-info"><b>${esc(c.name)}</b><small>${c.type==='player'?'Joueur':'Monstre'}${count?` · ${count} sur la carte`:''}</small></div>
+      </div>`;
+    }).join('')}</div>`}</div>`;
+  return `<div class="row between" style="margin-bottom:8px"><h2>📚 Bibliothèque</h2><button class="btn" onclick="openCharacter()">＋</button></div>
+  <p class="tiny muted">Glisse un élément sur la carte pour créer un token (plusieurs exemplaires possibles).</p>
+  ${section('Personnages','players',players)}${section('Créatures','enemies',enemies)}
+  <div style="margin-top:8px"><button class="btn" style="width:100%" onclick="openCharacter()">＋ Nouveau personnage / monstre</button></div>`;
+}
+function toggleAssetSection(key){collapsedAssets[key]=!collapsedAssets[key];render();}
+function chatPanel(){
+  const entries=S.chat.length?S.chat.slice().reverse().map(e=>`<div>${e}</div>`).join(''):'<p class="muted tiny">Aucun événement pour l’instant.</p>';
+  return `<h2>💬 Journal de combat</h2><div class="log">${entries}</div>`;
+}
+function combatPanel(){
+  if(!combat.active)return `<div class="combat-panel"><h2>⚔ Combat</h2><p class="muted tiny">Le MJ démarre le combat. L'initiative est déterminée par 1d20 + Vitesse (égalité : 1d100).</p></div>`;
+  const current=inst(combat.order[combat.turn]);
+  return `<div class="combat-panel"><div class="row between"><h2>⚔ Initiative</h2><button class="btn" onclick="nextTurn()">Tour suivant</button></div>
+  <div class="initiative-list">${combat.order.map((id,i)=>{const t=inst(id);return `<div class="initiative-row ${i===combat.turn?'current':''}"><span>${i===combat.turn?'▶ ':''}${esc(t?.label||id)}</span><b>${combat.initiatives[id]}</b></div>`;}).join('')}</div>
+  <div class="tiny muted" style="margin-top:6px">Déplacement restant : ${current?.remainingMove??'—'}</div></div>`;
+}
+
+/* ============================= COMBAT ============================= */
+function startCombat(){
+  const ids=S.instances.map(i=>i.id);
+  if(!ids.length){toast('Aucun token sur la carte.');return;}
+  const init={};
+  ids.forEach(id=>{const tpl=instTemplate(inst(id));init[id]=roll('1d20').total+(tpl?.stats?.Vitesse||0);});
+  const groups={}; ids.forEach(id=>(groups[init[id]]??=[]).push(id));
+  Object.values(groups).forEach(group=>{
+    if(group.length>1){
+      const rolled=group.map(id=>({id,r:roll('1d100').total})).sort((a,b)=>b.r-a.r);
+      rolled.forEach((x,i)=>{init[x.id]+=(rolled.length-i)/1000;});
+    }
+  });
+  const order=[...ids].sort((a,b)=>init[b]-init[a]);
+  combat={active:true,order,turn:0,initiatives:Object.fromEntries(order.map(id=>[id,Math.floor(init[id])]))};
+  S.instances.forEach(t=>{const tpl=instTemplate(t);t.remainingMove=tpl?.move??6;});
+  selectedToken=order[0]??selectedToken;
+  addLog('⚔ <b>Combat démarré</b> — initiative : '+order.map(id=>`${esc(inst(id).label)} (${combat.initiatives[id]})`).join(', ')+'.');
+  saveState(); render();
+}
+function endCombat(){
+  combat={active:false,order:[],turn:0,initiatives:{}};
+  addLog('⏹ Fin du combat.');
+  saveState(); render();
+}
+function advanceTurn(){
+  if(!combat.active||!combat.order.length)return;
+  combat.turn=(combat.turn+1)%combat.order.length;
+  const nt=inst(combat.order[combat.turn]);
+  if(nt){const tpl=instTemplate(nt);nt.remainingMove=tpl?.move??6;}
+  selectedToken=combat.order[combat.turn];
+}
+function nextTurn(){advanceTurn();saveState();render();}
+
+/* ============================= CARTE : SÉLECTION / DRAG / PAN / ZOOM ============================= */
+function mapPoint(clientX,clientY){
+  const wrap=document.getElementById('mapWrap'); const rect=wrap.getBoundingClientRect();
+  const x=(clientX-rect.left-mapPan.x)/(S.map.cell*mapZoom);
+  const y=(clientY-rect.top-mapPan.y)/(S.map.cell*mapZoom);
+  return [Math.max(0,Math.min(S.map.cols-1,Math.floor(x))),Math.max(0,Math.min(S.map.rows-1,Math.floor(y)))];
+}
+function applyMapTransform(){const map=document.getElementById('map');if(map)map.style.transform=`translate(${mapPan.x}px,${mapPan.y}px) scale(${mapZoom})`;}
+
+function setupMapInteractions(){
+  const wrap=document.getElementById('mapWrap'); const map=document.getElementById('map');
+  if(!wrap||!map)return;
+  const hint=document.getElementById('mapDropHint');
+
+  wrap.ondragover=e=>{e.preventDefault();hint?.classList.add('show');};
+  wrap.ondragleave=()=>hint?.classList.remove('show');
+  wrap.ondrop=e=>{
+    e.preventDefault(); hint?.classList.remove('show');
+    const charId=e.dataTransfer.getData('text/plain'); const tpl=char(charId); if(!tpl)return;
+    const pt=mapPoint(e.clientX,e.clientY);
+    const free=findFreeCell(pt[0],pt[1]);
+    if(!free){toast('🚫 Plus aucune case libre sur la carte.');return;}
+    const created=spawnInstance(charId,free[0],free[1]);
+    if(created){
+      selectedToken=created.id;
+      addLog(`➕ ${esc(created.label)} apparaît sur la carte.`);
+      if(free[0]!==pt[0]||free[1]!==pt[1])toast(`⚠️ Case occupée — ${created.label} placé sur la case libre la plus proche.`);
+    }
+    saveState(); render();
+  };
+  wrap.oncontextmenu=e=>e.preventDefault();
+
+  wrap.onmousedown=e=>{
+    if(e.button===2){ // clic droit maintenu = panoramique
+      panState={startX:e.clientX,startY:e.clientY,origX:mapPan.x,origY:mapPan.y};
+      wrap.classList.add('panning'); e.preventDefault(); return;
+    }
+    if(e.button!==0)return;
+    const tw=e.target.closest('.token-wrap');
+    if(tw){
+      e.stopPropagation();
+      const id=tw.dataset.token;
+      if(activeAbility){
+        const a=S.abilities.find(x=>x.id===activeAbility); const t=inst(id);
+        if(a&&t)resolveAbility(a,[t.x,t.y],id);
+        return;
+      }
+      selectedToken=id;
+      if(combat.active&&combat.order[combat.turn]!==id){
+        toast('⏳ Ce n’est pas le tour de ce personnage.'); render(); return;
+      }
+      const c=inst(id);
+      dragCandidate={id,startX:e.clientX,startY:e.clientY,origX:c.x,origY:c.y,moved:false};
+      render(); return;
+    }
+    // clic dans le vide de la carte
+    if(activeAbility){
+      const pt=mapPoint(e.clientX,e.clientY);
+      const a=S.abilities.find(x=>x.id===activeAbility);
+      if(a)resolveAbility(a,pt);
+      return;
+    }
+    if(selectedToken){selectedToken=null;render();}
+  };
+
+  window.onmousemove=e=>{
+    if(panState){
+      mapPan.x=panState.origX+(e.clientX-panState.startX);
+      mapPan.y=panState.origY+(e.clientY-panState.startY);
+      applyMapTransform(); return;
+    }
+    if(dragCandidate){
+      const dx=e.clientX-dragCandidate.startX, dy=e.clientY-dragCandidate.startY;
+      if(!dragCandidate.moved&&Math.hypot(dx,dy)<4)return;
+      dragCandidate.moved=true;
+      const pt=mapPoint(e.clientX,e.clientY);
+      const t=inst(dragCandidate.id);
+      if(t){
+        t.x=pt[0]; t.y=pt[1];
+        const el=document.querySelector(`[data-token="${dragCandidate.id}"]`);
+        if(el){el.style.left=(pt[0]*S.map.cell+S.map.cell/2)+'px';el.style.top=(pt[1]*S.map.cell+S.map.cell/2)+'px';}
+      }
+      return;
+    }
+    if(activeAbility){
+      const rect=wrap.getBoundingClientRect();
+      const x=Math.floor((e.clientX-rect.left-mapPan.x)/(S.map.cell*mapZoom));
+      const y=Math.floor((e.clientY-rect.top-mapPan.y)/(S.map.cell*mapZoom));
+      if(x>=0&&y>=0&&x<S.map.cols&&y<S.map.rows){hoverCell=[x,y];updateZonePreview();}
+    }
+  };
+
+  window.onmouseup=()=>{
+    if(panState){panState=null;wrap.classList.remove('panning');}
+    if(dragCandidate){
+      const {id,moved,origX,origY}=dragCandidate;
+      const t=inst(id);
+      if(moved&&t){
+        const occupant=S.instances.find(i=>i.id!==id&&i.x===t.x&&i.y===t.y);
+        if(occupant){
+          t.x=origX; t.y=origY;
+          toast(`🚫 ${occupant.label} est déjà sur cette case — choisis un autre déplacement.`);
+        }else if(combat.active&&combat.order[combat.turn]===id){
+          const tpl=instTemplate(t);
+          const dist=Math.abs(t.x-origX)+Math.abs(t.y-origY);
+          const remaining=t.remainingMove??(tpl?.move??6);
+          if(dist>remaining){
+            t.x=origX; t.y=origY;
+            toast('🚫 Déplacement maximal atteint pour ce tour.');
+          }else{
+            t.remainingMove=remaining-dist;
+            addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
+          }
+        }else if(!combat.active){
+          addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
+        }
+        saveState();
+      }
+      dragCandidate=null; render();
+    }
+  };
+
+  wrap.onwheel=e=>{
+    e.preventDefault();
+    const old=mapZoom;
+    mapZoom=Math.max(.4,Math.min(3,mapZoom+(e.deltaY<0?.1:-.1)));
+    const rect=wrap.getBoundingClientRect();
+    const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+    mapPan.x=mx-(mx-mapPan.x)*(mapZoom/old);
+    mapPan.y=my-(my-mapPan.y)*(mapZoom/old);
+    applyMapTransform();
+  };
+
+  applyMapTransform();
+}
+
+/* ============================= CAPACITÉS : RÉSOLUTION ============================= */
+function affected(a,start,explicitTargetInstId){
+  const casterInst=selectedToken?inst(selectedToken):null;
+  const casterTpl=casterInst?instTemplate(casterInst):null;
+  const casterType=casterTpl?.type||'player';
+  const targetType=(a.type==='Soin'||a.type==='Bouclier')?casterType:(casterType==='enemy'?'player':'enemy');
+  const pool=S.instances.filter(i=>i.id!==selectedToken&&instTemplate(i)?.type===targetType);
+  if(a.area==='single'){
+    if(explicitTargetInstId){const t=inst(explicitTargetInstId);return (t&&instTemplate(t)?.type===targetType)?[t]:[];}
+    let best=null,bestd=999;
+    for(const t of pool){const d=Math.abs(t.x-start[0])+Math.abs(t.y-start[1]);if(d<bestd){best=t;bestd=d;}}
+    return best?[best]:[];
+  }
+  const size=a.areaSize||3;
+  return pool.filter(t=>t.x>=start[0]&&t.x<start[0]+size&&t.y>=start[1]&&t.y<start[1]+size);
+}
+function resolveAbility(a,start,explicitTargetInstId){
+  const casterInst=selectedToken?inst(selectedToken):null;
+  if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
+  if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
+    toast(`🚫 Mana insuffisant (${casterInst.mana}/${a.manaCost}) pour lancer ${a.name} — choisis une autre action.`);
+    activeAbility=null; hoverCell=null; render(); return;
+  }
+  if(a.range&&a.range>0){
+    const dist=Math.max(Math.abs(start[0]-casterInst.x),Math.abs(start[1]-casterInst.y));
+    if(dist>a.range){
+      toast(`🚫 Trop loin (portée max ${a.range} case${a.range>1?'s':''}) — sélectionne un ennemi plus proche.`);
+      return; // le ciblage reste actif, aucun jet n'est consommé
+    }
+  }
+  const casterTpl=instTemplate(casterInst);
+  if(a.manaCost>0){
+    casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
+  }
+  const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
+  const targets=affected(a,start,explicitTargetInstId);
+  const lines=[`⚔ <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b>`];
+  if(a.manaCost>0)lines.push(`💧 Coût en mana : ${a.manaCost} (reste ${casterInst.mana}/${casterInst.manaMax})`);
+  lines.push(`🎲 d100 : <b>${atk}</b> → ${label}`);
+
+  if(!targets.length){
+    lines.push('<span class="muted">Aucune cible valide dans la zone.</span>');
+    addLog(lines.join('<br>'));
+    activeAbility=null; hoverCell=null; saveState(); render(); return;
+  }
+
+  for(const t of targets){
+    const tTpl=instTemplate(t);
+    if(a.type==='Soin'){
+      const r=roll(a.formula);
+      const amount=Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100);
+      t.hp=Math.min(t.hpMax,t.hp+amount);
+      lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
+      lines.push(`💚 Soin : ${amount}`);
+      lines.push(`❤️ ${esc(t.label)} : +${amount} PV (${t.hp}/${t.hpMax})`);
+      continue;
+    }
+    if(a.type==='Bouclier'){
+      const r=roll(a.formula);
+      const amount=Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100);
+      t.shield=(t.shield||0)+amount;
+      if(t.shield>t.shieldMax)t.shieldMax=t.shield; // le bouclier accordé peut dépasser le maximum de base de la fiche
+      lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
+      lines.push(`🛡 Bouclier accordé : ${amount}`);
+      lines.push(`🛡 ${esc(t.label)} : ${t.shield}/${t.shieldMax}`);
+      continue;
+    }
+    if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);continue;}
+    const r=roll(a.formula); const raw=r.total;
+    let damage=Math.ceil(raw*mult*(casterTpl.stats[a.stat]||0)/100);
+    const def=(a.defense!=='none')?(tTpl.def[a.defense]||0):0;
+    damage=Math.max(0,damage-def);
+    const resist=(tTpl.res?.[a.element]||0)/100;
+    damage=Math.max(0,Math.ceil(damage*(1-resist)));
+    const beforeShield=t.shield||0; const absorbed=Math.min(beforeShield,damage);
+    t.shield-=absorbed; const hpDamage=damage-absorbed;
+    t.hp=Math.max(0,t.hp-hpDamage);
+    lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${raw}`);
+    lines.push(`✨ Dégâts (${esc(a.element)}) : ${damage}${def?` (−${def} défense)`:''}${resist?` (résistance ${Math.round(resist*100)}%)`:''}`);
+    if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
+    lines.push(`❤️ ${esc(t.label)} : -${hpDamage} PV (${t.hp}/${t.hpMax})`);
+    if(t.hp<=0){
+      lines.push(`💀 <b>${esc(t.label)} est KO</b> — retiré de la carte.`);
+      removeInstance(t.id);
+    }
+  }
+
+  addLog(lines.join('<br>'));
+  activeAbility=null; hoverCell=null;
+  if(combat.active&&combat.order[combat.turn]===casterInst.id)advanceTurn();
+  saveState(); render();
+}
+function startAbility(id){
+  if(!selectedToken){toast('Sélectionne d’abord un personnage sur la carte.');return;}
+  if(combat.active&&combat.order[combat.turn]!==selectedToken){toast('⏳ Ce n’est pas le tour de ce personnage.');return;}
+  const a=S.abilities.find(x=>x.id===id); if(!a)return;
+  const caster=inst(selectedToken);
+  if(a.manaCost>0&&caster&&(caster.mana||0)<a.manaCost){
+    toast(`🚫 Mana insuffisant (${caster.mana}/${a.manaCost}) pour lancer ${a.name} — choisis une autre action.`);
+    return;
+  }
+  activeAbility=id; hoverCell=null; render();
+  toast('🎯 Ciblage : clique sur une cible ou une case (Échap pour annuler)');
+}
+
+/* ============================= PERSONNAGES / FICHES ============================= */
+function charactersPage(){
+  return `<div class="grid2">
+  <div class="card"><div class="row between"><h2>Personnages &amp; créatures</h2><button class="btn primary" onclick="openCharacter()">＋ Nouveau</button></div>
+  ${S.characters.map(c=>{
+    const count=S.instances.filter(i=>i.charId===c.id).length;
+    const nbAb=characterAbilities(c.id).length;
+    return `<div class="ability"><div class="icon">${c.icon}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${c.type==='player'?'Joueur':'Monstre'} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small></div><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button></div>`;
+  }).join('')}
+  </div>
+  <div class="card"><h2>Principe de la fiche</h2><p class="muted">Une fiche définit les valeurs de base (statistiques, ressources maximales, défenses, résistances). Chaque token posé sur la carte est une instance indépendante avec ses propres PV / mana / bouclier actuels et sa propre position.</p>
+  <div class="statgrid"><div class="stat"><label>Attributs personnalisables</label><strong>✓</strong></div><div class="stat"><label>Ressources max configurables</label><strong>✓</strong></div><div class="stat"><label>Instances multiples</label><strong>✓</strong></div><div class="stat"><label>Résistances</label><strong>✓</strong></div></div></div></div>`;
+}
+function openCharacter(id){
+  const c=id?char(id):null;
+  const base=c||{name:'Nouveau personnage',icon:'🧙',type:'player',move:6,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}};
+  const typeOpts=[['player','Joueur'],['enemy','Monstre / PNJ']].map(([v,l])=>opt(v,l,base.type)).join('');
+  const known=id?characterAbilities(id):[];
+  const knownLine=id?(known.length?`<p class="tiny muted">Capacités liées : ${known.map(a=>`${a.icon} ${esc(a.name)}`).join(', ')} <span style="opacity:.7">(à gérer depuis la page ✨ Capacités)</span></p>`:'<p class="tiny muted">Aucune capacité liée à ce personnage pour l’instant (page ✨ Capacités).</p>'):'';
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une fiche</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div><div class="form">
+  <div class="field"><label>Nom</label><input id="c_name" value="${esc(base.name)}"></div>
+  <div class="field"><label>Icône</label><input id="c_icon" value="${esc(base.icon)}"></div>
+  <div class="field"><label>Type</label><select id="c_type">${typeOpts}</select></div>
+  <div class="field"><label>Déplacement (cases/tour)</label><input id="c_move" type="number" value="${base.move??6}"></div>
+  <div class="field"><label>PV maximum</label><input id="c_hpmax" type="number" value="${base.resourcesMax.Vie??10}"></div>
+  <div class="field"><label>Mana maximum</label><input id="c_manamax" type="number" value="${base.resourcesMax.Mana??0}"></div>
+  <div class="field"><label>Bouclier maximum</label><input id="c_shieldmax" type="number" value="${base.resourcesMax.Bouclier??0}"></div>
+  <div class="field"><label>Force</label><input id="s_force" type="number" value="${base.stats.Force??0}"></div>
+  <div class="field"><label>Magie</label><input id="s_magic" type="number" value="${base.stats.Magie??0}"></div>
+  <div class="field"><label>Agilité</label><input id="s_agi" type="number" value="${base.stats.Agilité??0}"></div>
+  <div class="field"><label>Vitesse</label><input id="s_speed" type="number" value="${base.stats.Vitesse??0}"></div>
+  <div class="field"><label>Classe d'armure</label><input id="d_ca" type="number" value="${base.def.CA??0}"></div>
+  <div class="field"><label>Défense magique</label><input id="d_dm" type="number" value="${base.def.DM??0}"></div>
+  <div class="field"><label>Résistance Feu (%)</label><input id="r_fire" type="number" value="${base.res.Feu??0}"></div>
+  <div class="field"><label>Résistance Eau (%)</label><input id="r_eau" type="number" value="${base.res.Eau??0}"></div>
+  <div class="field"><label>Résistance Terre (%)</label><input id="r_terre" type="number" value="${base.res.Terre??0}"></div>
+  <div class="field"><label>Résistance Air (%)</label><input id="r_air" type="number" value="${base.res.Air??0}"></div>
+  <div class="field"><label>Résistance Glace (%)</label><input id="r_glace" type="number" value="${base.res.Glace??0}"></div>
+  <div class="field"><label>Résistance Foudre (%)</label><input id="r_foudre" type="number" value="${base.res.Foudre??0}"></div>
+  <div class="field"><label>Résistance Lumière (%)</label><input id="r_lumiere" type="number" value="${base.res.Lumière??0}"></div>
+  <div class="field"><label>Résistance Ténèbres (%)</label><input id="r_tenebres" type="number" value="${base.res.Ténèbres??0}"></div>
+  </div>
+  ${knownLine}
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveCharacter('${id||''}')">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function saveCharacter(id){
+  const c=id?char(id):{id:'c'+Date.now()};
+  c.name=document.getElementById('c_name').value||'Sans nom';
+  c.icon=document.getElementById('c_icon').value||'🧙';
+  c.type=document.getElementById('c_type').value;
+  c.move=parseNum(document.getElementById('c_move').value)||6;
+  c.resourcesMax={Vie:parseNum(document.getElementById('c_hpmax').value)||1,Mana:parseNum(document.getElementById('c_manamax').value),Bouclier:parseNum(document.getElementById('c_shieldmax').value)};
+  c.stats={Force:parseNum(document.getElementById('s_force').value),Magie:parseNum(document.getElementById('s_magic').value),Agilité:parseNum(document.getElementById('s_agi').value),Vitesse:parseNum(document.getElementById('s_speed').value)};
+  c.def={CA:parseNum(document.getElementById('d_ca').value),DM:parseNum(document.getElementById('d_dm').value),'CA naturelle':parseNum(document.getElementById('d_ca').value)};
+  c.res={
+    Feu:parseNum(document.getElementById('r_fire').value),
+    Eau:parseNum(document.getElementById('r_eau').value),
+    Terre:parseNum(document.getElementById('r_terre').value),
+    Air:parseNum(document.getElementById('r_air').value),
+    Glace:parseNum(document.getElementById('r_glace').value),
+    Foudre:parseNum(document.getElementById('r_foudre').value),
+    Lumière:parseNum(document.getElementById('r_lumiere').value),
+    Ténèbres:parseNum(document.getElementById('r_tenebres').value)
+  };
+  if(!id)S.characters.push(c);
+  S.instances.filter(i=>i.charId===c.id).forEach(i=>{
+    i.hpMax=c.resourcesMax.Vie; i.manaMax=c.resourcesMax.Mana; i.shieldMax=c.resourcesMax.Bouclier;
+    i.hp=Math.min(i.hp,i.hpMax); i.mana=Math.min(i.mana,i.manaMax); i.shield=Math.min(i.shield,i.shieldMax);
+  });
+  saveState(); closeModal(); render();
+}
+function closeModal(){document.getElementById('modalBg').classList.remove('open');}
+
+/* ============================= CAPACITÉS : ÉDITION ============================= */
+function abilitiesPage(){
+  return `<div class="grid2"><div class="card"><div class="row between"><h2>Capacités</h2><button class="btn primary" onclick="openAbility()">＋ Nouvelle capacité</button></div>
+  ${S.abilities.map(a=>{
+    const linked=(a.characterIds||[]).map(cid=>char(cid)).filter(Boolean);
+    const linkedText=linked.length?linked.map(c=>c.name).join(', '):'aucun personnage lié';
+    return `<div class="ability"><div class="icon">${a.icon}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${esc(a.type)} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div><button class="btn" onclick="openAbility('${a.id}')">Modifier</button><button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button></div>`;
+  }).join('')}
+  </div>
+  <div class="card"><h2>Deux modes de création</h2><div class="statgrid"><div class="stat"><label>🟢 Mode simple</label><strong>Visuel</strong><p class="tiny muted">Type, formule, statistique, défense, élément, zone et effet — indépendants pour chaque capacité.</p></div><div class="stat"><label>🔴 Mode avancé</label><strong>Macro</strong><p class="tiny muted">Aperçu de la logique, en lecture seule pour l'instant.</p></div></div><p class="muted">Le moteur gère le jet d100, le multiplicateur de réussite, la formule de dégâts, la défense, la résistance élémentaire, le bouclier puis les PV. Aucune règle D&D n'est imposée : tout est configurable.</p></div></div>`;
+}
+function openAbility(id){
+  const a=id?S.abilities.find(x=>x.id===id):{id:'a'+Date.now(),name:'Nouvelle capacité',icon:'✨',type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'single',areaSize:1,range:6,manaCost:0,desc:'',effect:'✨'};
+  const typeOpts=['Sort','Attaque','Compétence','Soin','Bouclier'].map(v=>opt(v,v,a.type)).join('');
+  const elementOpts=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres','Neutre','Soin'].map(v=>opt(v,v,a.element)).join('');
+  const statOpts=['Magie','Force','Agilité','Vitesse'].map(v=>opt(v,v,a.stat)).join('');
+  const defOpts=[['DM',"Défense magique"],['CA',"Classe d'armure"],['none','Aucune']].map(([v,l])=>opt(v,l,a.defense)).join('');
+  const areaOpts=[['single','Cible unique'],['square','Carré'],['circle','Cercle (aperçu)']].map(([v,l])=>opt(v,l,a.area)).join('');
+  const linkedIds=a.characterIds||[];
+  const charListHtml=S.characters.length?S.characters.map(c=>`<label class="ability-char-item" data-name="${esc(c.name.toLowerCase())}"><input type="checkbox" class="ac-check" value="${c.id}" ${linkedIds.includes(c.id)?'checked':''}> <span>${c.icon} ${esc(c.name)} <small class="muted">(${c.type==='player'?'Joueur':'Monstre'})</small></span></label>`).join(''):'<p class="tiny muted">Aucun personnage créé pour l’instant (page 🧙 Personnages).</p>';
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une capacité</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <div class="form">
+  <div class="field"><label>Nom</label><input id="a_name" value="${esc(a.name)}"></div>
+  <div class="field"><label>Icône</label><input id="a_icon" value="${esc(a.icon)}"></div>
+  <div class="field"><label>Type</label><select id="a_type">${typeOpts}</select></div>
+  <div class="field"><label>Formule de dégâts / soin</label><input id="a_formula" value="${esc(a.formula)}"></div>
+  <div class="field"><label>Statistique</label><select id="a_stat">${statOpts}</select></div>
+  <div class="field"><label>Défense ciblée</label><select id="a_def">${defOpts}</select></div>
+  <div class="field"><label>Élément</label><select id="a_element">${elementOpts}</select></div>
+  <div class="field"><label>Zone</label><select id="a_area">${areaOpts}</select></div>
+  <div class="field"><label>Taille de zone (cases)</label><input id="a_size" type="number" min="1" value="${a.areaSize||1}"></div>
+  <div class="field"><label>Portée maximale (cases, 0 = illimitée)</label><input id="a_range" type="number" min="0" value="${a.range??0}"></div>
+  <div class="field"><label>Coût en mana (0 = aucun)</label><input id="a_manacost" type="number" min="0" value="${a.manaCost??0}"></div>
+  <div class="field full"><label>Description</label><textarea id="a_desc">${esc(a.desc||'')}</textarea></div>
+  <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
+  <div class="field full">
+    <label>Personnages liés (peuvent lancer cette capacité)</label>
+    <input id="a_char_search" placeholder="Rechercher un personnage par nom…" oninput="filterAbilityCharList()">
+    <div id="a_char_list" style="max-height:180px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px;margin-top:6px">${charListHtml}</div>
+  </div>
+  </div>
+  <p class="tiny muted">Le type et l'élément sont deux propriétés totalement indépendantes : un Soin peut être Neutre, Feu, etc.</p>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveAbility('${id||''}')">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function filterAbilityCharList(){
+  const q=(document.getElementById('a_char_search')?.value||'').trim().toLowerCase();
+  document.querySelectorAll('.ability-char-item').forEach(el=>{
+    el.style.display=el.dataset.name.includes(q)?'grid':'none';
+  });
+}
+function saveAbility(id){
+  const target=id?S.abilities.find(x=>x.id===id):{id:'a'+Date.now()};
+  target.name=document.getElementById('a_name').value||'Capacité';
+  target.icon=document.getElementById('a_icon').value||'✨';
+  target.type=document.getElementById('a_type').value;
+  target.formula=document.getElementById('a_formula').value||'1d20';
+  target.stat=document.getElementById('a_stat').value;
+  target.defense=document.getElementById('a_def').value;
+  target.element=document.getElementById('a_element').value;
+  target.area=document.getElementById('a_area').value;
+  target.areaSize=+document.getElementById('a_size').value||1;
+  target.range=Math.max(0,+document.getElementById('a_range').value||0);
+  target.manaCost=Math.max(0,+document.getElementById('a_manacost').value||0);
+  target.desc=document.getElementById('a_desc').value;
+  target.effect=document.getElementById('a_effect').value||'✨';
+  target.characterIds=[...document.querySelectorAll('.ac-check:checked')].map(el=>el.value);
+  if(!id)S.abilities.push(target);
+  saveState(); closeModal(); render();
+}
+function openAdvancedAbility(id){
+  const a=S.abilities.find(x=>x.id===id); if(!a)return;
+  const macro=`ABILITY "${a.name}"\n\nTYPE = ${a.type}\nELEMENT = ${a.element}\nRANGE = ${a.range?a.range+' cases (Chebyshev)':'illimitée'}\nMANA_COST = ${a.manaCost||0}\n\nATTACK = d100\nRESULT = SUCCESS_BAND(ATTACK)\n\nEFFECT\n    FORMULA = ${a.formula}\n    STAT = ${a.stat}\n    DEFENSE = ${a.defense}\n\nAREA\n    SHAPE = ${a.area.toUpperCase()}\n    SIZE = ${a.areaSize}\n\nON_TARGET\n    ${a.type==='Soin'?'APPLY_HEAL()':a.type==='Bouclier'?'APPLY_SHIELD()':'APPLY_DAMAGE()'}`;
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>🔴 Aperçu macro — ${esc(a.name)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div><p class="muted">Lecture seule pour ce prototype : le mode simple reste la configuration principale.</p><div class="field"><label>Macro</label><textarea readonly style="min-height:340px;font-family:ui-monospace,monospace">${esc(macro)}</textarea></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+
+/* ============================= BIBLIOTHÈQUE (page dédiée) ============================= */
+function libraryPage(){
+  return `<div class="grid3"><div class="card"><h2>🗺️ Cartes</h2><p class="muted">Import d'images de cartes prévu ici.</p><button class="btn">＋ Importer une carte</button></div><div class="card"><h2>🖼️ Effets</h2><p class="muted">Bibliothèque d'effets visuels : feu, glace, magie, explosions…</p><button class="btn">＋ Ajouter un effet</button></div><div class="card"><h2>🎲 Assets</h2><p class="muted">Tokens, portraits, objets et autres ressources.</p><button class="btn">＋ Ajouter un asset</button></div></div><div class="card" style="margin-top:16px"><h2>Prochaine étape</h2><p>Cette bibliothèque deviendra le stockage local de tes cartes et assets, sans abonnement externe. Les fiches et instances sont déjà gérées séparément (voir l'onglet 📚 Bibliothèque du panneau de droite sur la Table de jeu).</p></div>`;
+}
+
+/* ============================= DRAG & DROP DEPUIS LA BIBLIOTHÈQUE ============================= */
+function assetDragStart(ev,charId){
+  ev.dataTransfer.setData('text/plain',charId);
+  ev.dataTransfer.effectAllowed='copy';
+  document.getElementById('mapDropHint')?.classList.add('show');
+}
+
+/* ============================= PLEIN ÉCRAN ============================= */
+function toggleFullscreen(){
+  stageFullscreen=!stageFullscreen;
+  document.body.classList.toggle('stage-fullscreen',stageFullscreen);
+  if(stageFullscreen)document.documentElement.requestFullscreen?.().catch(()=>{});
+  else if(document.fullscreenElement)document.exitFullscreen?.().catch(()=>{});
+  render();
+}
+function exitStageFullscreen(){
+  if(!stageFullscreen)return;
+  stageFullscreen=false;
+  document.body.classList.remove('stage-fullscreen');
+  if(document.fullscreenElement)document.exitFullscreen?.().catch(()=>{});
+  render();
+}
+document.addEventListener('fullscreenchange',()=>{
+  if(!document.fullscreenElement&&stageFullscreen){stageFullscreen=false;document.body.classList.remove('stage-fullscreen');render();}
+});
+
+/* ============================= RACCOURCIS CLAVIER ============================= */
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){
+    if(stageFullscreen){exitStageFullscreen();return;}
+    if(activeAbility){activeAbility=null;hoverCell=null;render();return;}
+  }
+  if(e.key==='Delete'&&selectedToken&&!activeAbility){
+    const t=inst(selectedToken);
+    if(t){removeInstance(selectedToken);saveState();render();toast('🗑 Token retiré de la carte');}
+  }
+});
+
+/* ============================= NAVIGATION / INIT ============================= */
+document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>{currentPage=n.dataset.page;activeAbility=null;hoverCell=null;render();});
+render();
+</script>
+</body>
+</html>
