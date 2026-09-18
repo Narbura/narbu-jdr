@@ -502,12 +502,39 @@ async function resolveAbility(a,start){
 }
 /* ============================= CONFIG PAGES ============================= */
 
-  function charactersPage(){
+function charactersPage(){
+  // On génère la liste en utilisant votre logique propre
+  const listHtml = S.characters.map(c => {
+    const element = document.createElement('b');
+    element.appendChild(document.createTextNode(`${c.icon} ${esc(c.name)}`));
+
+    const spanType = document.createElement('span');
+    spanType.textContent = ` — ${c.type === 'player' ? 'Joueur' : 'Monstre'} `;
+
+    const button = isMJ() ? `
+      <button class="btn ${c.visibleForPlayers ? 'primary' : ''}" onclick="toggleCharVisibility('${c.id}')">
+        ${c.visibleForPlayers ? '👁 Visible des joueurs' : '🙈 Masqué pour les joueurs'}
+      </button>
+    ` : '';
+
+    const container = document.createElement('div');
+    container.className = "ability";
+    container.style.cssText = "justify-content:space-between; display:flex; align-items:center; margin-bottom:8px; padding:10px;";
+    
+    container.appendChild(element);
+    container.appendChild(spanType);
+    if (button) {
+      container.insertAdjacentHTML('beforeend', button);
+    }
+    
+    // Le secret : on transforme l'élément en texte HTML pour le moteur du jeu
+    return container.outerHTML;
+  }).join('');
+
+  // On l'imbrique dans la carte principale
   return `<div class="card">
     <h2>🧙 Configuration des fiches (Mode MJ uniquement)</h2>
-    ${S.characters.map(c=>`<div class="ability" style="justify-content:space-between; display:flex; align-items:center; margin-bottom:8px; padding:10px;">
-      <b>c.icon {esc(c.name)}</b> — \({c.type === 'player' ? 'Joueur' : 'Monstre'}\){isMJ() ? `<button class="btn ${c.visibleForPlayers ? 'primary' : ''}" onclick="toggleCharVisibility('${c.id}')">${c.visibleForPlayers ? '👁 Visible des joueurs' : '🙈 Masqué pour les joueurs'}</button>` : ''}
-    </div>`).join('')}
+    ${listHtml}
   </div>`;
 }
 
