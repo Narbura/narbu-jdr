@@ -500,13 +500,12 @@ async function resolveAbility(a,start){
   }
   activeAbility=null; render();
 }
-
 /* ============================= CONFIG PAGES ============================= */
 function charactersPage(){
   return `<div class="card">
     <h2>🧙 Configuration des fiches (Mode MJ uniquement)</h2>
     ${S.characters.map(c=>`<div class="ability" style="justify-content:space-between; display:flex; align-items:center; margin-bottom:8px; padding:10px;">
-      <b>\({c.icon}\){esc(c.name)}</b> — \({c.type==='player'?'Joueur':'Monstre'}\){isMJ() ? `<button class="btn ${c.visibleForPlayers?'primary':''}" onclick="toggleCharVisibility('${c.id}')">${c.visibleForPlayers?'👁 Visible des joueurs':'🙈 Masqué pour les joueurs'}</button>` : ''}
+      <b>c.icon {esc(c.name)}</b> — \({c.type==='player'?'Joueur':'Monstre'}\){isMJ() ? `<button class="btn ${c.visibleForPlayers?'primary':''}" onclick="toggleCharVisibility('${c.id}')">${c.visibleForPlayers?'👁 Visible des joueurs':'🙈 Masqué pour les joueurs'}</button>` : ''}
     </div>`).join('')}
   </div>`;
 }
