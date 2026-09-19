@@ -746,16 +746,32 @@ function affected(a,start,explicitTargetInstId){
   const casterInst=selectedToken?inst(selectedToken):null;
   const casterTpl=casterInst?instTemplate(casterInst):null;
   const casterType=casterTpl?.type||'player';
-  const targetType=(a.type==='Soin'||a.type==='Bouclier'||a.type==='Potion')?casterType:(casterType==='enemy'?'player':'enemy');
-  const pool=S.instances.filter(i=>i.id!==selectedToken&&instTemplate(i)?.type===targetType);
+  const isSupport=(a.type==='Soin'||a.type==='Bouclier'||a.type==='Potion');
+
   if(a.area==='single'){
-    if(explicitTargetInstId){const t=inst(explicitTargetInstId);return (t&&instTemplate(t)?.type===targetType)?[t]:[];}
+    const targetType=isSupport?casterType:(casterType==='enemy'?'player':'enemy');
+    if(explicitTargetInstId){
+      const t=inst(explicitTargetInstId);
+      if(!t)return [];
+      // Les sorts de soutien peuvent cibler le lanceur lui-même ; les sorts offensifs non.
+      if(!isSupport&&t.id===selectedToken)return [];
+      return instTemplate(t)?.type===targetType?[t]:[];
+    }
+    const pool=S.instances.filter(i=>(isSupport||i.id!==selectedToken)&&instTemplate(i)?.type===targetType);
     let best=null,bestd=999;
     for(const t of pool){const d=Math.abs(t.x-start[0])+Math.abs(t.y-start[1]);if(d<bestd){best=t;bestd=d;}}
     return best?[best]:[];
   }
+
+  // Zone (carré / cercle)
   const size=a.areaSize||3;
-  return pool.filter(t=>t.x>=start[0]&&t.x<start[0]+size&&t.y>=start[1]&&t.y<start[1]+size);
+  const inZone=t=>t.x>=start[0]&&t.x<start[0]+size&&t.y>=start[1]&&t.y<start[1]+size;
+  if(isSupport){
+    // Soin / Bouclier / Potion en zone : uniquement les alliés, lanceur inclus.
+    return S.instances.filter(t=>instTemplate(t)?.type===casterType&&inZone(t));
+  }
+  // Sorts de dégâts en zone : touchent tout le monde, alliés comme ennemis (y compris le lanceur).
+  return S.instances.filter(inZone);
 }
 function resolveAbility(a,start,explicitTargetInstId){
   const casterInst=selectedToken?inst(selectedToken):null;
