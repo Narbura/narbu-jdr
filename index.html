@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="fr">
 <head>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NarbuDR — Prototype</title>
@@ -31,7 +32,7 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .map-toolbar{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
 .map-wrap{flex:1;position:relative;overflow:hidden;background:#0d0f13;border:1px solid var(--line);border-radius:12px;cursor:grab}
 .map-wrap.panning{cursor:grabbing}
-.map(position:absolute;top:0;left:0;background:linear-gradient(145deg,#2a3134,#1f2629);border:1px solid #59606a;box-shadow:0 15px 50px #0008;user-select:none;transform-origin:0 0}
+.map{position:absolute;top:0;left:0;background:linear-gradient(145deg,#2a3134,#1f2629);border:1px solid #59606a;box-shadow:0 15px 50px #0008;user-select:none;transform-origin:0 0}
 .cell{position:absolute;border-right:1px solid #ffffff18;border-bottom:1px solid #ffffff18;pointer-events:none}
 .zone{position:absolute;pointer-events:none;background:#a44cff38;border:2px solid #c084fc;box-shadow:0 0 25px #a44cff55 inset,0 0 18px #a44cff33;z-index:20}
 .zone-effect{position:absolute;inset:0;display:grid;place-items:center;opacity:.42}
@@ -69,6 +70,7 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .bottom-abilities{display:flex;gap:6px;overflow-x:auto;padding:7px 2px 0}.bottom-abilities .btn{white-space:nowrap;padding:7px 10px}
 .map-drop-hint{position:absolute;inset:0;display:none;place-items:center;background:#9b4dff18;border:2px dashed #c084fc88;z-index:60;pointer-events:none;font-size:18px;font-weight:700}.map-drop-hint.show{display:grid}
 
+/* Plein écran (mode Table de jeu) — une seule implémentation, indépendante de la Fullscreen API */
 body.stage-fullscreen .app{display:block;height:100vh}
 body.stage-fullscreen .sidebar,body.stage-fullscreen .top{display:none}
 body.stage-fullscreen .main{height:100vh}
@@ -82,8 +84,6 @@ body.stage-fullscreen .map-wrap{height:100%;border:0;border-radius:0}
 body.stage-fullscreen .targeting-banner{top:64px}
 
 @media(max-width:900px){.app{grid-template-columns:70px}.brand{font-size:0}.brand span{font-size:20px}.nav span{display:none}.grid2,.map-layout{grid-template-columns:1fr}.map-layout{height:auto}.map-card{height:600px}}
-
-/* Écran de connexion */
 .auth-overlay{position:fixed;inset:0;background:radial-gradient(circle at 50% 30%,#241b31 0,#111216 70%);display:flex;align-items:center;justify-content:center;z-index:9999}
 .auth-box{background:var(--panel);border:1px solid var(--line);padding:30px;border-radius:16px;width:min(400px,90vw);box-shadow:0 20px 50px #000c;text-align:center}
 .auth-box h2{margin:0 0 8px;font-size:22px;font-weight:800}.auth-box h2 span{color:var(--accent2)}
@@ -92,12 +92,9 @@ body.stage-fullscreen .targeting-banner{top:64px}
 .auth-tabs{display:flex;gap:10px;margin-top:15px;justify-content:center;font-size:12px}
 .auth-tabs button{background:none;border:0;color:var(--accent2);text-decoration:underline;padding:0}
 </style>
-
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-
-<div class="auth-overlay" id="authOverlay">
+  <div class="auth-overlay" id="authOverlay">
   <div class="auth-box">
     <h2>✦ <span>NarbuDR</span></h2>
     <p id="authDesc">Connectez-vous pour rejoindre la table de jeu</p>
@@ -109,7 +106,6 @@ body.stage-fullscreen .targeting-banner{top:64px}
     </div>
   </div>
 </div>
-
 <div class="app">
 <aside class="sidebar">
   <div class="brand">✦ <span>NarbuDR</span></div>
@@ -118,11 +114,11 @@ body.stage-fullscreen .targeting-banner{top:64px}
   <button class="nav" data-page="abilities">✨ <span>Capacités</span></button>
   <button class="nav" data-page="library">📚 <span>Bibliothèque</span></button>
   <div class="spacer"></div>
-  <div class="server">Serveur Supabase<br><b>● Temps réel actif</b></div>
+  <div class="server" id="serverInfo">Connexion en cours…</div>
+  <button class="btn ghost" style="width:100%" onclick="logout()">↩ Se déconnecter</button>
 </aside>
 <main class="main">
-<header class="top"><h1 id="pageTitle">Table de jeu</h1><div class="actions"><button class="btn primary" onclick="render()">🔄 Rafraîchir</button></div></header>
-
+<header class="top"><h1 id="pageTitle">Table de jeu</h1><div class="actions"><button class="btn" id="resetBtn" onclick="resetDemo()">Réinitialiser la démo</button><button class="btn primary" onclick="saveState()">💾 Sauvegarder</button></div></header>
 <section class="content" id="content"></section>
 </main>
 </div>
@@ -132,27 +128,32 @@ body.stage-fullscreen .targeting-banner{top:64px}
 <div class="toast" id="toast"></div>
 
 <script>
+
 /* ============================= CONFIGURATION SUPABASE ============================= */
 const SUPABASE_URL = "https://hrnwadoceetyscndbkgx.supabase.co";
 const SUPABASE_KEY = "sb_publishable_Smcvfpk46VOcV5EBJAScuQ_kgv-KRw4";
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-let currentUser = null;
-let isSignUpMode = false;
-
-// Identifiant secret de votre compte Maître du Jeu
+// Identifiant Supabase (auth.users.id) du Maître du Jeu
 const MJ_UUID = "17b03a0a-f866-4d92-b668-f8c70884b8b1";
 
-function isMJ() {
-  return currentUser && currentUser.id === MJ_UUID;
-}
+let currentUser = null;
+let isSignUpMode = false;
+let profiles = [];        // liste des comptes joueurs enregistrés {id,email}
+let gameChannel = null;   // canal Realtime Supabase
 
-// Vérifier la session au chargement
+/* ============================= PERMISSIONS ============================= */
+function isMJ(){ return !!currentUser && currentUser.id === MJ_UUID; }
+function isOwner(charId){ const c=char(charId); return !!c && !!currentUser && c.ownerId===currentUser.id; }
+function canControlChar(charId){ return isMJ() || isOwner(charId); }
+function canControlInstance(instId){ const i=inst(instId); return i ? canControlChar(i.charId) : false; }
+
+/* ============================= AUTH SUPABASE ============================= */
 supabaseClient.auth.getSession().then(({ data: { session } }) => {
   if (session) {
     currentUser = session.user;
     document.getElementById('authOverlay').style.display = 'none';
-    initGameNetwork();
+    initApp();
   }
 });
 
@@ -160,8 +161,8 @@ function toggleAuthMode(signUp) {
   isSignUpMode = signUp;
   document.getElementById('authDesc').textContent = signUp ? "Créez votre compte de joueur" : "Connectez-vous pour rejoindre la table de jeu";
   document.getElementById('authBtn').textContent = signUp ? "S'inscrire" : "Se connecter";
-  document.getElementById('authToggleMode').innerHTML = signUp ? 
-    `Déjà un compte ? <button onclick="toggleAuthMode(false)">Se connecter</button>` : 
+  document.getElementById('authToggleMode').innerHTML = signUp ?
+    `Déjà un compte ? <button onclick="toggleAuthMode(false)">Se connecter</button>` :
     `Pas de compte ? <button onclick="toggleAuthMode(true)">Créer un compte</button>`;
 }
 
@@ -169,41 +170,83 @@ async function handleAuth() {
   const email = document.getElementById('authEmail').value.trim();
   const password = document.getElementById('authPassword').value;
   if (!email || !password) { toast("⚠️ Veuillez remplir tous les champs."); return; }
-  
+
   const btn = document.getElementById('authBtn');
   btn.disabled = true; btn.textContent = "Chargement...";
 
   if (isSignUpMode) {
     const { error } = await supabaseClient.auth.signUp({ email, password });
-    if (error) { toast("❌ Erreur : " + error.message); btn.disabled = false; return; }
-    toast("✅ Compte créé ! Connexion...");
+    if (error) { toast("❌ Erreur : " + error.message); btn.disabled = false; toggleAuthMode(true); return; }
+    toast("✅ Compte créé ! Connexion en cours...");
   }
-  
+
   const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-  if (error) { toast("❌ Erreur : " + error.message); btn.disabled = false; return; }
-  
+  if (error) { toast("❌ Erreur : " + error.message); btn.disabled = false; btn.textContent = isSignUpMode ? "S'inscrire" : "Se connecter"; return; }
+
   currentUser = data.user;
   document.getElementById('authOverlay').style.display = 'none';
-  initGameNetwork();
+  await initApp();
+}
+
+async function logout(){
+  if(gameChannel){ supabaseClient.removeChannel(gameChannel); gameChannel=null; }
+  await supabaseClient.auth.signOut();
+  currentUser=null;
+  document.getElementById('authOverlay').style.display='flex';
+  toggleAuthMode(false);
 }
 
 /* ============================= DONNÉES DE BASE ============================= */
 const DEFAULT={
   characters:[
-    {id:'p1',name:'Zephyr',type:'player',icon:'🧙',move:6,stats:{Force:40,Magie:76,Agilité:82,Vitesse:41},resourcesMax:{Vie:290,Mana:215,Bouclier:100},def:{CA:16,DM:5},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0},visibleForPlayers:true},
-    {id:'m1',name:'Golem de cendre',type:'enemy',icon:'👹',move:5,stats:{Force:80,Magie:20,Vitesse:15},resourcesMax:{Vie:50,Mana:0,Bouclier:2},def:{CA:12,DM:2},res:{Feu:20,Eau:0,Terre:30,Air:0,Glace:10,Foudre:-10,Lumière:0,Ténèbres:0},visibleForPlayers:false},
-    {id:'m2',name:'Sorcier gobelin',type:'enemy',icon:'👺',move:6,stats:{Force:35,Magie:55,Vitesse:20},resourcesMax:{Vie:65,Mana:30,Bouclier:0},def:{CA:10,DM:3},res:{Feu:0,Eau:0,Terre:0,Air:15,Glace:0,Foudre:0,Lumière:0,Ténèbres:20},visibleForPlayers:false}
+    {id:'p1',name:'Zephyr',type:'player',icon:'🧙',move:6,ownerId:null,hidden:false,stats:{Force:40,Magie:76,Agilité:82,Vitesse:41,Artisanat:34},resourcesMax:{Vie:290,Mana:215,Bouclier:100},def:{CA:16,DM:5,'CA naturelle':12},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}},
+    {id:'m1',name:'Golem de cendre',type:'enemy',icon:'👹',move:5,ownerId:null,hidden:true,stats:{Force:80,Magie:20,Vitesse:15},resourcesMax:{Vie:50,Mana:0,Bouclier:2},def:{CA:12,DM:2,'CA naturelle':12},res:{Feu:20,Eau:0,Terre:30,Air:0,Glace:10,Foudre:-10,Lumière:0,Ténèbres:0}},
+    {id:'m2',name:'Sorcier gobelin',type:'enemy',icon:'👺',move:6,ownerId:null,hidden:true,stats:{Force:35,Magie:55,Vitesse:20},resourcesMax:{Vie:65,Mana:30,Bouclier:0},def:{CA:10,DM:3,'CA naturelle':10},res:{Feu:0,Eau:0,Terre:0,Air:15,Glace:0,Foudre:0,Lumière:0,Ténèbres:20}},
+    {id:'m3',name:'Slime rouge',type:'enemy',icon:'🟠',move:4,ownerId:null,hidden:true,stats:{Force:25,Magie:10,Vitesse:8},resourcesMax:{Vie:40,Mana:0,Bouclier:0},def:{CA:8,DM:1,'CA naturelle':8},res:{Feu:50,Eau:-25,Terre:0,Air:0,Glace:-25,Foudre:0,Lumière:0,Ténèbres:0}}
   ],
   abilities:[
     {id:'a1',name:"Balle d'air",icon:'💨',type:'Sort',formula:'3d20',stat:'Magie',defense:'DM',element:'Air',area:'single',areaSize:1,range:8,manaCost:10,characterIds:['p1'],desc:"Projectile perforant.",effect:'💨'},
-    {id:'a2',name:'Explosion de feu',icon:'🔥',type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'square',areaSize:4,range:6,manaCost:30,characterIds:['p1'],desc:"Explosion de zone.",effect:'🔥'}
+    {id:'a2',name:'Explosion de feu',icon:'🔥',type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'square',areaSize:4,range:6,manaCost:30,characterIds:['p1'],desc:"Explosion de feu touchant toutes les créatures dans une zone 4×4.",effect:'🔥'},
+    {id:'a3',name:'Soin de groupe',icon:'💚',type:'Soin',formula:'1d20 + 8',stat:'Magie',defense:'none',element:'Neutre',area:'circle',areaSize:3,range:5,manaCost:25,characterIds:['p1'],desc:"Soigne les alliés dans la zone.",effect:'✨'},
+    {id:'a4',name:'Bouclier arcanique',icon:'🛡',type:'Bouclier',formula:'1d20 + 10',stat:'Magie',defense:'none',element:'Neutre',area:'single',areaSize:1,range:5,manaCost:15,characterIds:['p1'],desc:"Confère un bouclier magique à un allié.",effect:'🛡'}
   ],
-  instances:[],
+  instances:[
+    {id:'i_p1',charId:'p1',label:'Zephyr',x:4,y:7,hp:290,hpMax:290,mana:215,manaMax:215,shield:0,shieldMax:100,remainingMove:6},
+    {id:'i_m1',charId:'m1',label:'Golem de cendre',x:9,y:5,hp:50,hpMax:50,mana:0,manaMax:0,shield:2,shieldMax:2,remainingMove:5},
+    {id:'i_m2',charId:'m2',label:'Sorcier gobelin',x:13,y:8,hp:65,hpMax:65,mana:30,manaMax:30,shield:0,shieldMax:0,remainingMove:6},
+    {id:'i_m3',charId:'m3',label:'Slime rouge',x:7,y:10,hp:40,hpMax:40,mana:0,manaMax:0,shield:0,shieldMax:0,remainingMove:4}
+  ],
   map:{cols:18,rows:12,cell:44},
   chat:[]
 };
+const ELEMENT_RES_KEYS=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres'];
 
-let S = structuredClone(DEFAULT);
+function normalizeState(){
+  if(!S.instances)S.instances=[];
+  if(!S.chat)S.chat=[];
+  if(!S.map)S.map=structuredClone(DEFAULT.map);
+  if(!S.characters)S.characters=[];
+  if(!S.abilities)S.abilities=[];
+  S.characters.forEach(c=>{
+    if(!c.res)c.res={};
+    if(c.res.Gel!==undefined&&c.res.Glace===undefined){c.res.Glace=c.res.Gel;}
+    delete c.res.Gel;
+    ELEMENT_RES_KEYS.forEach(k=>{if(c.res[k]===undefined)c.res[k]=0;});
+    if(c.hidden===undefined)c.hidden=(c.type==='enemy');
+    if(c.ownerId===undefined)c.ownerId=null;
+  });
+  S.abilities.forEach(a=>{if(a.element==='Gel')a.element='Glace';});
+}
+
+let S=JSON.parse(localStorage.getItem('arcanum-vtt')||'null')||structuredClone(DEFAULT);
+normalizeState();
+
+const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',library:'Bibliothèque'};
+
+let currentPage='table';
+let selectedToken=null;
+let activeAbility=null;
+let hoverCell=null;
 let mapZoom=1, mapPan={x:0,y:0};
 let combat={active:false,order:[],turn:0,initiatives:{}};
 let collapsedAssets={players:false,enemies:false};
@@ -211,81 +254,83 @@ let sidePanelTab='library';
 let stageFullscreen=false;
 let dragCandidate=null;
 let panState=null;
-let currentPage='table';
-let selectedToken=null;
-let activeAbility=null;
-let hoverCell=null;
 
-/* ============================= LOGIQUE RÉSEAU TEMPS REEL ============================= */
-async function initGameNetwork() {
-  try {
-    const resChars = await supabaseClient.from('characters').select('*');
-    const resAbils = await supabaseClient.from('abilities').select('*');
-    const resInsts = await supabaseClient.from('instances').select('*');
-
-    if (resChars.data && resChars.data.length > 0) S.characters = resChars.data;
-    else {
-      console.error('Failed to fetch characters data from Supabase.');
-      S.characters = [];
-    }
-
-    if (resAbils.data && resAbils.data.length > 0) S.abilities = resAbils.data;
-    else {
-      console.error('Failed to fetch abilities data from Supabase.');
-      S.abilities = [];
-    }
-
-    if (resInsts.data) S.instances = resInsts.data || [];
-    else {
-      console.error('Failed to fetch instances data from Supabase.');
-      S.instances = [];
-    }
-
-    if (!S.characters.length && !S.abilities.length) {
-      await supabaseClient.from('characters').insert(DEFAULT.characters);
-      await supabaseClient.from('abilities').insert(DEFAULT.abilities);
-
-      S.characters = DEFAULT.characters;
-      S.abilities = DEFAULT.abilities;
-
-      console.log('Default data inserted into Supabase.');
-    }
-
-    // Écoute dynamique de Supabase Realtime
-    supabaseClient.channel('table-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'instances' }, payload => {
-        if (payload.eventType === 'INSERT') {
-          S.instances.push(payload.new);
-        } else if (payload.eventType === 'UPDATE') {
-          const idx = S.instances.findIndex(i => i.id === payload.new.id);
-          if (idx !== -1) S.instances[idx] = payload.new;
-        } else if (payload.eventType === 'DELETE') {
-          S.instances = S.instances.filter(i => i.id !== payload.old.id);
-        }
-        render();
-      })
-      .subscribe();
-
-    console.log('Game network initialized successfully.');
-  } catch (error) {
-    console.error('Error initializing game network:', error);
+/* ============================= SYNCHRONISATION SUPABASE ============================= */
+async function loadProfiles(){
+  try{
+    const { data, error } = await supabaseClient.from('profiles').select('id,email');
+    if(!error && data) profiles=data;
+  }catch(e){ console.error('loadProfiles', e); }
+}
+async function loadGameState(){
+  try{
+    const { data, error } = await supabaseClient.from('game_state').select('data').eq('id','main').maybeSingle();
+    if(error) throw error;
+    if(data && data.data){ S=data.data; }
+    else { S=structuredClone(DEFAULT); await persistState(); }
+  }catch(e){
+    console.error('loadGameState', e);
+    toast('⚠️ Impossible de charger la partie en ligne, utilisation de la sauvegarde locale.');
+    S=JSON.parse(localStorage.getItem('arcanum-vtt')||'null')||structuredClone(DEFAULT);
   }
-
+  normalizeState();
+}
+async function persistState(){
+  try{
+    const { error } = await supabaseClient.from('game_state').upsert({id:'main',data:S,updated_at:new Date().toISOString()});
+    if(error) console.error('persistState', error);
+  }catch(e){ console.error('persistState', e); }
+  localStorage.setItem('arcanum-vtt', JSON.stringify(S));
+}
+function subscribeRealtime(){
+  if(gameChannel){ supabaseClient.removeChannel(gameChannel); gameChannel=null; }
+  gameChannel=supabaseClient.channel('game_state_sync')
+    .on('postgres_changes',{event:'*',schema:'public',table:'game_state',filter:'id=eq.main'},payload=>{
+      if(payload.new && payload.new.data){
+        S=payload.new.data;
+        normalizeState();
+        render();
+      }
+    })
+    .subscribe();
+}
+async function initApp(){
+  try{
+    await loadProfiles();
+    await loadGameState();
+    subscribeRealtime();
+  }catch(e){
+    console.error('initApp', e);
+    toast('⚠️ Erreur de synchronisation avec le serveur.');
+  }
+  updateUserBadge();
   render();
 }
-
-
+function updateUserBadge(){
+  const el=document.getElementById('serverInfo');
+  if(!el||!currentUser)return;
+  el.innerHTML=`${isMJ()?'🎲 <b>Maître du Jeu</b>':'🧙 Joueur'}<br><span class="tiny">${esc(currentUser.email)}</span>`;
+  const resetBtn=document.getElementById('resetBtn');
+  if(resetBtn) resetBtn.style.display=isMJ()?'':'none';
+}
 
 /* ============================= UTILITAIRES ============================= */
-function toast(t){const e=document.getElementById('toast');if(!e)return;e.textContent=t;e.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>e.classList.remove('show'),1800);}
+function saveState(){ persistState(); toast('Sauvegarde effectuée'); }
+function resetDemo(){
+  if(!isMJ()){toast('⛔ Seul le MJ peut réinitialiser la partie.');return;}
+  if(!confirm('Réinitialiser les données de démonstration pour TOUTE la table ?'))return;
+  S=structuredClone(DEFAULT); combat={active:false,order:[],turn:0,initiatives:{}};
+  selectedToken=null; activeAbility=null; hoverCell=null;
+  saveState(); render();
+}
+function toast(t){const e=document.getElementById('toast');e.textContent=t;e.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>e.classList.remove('show'),1800);}
 function esc(x){return String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function opt(value,label,current){return `<option value="${esc(value)}" ${value===current?'selected':''}>${esc(label)}</option>`;}
 function parseNum(v){const n=+v;return Number.isFinite(n)?n:0;}
 function char(id){return S.characters.find(c=>c.id===id);}
 function inst(id){return S.instances.find(i=>i.id===id);}
 function instTemplate(instance){return instance?char(instance.charId):null;}
-function characterAbilities(charId){return S.abilities.filter(a=>(a.characterIds||[]).includes(charId));}
-function pct(v,m){return m?Math.max(0,Math.min(100,v/m*100)):0;}
+function characterAbilities(charId){if(!charId)return [];return S.abilities.filter(a=>(a.characterIds||[]).includes(charId));}
 
 function roll(expr){
   expr=String(expr).replace(/\s+/g,''); let bonus=0;
@@ -297,15 +342,17 @@ function roll(expr){
 function outcome(d){
   if(d===100)return ['Échec ultime',0]; if(d>=95)return ['Échec critique',0]; if(d>=90)return ['Échec',0];
   if(d>=75)return ['Légère réussite',.5]; if(d>=50)return ['Légère réussite',.75]; if(d>=25)return ['Réussite',1];
-  return ['Réussite critique',2];
+  if(d>=5)return ['Grande réussite',1.5]; if(d>=2)return ['Réussite critique',2]; return ['Réussite ultime',4];
 }
-function addLog(html){S.chat.push(html); if(S.chat.length>120)S.chat.shift();}
+function addLog(html){S.chat.push(html);if(S.chat.length>120)S.chat.shift();}
+function pct(v,m){return m?Math.max(0,Math.min(100,v/m*100)):0;}
 
-/* ============================= TOKENS ============================= */
+/* ============================= INSTANCES (TOKENS) ============================= */
 function isOccupied(x,y,excludeId){return S.instances.some(i=>i.id!==excludeId&&i.x===x&&i.y===y);}
 function findFreeCell(x,y,excludeId){
   if(!isOccupied(x,y,excludeId))return [x,y];
-  for(let r=1;r<=18;r++){
+  const maxR=Math.max(S.map.cols,S.map.rows);
+  for(let r=1;r<=maxR;r++){
     for(let dx=-r;dx<=r;dx++)for(let dy=-r;dy<=r;dy++){
       if(Math.max(Math.abs(dx),Math.abs(dy))!==r)continue;
       const nx=x+dx, ny=y+dy;
@@ -315,53 +362,49 @@ function findFreeCell(x,y,excludeId){
   }
   return null;
 }
-
-async function spawnInstance(charId,x,y){
-  if(!isMJ()) { toast("⛔ Seul le Maître du Jeu peut invoquer des pions."); return; }
-  const t=char(charId); if(!t)return;
+function spawnInstance(charId,x,y){
+  const t=char(charId); if(!t)return null;
   const count=S.instances.filter(i=>i.charId===charId).length+1;
   const label=t.type==='enemy'?`${t.name} #${count}`:t.name;
   const rm=t.resourcesMax||{Vie:10,Mana:0,Bouclier:0};
-  
-  const newInst={
-    id:'i'+Date.now().toString(36), charId, label, x, y,
-    hp:rm.Vie||0, hp_max:rm.Vie||0, mana:rm.Mana||0, mana_max:rm.Mana||0, 
-    shield:rm.Bouclier||0, shield_max:rm.Bouclier||0, remaining_move:t.move??6,
-    owner_id: null
-  };
-  
-  await supabaseClient.from('instances').insert([newInst]);
+  const newInst={id:'i'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),charId,label,x,y,
+    hp:rm.Vie||0,hpMax:rm.Vie||0,mana:rm.Mana||0,manaMax:rm.Mana||0,shield:rm.Bouclier||0,shieldMax:rm.Bouclier||0,
+    remainingMove:t.move??6};
+  S.instances.push(newInst); return newInst;
 }
-
-async function removeInstance(id){
-  if(!isMJ()) { toast("⛔ Seul le MJ peut retirer des pions."); return; }
-  await supabaseClient.from('instances').delete().eq('id', id);
+function removeInstance(id){
+  S.instances=S.instances.filter(i=>i.id!==id);
   if(selectedToken===id)selectedToken=null;
-}
-
-async function updateInstanceOnServer(t) {
-  await supabaseClient.from('instances').update({
-    x: t.x, y: t.y, hp: t.hp, mana: t.mana, shield: t.shield, remaining_move: t.remaining_move
-  }).eq('id', t.id);
+  if(combat.active){
+    const idx=combat.order.indexOf(id);
+    if(idx!==-1){
+      combat.order.splice(idx,1); delete combat.initiatives[id];
+      if(idx<combat.turn)combat.turn--;
+      if(!combat.order.length){combat.active=false;combat.turn=0;}
+      else combat.turn=((combat.turn%combat.order.length)+combat.order.length)%combat.order.length;
+    }
+  }
 }
 
 /* ============================= RENDU ============================= */
 function render(){
   document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.page===currentPage));
-  const c=document.getElementById('content'); if(!c)return;
+  document.getElementById('pageTitle').textContent=PAGE_TITLES[currentPage];
+  const c=document.getElementById('content');
   if(currentPage==='table')c.innerHTML=tablePage();
   else if(currentPage==='characters')c.innerHTML=charactersPage();
   else if(currentPage==='abilities')c.innerHTML=abilitiesPage();
   else if(currentPage==='library')c.innerHTML=libraryPage();
   updateTargetingBanner();
+  updateUserBadge();
   if(currentPage==='table')setupMapInteractions();
 }
-
 function updateTargetingBanner(){
   const banner=document.getElementById('targetingBanner'); if(!banner)return;
   const a=activeAbility?S.abilities.find(x=>x.id===activeAbility):null;
   if(a&&currentPage==='table'){
-    banner.innerHTML=`🎯 Capacité active : ${a.icon} <b>${esc(a.name)}</b> — Clique sur une case (Échap pour annuler)`;
+    const caster=selectedToken?inst(selectedToken):null;
+    banner.innerHTML=`🎯 <b>${esc(caster?.label||'Lanceur')}</b> — ${a.icon} ${esc(a.name)} : clique sur une cible ou une case (Échap pour annuler)`;
     banner.classList.add('show');
   }else{
     banner.classList.remove('show');
@@ -369,213 +412,622 @@ function updateTargetingBanner(){
 }
 
 function tablePage(){
+  const mj=isMJ();
+  const combatControls = mj
+    ? (combat.active?`<button class="btn" onclick="endCombat()">⏹ Fin du combat</button><button class="btn" onclick="nextTurn()">⏭ Tour suivant</button>`:`<button class="btn primary" onclick="startCombat()">⚔ Démarrer le combat</button>`)
+    : (combat.active?`<span class="pill">⚔ Combat en cours</span>`:'');
   return `<div class="map-layout" id="mapLayout">
   <div class="card map-card">
     <div class="map-toolbar">
-      <button class="btn" onclick="toggleFullscreen()">${stageFullscreen?'✕':'⛶ Plein écran'}</button>
-      ${isMJ() ? `<span class="pill" style="background:#5c2493">👑 Mode MJ</span>` : `<span class="pill" style="background:#245393">🧙 Mode Joueur</span>`}
+      <button class="btn" onclick="toggleFullscreen()">${stageFullscreen?'✕ Quitter le plein écran':'⛶ Plein écran'}</button>
+      ${combatControls}
     </div>
     <div class="map-wrap" id="mapWrap">
+      <div class="map-drop-hint" id="mapDropHint">➕ Déposer sur la carte</div>
       <div class="map" id="map" style="width:${S.map.cols*S.map.cell}px;height:${S.map.rows*S.map.cell}px">${mapCells()}${tokensHtml()}</div>
+      ${combat.active?`<div class="turn-banner">⚔ Tour : <b>${esc(inst(combat.order[combat.turn])?.label||'—')}</b></div>`:''}
     </div>
-    <div class="bottom-abilities">${(() => {
+    <div class="bottom-abilities">${(()=>{
       const selInst=selectedToken?inst(selectedToken):null;
-      if(!selInst)return '<span class="tiny muted">Sélectionnez un pion sur la carte.</span>';
-      return characterAbilities(selInst.charId).map(a=>`<button class="btn ${activeAbility===a.id?'primary':''}" onclick="startAbility('${a.id}')">${a.icon} ${esc(a.name)}</button>`).join('');
+      if(!selInst)return '<span class="tiny muted">Sélectionne un personnage sur la carte pour voir ses capacités.</span>';
+      if(!canControlInstance(selInst.id))return '<span class="tiny muted">Vous ne contrôlez pas ce personnage.</span>';
+      const known=characterAbilities(selInst.charId);
+      if(!known.length)return '<span class="tiny muted">Ce personnage ne connaît aucune capacité (à assigner dans sa fiche).</span>';
+      return known.map(a=>`<button class="btn ${activeAbility===a.id?'primary':''}" onclick="startAbility('${a.id}')" title="Portée : ${a.range?a.range+' cases':'illimitée'} · Mana : ${a.manaCost||0}">${a.icon} ${esc(a.name)}</button>`).join('');
     })()}</div>
   </div>
   <div class="card side-panel">${sidePanelHtml()}</div>
   </div>`;
 }
-
 function mapCells(){
   let out=''; const m=S.map;
   for(let y=0;y<m.rows;y++)for(let x=0;x<m.cols;x++)out+=`<div class="cell" style="left:${x*m.cell}px;top:${y*m.cell}px;width:${m.cell}px;height:${m.cell}px"></div>`;
   return out;
 }
-
 function tokensHtml(){
+  const mj=isMJ();
   return S.instances.map(t=>{
     const tpl=instTemplate(t); if(!tpl)return '';
-    const canSeeStats = isMJ() || tpl.visibleForPlayers || tpl.type === 'player';
     const px=t.x*S.map.cell+S.map.cell/2, py=t.y*S.map.cell+S.map.cell/2;
-    return `<div class="token-wrap ${selectedToken===t.id?'selected':''}" data-token="${t.id}" style="left:${px}px;top:${py}px">
-      <div class="token-hud">
-        ${canSeeStats ? `<div class="hud-row">❤️ ${t.hp}/${t.hp_max}</div><div class="mini-bar mini-hp"><i style="width:${pct(t.hp,t.hp_max)}%"></i></div>` : `<div class="hud-row">❤️ Caché</div>`}
-      </div>
+    const isTurn=combat.active&&combat.order[combat.turn]===t.id;
+    const hideStats=tpl.hidden&&!mj;
+    const hud=hideStats
+      ? `<div class="hud-row">❤️ ???</div>`
+      : `<div class="hud-row">❤️ ${t.hp}/${t.hpMax}</div>
+         <div class="mini-bar mini-hp"><i style="width:${pct(t.hp,t.hpMax)}%"></i></div>
+         ${t.manaMax>0?`<div class="hud-row">💧 ${t.mana}/${t.manaMax}</div><div class="mini-bar mini-mana"><i style="width:${pct(t.mana,t.manaMax)}%"></i></div>`:''}
+         ${t.shieldMax>0?`<div class="hud-row">🛡 ${t.shield}/${t.shieldMax}</div><div class="mini-bar mini-shield"><i style="width:${pct(t.shield,t.shieldMax)}%"></i></div>`:''}`;
+    return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''}" data-token="${t.id}" style="left:${px}px;top:${py}px">
+      <div class="token-hud">${hud}</div>
       <div class="token ${tpl.type}" title="${esc(t.label)}">${tpl.icon}</div>
-      <div class="token-label">${esc(t.label)} ${!canSeeStats ? '🙈' : ''}</div>
+      <div class="token-label">${esc(t.label)}</div>
     </div>`;
   }).join('');
 }
+function zoneMarkup(a,cell){
+  let size=a.areaSize||3, x=cell[0], y=cell[1];
+  x=Math.max(0,Math.min(S.map.cols-size,x)); y=Math.max(0,Math.min(S.map.rows-size,y));
+  const px=x*S.map.cell, py=y*S.map.cell, d=size*S.map.cell;
+  const radius=a.area==='circle'?'border-radius:50%;':'';
+  const effect=a.effect?`<span class="zone-effect" style="font-size:${Math.max(24,size*8)}px">${esc(a.effect)}</span>`:'';
+  return `<div id="zonePreview" class="zone" style="left:${px}px;top:${py}px;width:${d}px;height:${d}px;${radius}">${effect}</div>`;
+}
+function updateZonePreview(){
+  const map=document.getElementById('map'); if(!map)return;
+  document.getElementById('zonePreview')?.remove();
+  if(!activeAbility||!hoverCell)return;
+  const a=S.abilities.find(x=>x.id===activeAbility);
+  if(!a||a.area==='single')return;
+  map.insertAdjacentHTML('beforeend',zoneMarkup(a,hoverCell));
+}
 
+/* ---- Panneau latéral : Bibliothèque / Chat + combat ---- */
 function sidePanelHtml(){
   return `<div class="side-tabs">
-    <button class="tab ${sidePanelTab==='library'?'active':''}" onclick="sidePanelTab='library';render();">📚 Bibliothèque</button>
-    <button class="tab ${sidePanelTab==='chat'?'active':''}" onclick="sidePanelTab='chat';render();">💬 Chat</button>
+    <button class="tab ${sidePanelTab==='library'?'active':''}" onclick="switchSideTab('library')">📚 Bibliothèque</button>
+    <button class="tab ${sidePanelTab==='chat'?'active':''}" onclick="switchSideTab('chat')">💬 Chat</button>
   </div>
-  <div class="asset-panel">${sidePanelTab==='library'?assetPanel():chatPanel()}</div>`;
+  <div class="asset-panel">${sidePanelTab==='library'?assetPanel():chatPanel()}${combatPanel()}</div>`;
 }
-
+function switchSideTab(t){sidePanelTab=t;render();}
 function assetPanel(){
-  if(!isMJ()) return `<p class="muted tiny">Seul le MJ peut glisser-déposer des monstres depuis la bibliothèque.</p>`;
-  return S.characters.map(c=>`<div class="asset-item" draggable="true" ondragstart="assetDragStart(event,'${c.id}')">
-    <div class="asset-icon">${c.icon}</div><b>${esc(c.name)}</b>
-  </div>`).join('');
+  const mj=isMJ();
+  const players=S.characters.filter(c=>c.type==='player');
+  const enemies=S.characters.filter(c=>c.type==='enemy');
+  const section=(title,key,items)=>`<div class="asset-section"><button onclick="toggleAssetSection('${key}')"><span>${collapsedAssets[key]?'▸':'▾'} ${title}</span><small>${items.length}</small></button>${collapsedAssets[key]?'':`<div class="asset-list">${items.map(c=>{
+      const count=S.instances.filter(i=>i.charId===c.id).length;
+      return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="assetDragStart(event,'${c.id}')"`:''} onclick="openCharacter('${c.id}')" title="${mj?'Glisser sur la carte pour créer un token, cliquer pour modifier la fiche':'Fiche (lecture seule)'}">
+        <div class="asset-icon">${c.icon}</div>
+        <div class="asset-info"><b>${esc(c.name)}</b><small>${c.type==='player'?'Joueur':'Monstre'}${count?` · ${count} sur la carte`:''}</small></div>
+      </div>`;
+    }).join('')}</div>`}</div>`;
+  return `<div class="row between" style="margin-bottom:8px"><h2>📚 Bibliothèque</h2>${mj?'<button class="btn" onclick="openCharacter()">＋</button>':''}</div>
+  <p class="tiny muted">${mj?'Glisse un élément sur la carte pour créer un token (plusieurs exemplaires possibles).':'Seul le MJ peut ajouter des tokens sur la carte.'}</p>
+  ${section('Personnages','players',players)}${section('Créatures','enemies',enemies)}
+  ${mj?`<div style="margin-top:8px"><button class="btn" style="width:100%" onclick="openCharacter()">＋ Nouveau personnage / monstre</button></div>`:''}`;
 }
-
+function toggleAssetSection(key){collapsedAssets[key]=!collapsedAssets[key];render();}
 function chatPanel(){
-  return `<h2>💬 Journal</h2><div class="log">${S.chat.slice().reverse().map(e=>`<div>${e}</div>`).join('')}</div>`;
+  const entries=S.chat.length?S.chat.slice().reverse().map(e=>`<div>${e}</div>`).join(''):'<p class="muted tiny">Aucun événement pour l’instant.</p>';
+  return `<h2>💬 Journal de combat</h2><div class="log">${entries}</div>`;
+}
+function combatPanel(){
+  if(!combat.active)return `<div class="combat-panel"><h2>⚔ Combat</h2><p class="muted tiny">Le MJ démarre le combat. L'initiative est déterminée par 1d20 + Vitesse (égalité : 1d100).</p></div>`;
+  const current=inst(combat.order[combat.turn]);
+  return `<div class="combat-panel"><div class="row between"><h2>⚔ Initiative</h2>${isMJ()?'<button class="btn" onclick="nextTurn()">Tour suivant</button>':''}</div>
+  <div class="initiative-list">${combat.order.map((id,i)=>{const t=inst(id);return `<div class="initiative-row ${i===combat.turn?'current':''}"><span>${i===combat.turn?'▶ ':''}${esc(t?.label||id)}</span><b>${combat.initiatives[id]}</b></div>`;}).join('')}</div>
+  <div class="tiny muted" style="margin-top:6px">Déplacement restant : ${current?.remainingMove??'—'}</div></div>`;
 }
 
-/* ============================= INTERACTIONS ============================= */
+/* ============================= COMBAT (MJ uniquement) ============================= */
+function startCombat(){
+  if(!isMJ()){toast('⛔ Seul le MJ peut démarrer le combat.');return;}
+  const ids=S.instances.map(i=>i.id);
+  if(!ids.length){toast('Aucun token sur la carte.');return;}
+  const init={};
+  ids.forEach(id=>{const tpl=instTemplate(inst(id));init[id]=roll('1d20').total+(tpl?.stats?.Vitesse||0);});
+  const groups={}; ids.forEach(id=>(groups[init[id]]??=[]).push(id));
+  Object.values(groups).forEach(group=>{
+    if(group.length>1){
+      const rolled=group.map(id=>({id,r:roll('1d100').total})).sort((a,b)=>b.r-a.r);
+      rolled.forEach((x,i)=>{init[x.id]+=(rolled.length-i)/1000;});
+    }
+  });
+  const order=[...ids].sort((a,b)=>init[b]-init[a]);
+  combat={active:true,order,turn:0,initiatives:Object.fromEntries(order.map(id=>[id,Math.floor(init[id])]))};
+  S.instances.forEach(t=>{const tpl=instTemplate(t);t.remainingMove=tpl?.move??6;});
+  selectedToken=order[0]??selectedToken;
+  addLog('⚔ <b>Combat démarré</b> — initiative : '+order.map(id=>`${esc(inst(id).label)} (${combat.initiatives[id]})`).join(', ')+'.');
+  saveState(); render();
+}
+function endCombat(){
+  if(!isMJ()){toast('⛔ Seul le MJ peut terminer le combat.');return;}
+  combat={active:false,order:[],turn:0,initiatives:{}};
+  addLog('⏹ Fin du combat.');
+  saveState(); render();
+}
+function advanceTurn(){
+  if(!combat.active||!combat.order.length)return;
+  combat.turn=(combat.turn+1)%combat.order.length;
+  const nt=inst(combat.order[combat.turn]);
+  if(nt){const tpl=instTemplate(nt);nt.remainingMove=tpl?.move??6;}
+  selectedToken=combat.order[combat.turn];
+}
+function nextTurn(){
+  if(!isMJ()){toast('⛔ Seul le MJ peut avancer le tour.');return;}
+  advanceTurn();saveState();render();
+}
+
+/* ============================= CARTE : SÉLECTION / DRAG / PAN / ZOOM ============================= */
+function mapPoint(clientX,clientY){
+  const wrap=document.getElementById('mapWrap'); const rect=wrap.getBoundingClientRect();
+  const x=(clientX-rect.left-mapPan.x)/(S.map.cell*mapZoom);
+  const y=(clientY-rect.top-mapPan.y)/(S.map.cell*mapZoom);
+  return [Math.max(0,Math.min(S.map.cols-1,Math.floor(x))),Math.max(0,Math.min(S.map.rows-1,Math.floor(y)))];
+}
+function applyMapTransform(){const map=document.getElementById('map');if(map)map.style.transform=`translate(${mapPan.x}px,${mapPan.y}px) scale(${mapZoom})`;}
+
 function setupMapInteractions(){
-  const wrap=document.getElementById('mapWrap'); if(!wrap)return;
-  wrap.ondragover=e=>e.preventDefault();
-  wrap.ondrop=async e=>{
-    e.preventDefault(); if(!isMJ()) return;
-    const charId=e.dataTransfer.getData('text/plain');
+  const wrap=document.getElementById('mapWrap'); const map=document.getElementById('map');
+  if(!wrap||!map)return;
+  const hint=document.getElementById('mapDropHint');
+
+  wrap.ondragover=e=>{e.preventDefault();hint?.classList.add('show');};
+  wrap.ondragleave=()=>hint?.classList.remove('show');
+  wrap.ondrop=e=>{
+    e.preventDefault(); hint?.classList.remove('show');
+    if(!isMJ()){toast('⛔ Seul le MJ peut ajouter des tokens.');return;}
+    const charId=e.dataTransfer.getData('text/plain'); const tpl=char(charId); if(!tpl)return;
     const pt=mapPoint(e.clientX,e.clientY);
     const free=findFreeCell(pt[0],pt[1]);
-    if(free) spawnInstance(charId,free[0],free[1]);
+    if(!free){toast('🚫 Plus aucune case libre sur la carte.');return;}
+    const created=spawnInstance(charId,free[0],free[1]);
+    if(created){
+      selectedToken=created.id;
+      addLog(`➕ ${esc(created.label)} apparaît sur la carte.`);
+      if(free[0]!==pt[0]||free[1]!==pt[1])toast(`⚠️ Case occupée — ${created.label} placé sur la case libre la plus proche.`);
+    }
+    saveState(); render();
   };
+  wrap.oncontextmenu=e=>e.preventDefault();
 
   wrap.onmousedown=e=>{
     if(e.button===2){
       panState={startX:e.clientX,startY:e.clientY,origX:mapPan.x,origY:mapPan.y};
-      wrap.classList.add('panning'); return;
+      wrap.classList.add('panning'); e.preventDefault(); return;
     }
+    if(e.button!==0)return;
     const tw=e.target.closest('.token-wrap');
     if(tw){
-      const id=tw.dataset.token; const t=inst(id);
-      const canControl = isMJ() || t.owner_id === currentUser.id || instTemplate(t).type === 'player';
+      e.stopPropagation();
+      const id=tw.dataset.token;
       if(activeAbility){
-        const a=S.abilities.find(x=>x.id===activeAbility); if(a) resolveAbility(a,[t.x,t.y]);
+        const a=S.abilities.find(x=>x.id===activeAbility); const t=inst(id);
+        if(a&&t)resolveAbility(a,[t.x,t.y],id);
         return;
       }
       selectedToken=id;
-      if(canControl) {
-        dragCandidate={id,startX:e.clientX,startY:e.clientY,origX:t.x,origY:t.y,moved:false};
-      } else {
-        toast("🚫 Permission refusée pour ce pion.");
+      if(!canControlInstance(id)){
+        render(); return; // vue seule : ce token ne t'appartient pas
       }
+      if(combat.active&&combat.order[combat.turn]!==id){
+        toast('⏳ Ce n’est pas le tour de ce personnage.'); render(); return;
+      }
+      const c=inst(id);
+      dragCandidate={id,startX:e.clientX,startY:e.clientY,origX:c.x,origY:c.y,moved:false};
       render(); return;
+    }
+    if(activeAbility){
+      const pt=mapPoint(e.clientX,e.clientY);
+      const a=S.abilities.find(x=>x.id===activeAbility);
+      if(a)resolveAbility(a,pt);
+      return;
     }
     if(selectedToken){selectedToken=null;render();}
   };
 
-    window.onmousemove=e=>{
+  window.onmousemove=e=>{
     if(panState){
-      mapPan.x=panState.origX+(e.clientX-panState.startX); mapPan.y=panState.origY+(e.clientY-panState.startY);
+      mapPan.x=panState.origX+(e.clientX-panState.startX);
+      mapPan.y=panState.origY+(e.clientY-panState.startY);
       applyMapTransform(); return;
     }
     if(dragCandidate){
-      dragCandidate.moved=true; const pt=mapPoint(e.clientX,e.clientY); const t=inst(dragCandidate.id);
-      if(t && pt){
-        // CORRECTIF ICI : On sépare bien le X du Y pour que la base de données comprenne
+      const dx=e.clientX-dragCandidate.startX, dy=e.clientY-dragCandidate.startY;
+      if(!dragCandidate.moved&&Math.hypot(dx,dy)<4)return;
+      dragCandidate.moved=true;
+      const pt=mapPoint(e.clientX,e.clientY);
+      const t=inst(dragCandidate.id);
+      if(t){
         t.x=pt[0]; t.y=pt[1];
         const el=document.querySelector(`[data-token="${dragCandidate.id}"]`);
-        if(el){
-          el.style.left=(pt[0]*S.map.cell+S.map.cell/2)+'px';
-          el.style.top=(pt[1]*S.map.cell+S.map.cell/2)+'px';
-        }
+        if(el){el.style.left=(pt[0]*S.map.cell+S.map.cell/2)+'px';el.style.top=(pt[1]*S.map.cell+S.map.cell/2)+'px';}
       }
+      return;
+    }
+    if(activeAbility){
+      const rect=wrap.getBoundingClientRect();
+      const x=Math.floor((e.clientX-rect.left-mapPan.x)/(S.map.cell*mapZoom));
+      const y=Math.floor((e.clientY-rect.top-mapPan.y)/(S.map.cell*mapZoom));
+      if(x>=0&&y>=0&&x<S.map.cols&&y<S.map.rows){hoverCell=[x,y];updateZonePreview();}
     }
   };
 
-  window.onmouseup=async ()=>{
-    const mapWrapEl = document.getElementById('mapWrap');
+  window.onmouseup=()=>{
     if(panState){panState=null;wrap.classList.remove('panning');}
     if(dragCandidate){
-      const t=inst(dragCandidate.id);
-      if(dragCandidate.moved && t){
-        if(isOccupied(t.x,t.y,t.id)){
-          t.x=dragCandidate.origX; t.y=dragCandidate.origY; toast("🚫 Case occupée.");
-        } else {
-          addLog(`↦ <b>${esc(t.label)}</b> se déplace en (${t.x+1}, ${t.y+1})`);
-          await updateInstanceOnServer(t);
+      const {id,moved,origX,origY}=dragCandidate;
+      const t=inst(id);
+      if(moved&&t){
+        const occupant=S.instances.find(i=>i.id!==id&&i.x===t.x&&i.y===t.y);
+        if(occupant){
+          t.x=origX; t.y=origY;
+          toast(`🚫 ${occupant.label} est déjà sur cette case — choisis un autre déplacement.`);
+        }else if(combat.active&&combat.order[combat.turn]===id){
+          const tpl=instTemplate(t);
+          const dist=Math.abs(t.x-origX)+Math.abs(t.y-origY);
+          const remaining=t.remainingMove??(tpl?.move??6);
+          if(dist>remaining){
+            t.x=origX; t.y=origY;
+            toast('🚫 Déplacement maximal atteint pour ce tour.');
+          }else{
+            t.remainingMove=remaining-dist;
+            addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
+          }
+        }else if(!combat.active){
+          addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
         }
+        saveState();
       }
       dragCandidate=null; render();
     }
   };
+
+  wrap.onwheel=e=>{
+    e.preventDefault();
+    const old=mapZoom;
+    mapZoom=Math.max(.4,Math.min(3,mapZoom+(e.deltaY<0?.1:-.1)));
+    const rect=wrap.getBoundingClientRect();
+    const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+    mapPan.x=mx-(mx-mapPan.x)*(mapZoom/old);
+    mapPan.y=my-(my-mapPan.y)*(mapZoom/old);
+    applyMapTransform();
+  };
+
+  applyMapTransform();
 }
 
-/* ============================= SORTS ============================= */
-function startAbility(id){ activeAbility=id; toast("🎯 Sélectionnez une cible sur la carte."); }
-async function resolveAbility(a,start){
-  const targets=S.instances.filter(i=>i.x===start && i.y===start);
-  const caster=inst(selectedToken);
-  if(!targets.length || !caster) { activeAbility=null; render(); return; }
-  for(const t of targets){
-    const r=roll(a.formula);
-    if(a.type==='Soin'){
-      t.hp=Math.min(t.hp_max,t.hp+r.total);
-      addLog(`💚 Soin : <b>${esc(caster.label)}</b> soigne <b>${esc(t.label)}</b> de ${r.total} PV.`);
-    } else {
-      t.hp=Math.max(0,t.hp-r.total);
-      addLog(`⚔️ Attaque : <b>${esc(caster.label)}</b> inflige ${r.total} dégâts à <b>${esc(t.label)}</b>.`);
-      if(t.hp<=0) {
-        addLog(`💀 <b>${esc(t.label)}</b> est KO.`);
-        await supabaseClient.from('instances').delete().eq('id', t.id); continue;
-      }
-    }
-    await updateInstanceOnServer(t);
+/* ============================= CAPACITÉS : RÉSOLUTION ============================= */
+function affected(a,start,explicitTargetInstId){
+  const casterInst=selectedToken?inst(selectedToken):null;
+  const casterTpl=casterInst?instTemplate(casterInst):null;
+  const casterType=casterTpl?.type||'player';
+  const targetType=(a.type==='Soin'||a.type==='Bouclier')?casterType:(casterType==='enemy'?'player':'enemy');
+  const pool=S.instances.filter(i=>i.id!==selectedToken&&instTemplate(i)?.type===targetType);
+  if(a.area==='single'){
+    if(explicitTargetInstId){const t=inst(explicitTargetInstId);return (t&&instTemplate(t)?.type===targetType)?[t]:[];}
+    let best=null,bestd=999;
+    for(const t of pool){const d=Math.abs(t.x-start[0])+Math.abs(t.y-start[1]);if(d<bestd){best=t;bestd=d;}}
+    return best?[best]:[];
   }
-  activeAbility=null; render();
+  const size=a.areaSize||3;
+  return pool.filter(t=>t.x>=start[0]&&t.x<start[0]+size&&t.y>=start[1]&&t.y<start[1]+size);
 }
-/* ============================= CONFIG PAGES ============================= */
-
-function charactersPage(){
-  // On génère la liste en utilisant votre logique propre
-  const listHtml = S.characters.map(c => {
-    const element = document.createElement('b');
-    element.appendChild(document.createTextNode(`${c.icon} ${esc(c.name)}`));
-
-    const spanType = document.createElement('span');
-    spanType.textContent = ` — ${c.type === 'player' ? 'Joueur' : 'Monstre'} `;
-
-    const button = isMJ() ? `
-      <button class="btn ${c.visibleForPlayers ? 'primary' : ''}" onclick="toggleCharVisibility('${c.id}')">
-        ${c.visibleForPlayers ? '👁 Visible des joueurs' : '🙈 Masqué pour les joueurs'}
-      </button>
-    ` : '';
-
-    const container = document.createElement('div');
-    container.className = "ability";
-    container.style.cssText = "justify-content:space-between; display:flex; align-items:center; margin-bottom:8px; padding:10px;";
-    
-    container.appendChild(element);
-    container.appendChild(spanType);
-    if (button) {
-      container.insertAdjacentHTML('beforeend', button);
+function resolveAbility(a,start,explicitTargetInstId){
+  const casterInst=selectedToken?inst(selectedToken):null;
+  if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
+  if(!canControlInstance(casterInst.id)){
+    toast('⛔ Vous ne contrôlez pas ce personnage.');
+    activeAbility=null; hoverCell=null; render(); return;
+  }
+  if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
+    toast(`🚫 Mana insuffisant (${casterInst.mana}/${a.manaCost}) pour lancer ${a.name} — choisis une autre action.`);
+    activeAbility=null; hoverCell=null; render(); return;
+  }
+  if(a.range&&a.range>0){
+    const dist=Math.max(Math.abs(start[0]-casterInst.x),Math.abs(start[1]-casterInst.y));
+    if(dist>a.range){
+      toast(`🚫 Trop loin (portée max ${a.range} case${a.range>1?'s':''}) — sélectionne un ennemi plus proche.`);
+      return;
     }
-    
-    // Le secret : on transforme l'élément en texte HTML pour le moteur du jeu
-    return container.outerHTML;
-  }).join('');
+  }
+  const casterTpl=instTemplate(casterInst);
+  if(a.manaCost>0){
+    casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
+  }
+  const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
+  const targets=affected(a,start,explicitTargetInstId);
+  const lines=[`⚔ <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b>`];
+  if(a.manaCost>0)lines.push(`💧 Coût en mana : ${a.manaCost} (reste ${casterInst.mana}/${casterInst.manaMax})`);
+  lines.push(`🎲 d100 : <b>${atk}</b> → ${label}`);
 
-  // On l'imbrique dans la carte principale
-  return `<div class="card">
-    <h2>🧙 Configuration des fiches (Mode MJ uniquement)</h2>
-    ${listHtml}
-  </div>`;
+  if(!targets.length){
+    lines.push('<span class="muted">Aucune cible valide dans la zone.</span>');
+    addLog(lines.join('<br>'));
+    activeAbility=null; hoverCell=null; saveState(); render(); return;
+  }
+
+  for(const t of targets){
+    const tTpl=instTemplate(t);
+    if(a.type==='Soin'){
+      const r=roll(a.formula);
+      const amount=Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100);
+      t.hp=Math.min(t.hpMax,t.hp+amount);
+      lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
+      lines.push(`💚 Soin : ${amount}`);
+      lines.push(`❤️ ${esc(t.label)} : +${amount} PV (${t.hp}/${t.hpMax})`);
+      continue;
+    }
+    if(a.type==='Bouclier'){
+      const r=roll(a.formula);
+      const amount=Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100);
+      t.shield=(t.shield||0)+amount;
+      if(t.shield>t.shieldMax)t.shieldMax=t.shield;
+      lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
+      lines.push(`🛡 Bouclier accordé : ${amount}`);
+      lines.push(`🛡 ${esc(t.label)} : ${t.shield}/${t.shieldMax}`);
+      continue;
+    }
+    if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);continue;}
+    const r=roll(a.formula); const raw=r.total;
+    let damage=Math.ceil(raw*mult*(casterTpl.stats[a.stat]||0)/100);
+    const def=(a.defense!=='none')?(tTpl.def[a.defense]||0):0;
+    damage=Math.max(0,damage-def);
+    const resist=(tTpl.res?.[a.element]||0)/100;
+    damage=Math.max(0,Math.ceil(damage*(1-resist)));
+    const beforeShield=t.shield||0; const absorbed=Math.min(beforeShield,damage);
+    t.shield-=absorbed; const hpDamage=damage-absorbed;
+    t.hp=Math.max(0,t.hp-hpDamage);
+    lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${raw}`);
+    lines.push(`✨ Dégâts (${esc(a.element)}) : ${damage}${def?` (−${def} défense)`:''}${resist?` (résistance ${Math.round(resist*100)}%)`:''}`);
+    if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
+    lines.push(`❤️ ${esc(t.label)} : -${hpDamage} PV (${t.hp}/${t.hpMax})`);
+    if(t.hp<=0){
+      lines.push(`💀 <b>${esc(t.label)} est KO</b> — retiré de la carte.`);
+      removeInstance(t.id);
+    }
+  }
+
+  addLog(lines.join('<br>'));
+  activeAbility=null; hoverCell=null;
+  if(combat.active&&combat.order[combat.turn]===casterInst.id)advanceTurn();
+  saveState(); render();
+}
+function startAbility(id){
+  if(!selectedToken){toast('Sélectionne d’abord un personnage sur la carte.');return;}
+  if(!canControlInstance(selectedToken)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
+  if(combat.active&&combat.order[combat.turn]!==selectedToken){toast('⏳ Ce n’est pas le tour de ce personnage.');return;}
+  const a=S.abilities.find(x=>x.id===id); if(!a)return;
+  const caster=inst(selectedToken);
+  if(a.manaCost>0&&caster&&(caster.mana||0)<a.manaCost){
+    toast(`🚫 Mana insuffisant (${caster.mana}/${a.manaCost}) pour lancer ${a.name} — choisis une autre action.`);
+    return;
+  }
+  activeAbility=id; hoverCell=null; render();
+  toast('🎯 Ciblage : clique sur une cible ou une case (Échap pour annuler)');
 }
 
+/* ============================= PERSONNAGES / FICHES (édition réservée au MJ) ============================= */
+function charactersPage(){
+  const mj=isMJ();
+  return `<div class="grid2">
+  <div class="card"><div class="row between"><h2>Personnages &amp; créatures</h2>${mj?`<button class="btn primary" onclick="openCharacter()">＋ Nouveau</button>`:''}</div>
+  ${S.characters.map(c=>{
+    const count=S.instances.filter(i=>i.charId===c.id).length;
+    const nbAb=characterAbilities(c.id).length;
+    const ownerLabel=c.ownerId?(profiles.find(p=>p.id===c.ownerId)?.email||'Joueur inconnu'):(c.type==='player'?'Non assigné':'MJ / PNJ');
+    return `<div class="ability"><div class="icon">${c.icon}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${c.type==='player'?'Joueur':'Monstre'} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button>`:''}</div>`;
+  }).join('')}
+  </div>
+  <div class="card"><h2>Principe de la fiche</h2><p class="muted">Une fiche définit les valeurs de base (statistiques, ressources maximales, défenses, résistances), le joueur propriétaire et sa visibilité. Chaque token posé sur la carte est une instance indépendante avec ses propres PV / mana / bouclier actuels et sa propre position.</p>
+  <div class="statgrid"><div class="stat"><label>Attributs personnalisables</label><strong>✓</strong></div><div class="stat"><label>Ressources max configurables</label><strong>✓</strong></div><div class="stat"><label>Instances multiples</label><strong>✓</strong></div><div class="stat"><label>Visibilité MJ/joueurs</label><strong>✓</strong></div></div></div></div>`;
+}
+function toggleHidden(id){
+  if(!isMJ())return;
+  const c=char(id); if(!c)return;
+  c.hidden=!c.hidden;
+  saveState(); render();
+}
+function openCharacter(id){
+  if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les fiches.');return;}
+  const c=id?char(id):null;
+  const base=c||{name:'Nouveau personnage',icon:'🧙',type:'player',move:6,ownerId:null,hidden:false,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}};
+  const typeOpts=[['player','Joueur'],['enemy','Monstre / PNJ']].map(([v,l])=>opt(v,l,base.type)).join('');
+  const ownerOpts=`<option value="">— MJ / PNJ (aucun joueur) —</option>`+profiles.map(p=>`<option value="${esc(p.id)}" ${base.ownerId===p.id?'selected':''}>${esc(p.email)}</option>`).join('');
+  const known=id?characterAbilities(id):[];
+  const knownLine=id?(known.length?`<p class="tiny muted">Capacités liées : ${known.map(a=>`${a.icon} ${esc(a.name)}`).join(', ')} <span style="opacity:.7">(à gérer depuis la page ✨ Capacités)</span></p>`:'<p class="tiny muted">Aucune capacité liée à ce personnage pour l’instant (page ✨ Capacités).</p>'):'';
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une fiche</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div><div class="form">
+  <div class="field"><label>Nom</label><input id="c_name" value="${esc(base.name)}"></div>
+  <div class="field"><label>Icône</label><input id="c_icon" value="${esc(base.icon)}"></div>
+  <div class="field"><label>Type</label><select id="c_type">${typeOpts}</select></div>
+  <div class="field"><label>Déplacement (cases/tour)</label><input id="c_move" type="number" value="${base.move??6}"></div>
+  <div class="field full"><label>Joueur propriétaire (peut déplacer / lancer les sorts de ce personnage)</label><select id="c_owner">${ownerOpts}</select></div>
+  <div class="field full"><label>Visibilité des PV / mana / bouclier</label><select id="c_hidden">
+    <option value="false" ${!base.hidden?'selected':''}>👁 Visible des joueurs</option>
+    <option value="true" ${base.hidden?'selected':''}>🙈 Caché des joueurs (MJ uniquement)</option>
+  </select></div>
+  <div class="field"><label>PV maximum</label><input id="c_hpmax" type="number" value="${base.resourcesMax.Vie??10}"></div>
+  <div class="field"><label>Mana maximum</label><input id="c_manamax" type="number" value="${base.resourcesMax.Mana??0}"></div>
+  <div class="field"><label>Bouclier maximum</label><input id="c_shieldmax" type="number" value="${base.resourcesMax.Bouclier??0}"></div>
+  <div class="field"><label>Force</label><input id="s_force" type="number" value="${base.stats.Force??0}"></div>
+  <div class="field"><label>Magie</label><input id="s_magic" type="number" value="${base.stats.Magie??0}"></div>
+  <div class="field"><label>Agilité</label><input id="s_agi" type="number" value="${base.stats.Agilité??0}"></div>
+  <div class="field"><label>Vitesse</label><input id="s_speed" type="number" value="${base.stats.Vitesse??0}"></div>
+  <div class="field"><label>Classe d'armure</label><input id="d_ca" type="number" value="${base.def.CA??0}"></div>
+  <div class="field"><label>Défense magique</label><input id="d_dm" type="number" value="${base.def.DM??0}"></div>
+  <div class="field"><label>Résistance Feu (%)</label><input id="r_fire" type="number" value="${base.res.Feu??0}"></div>
+  <div class="field"><label>Résistance Eau (%)</label><input id="r_eau" type="number" value="${base.res.Eau??0}"></div>
+  <div class="field"><label>Résistance Terre (%)</label><input id="r_terre" type="number" value="${base.res.Terre??0}"></div>
+  <div class="field"><label>Résistance Air (%)</label><input id="r_air" type="number" value="${base.res.Air??0}"></div>
+  <div class="field"><label>Résistance Glace (%)</label><input id="r_glace" type="number" value="${base.res.Glace??0}"></div>
+  <div class="field"><label>Résistance Foudre (%)</label><input id="r_foudre" type="number" value="${base.res.Foudre??0}"></div>
+  <div class="field"><label>Résistance Lumière (%)</label><input id="r_lumiere" type="number" value="${base.res.Lumière??0}"></div>
+  <div class="field"><label>Résistance Ténèbres (%)</label><input id="r_tenebres" type="number" value="${base.res.Ténèbres??0}"></div>
+  </div>
+  ${knownLine}
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveCharacter('${id||''}')">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function saveCharacter(id){
+  if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les fiches.');return;}
+  const c=id?char(id):{id:'c'+Date.now()};
+  c.name=document.getElementById('c_name').value||'Sans nom';
+  c.icon=document.getElementById('c_icon').value||'🧙';
+  c.type=document.getElementById('c_type').value;
+  c.move=parseNum(document.getElementById('c_move').value)||6;
+  c.ownerId=document.getElementById('c_owner').value||null;
+  c.hidden=document.getElementById('c_hidden').value==='true';
+  c.resourcesMax={Vie:parseNum(document.getElementById('c_hpmax').value)||1,Mana:parseNum(document.getElementById('c_manamax').value),Bouclier:parseNum(document.getElementById('c_shieldmax').value)};
+  c.stats={Force:parseNum(document.getElementById('s_force').value),Magie:parseNum(document.getElementById('s_magic').value),Agilité:parseNum(document.getElementById('s_agi').value),Vitesse:parseNum(document.getElementById('s_speed').value)};
+  c.def={CA:parseNum(document.getElementById('d_ca').value),DM:parseNum(document.getElementById('d_dm').value),'CA naturelle':parseNum(document.getElementById('d_ca').value)};
+  c.res={
+    Feu:parseNum(document.getElementById('r_fire').value),
+    Eau:parseNum(document.getElementById('r_eau').value),
+    Terre:parseNum(document.getElementById('r_terre').value),
+    Air:parseNum(document.getElementById('r_air').value),
+    Glace:parseNum(document.getElementById('r_glace').value),
+    Foudre:parseNum(document.getElementById('r_foudre').value),
+    Lumière:parseNum(document.getElementById('r_lumiere').value),
+    Ténèbres:parseNum(document.getElementById('r_tenebres').value)
+  };
+  if(!id)S.characters.push(c);
+  S.instances.filter(i=>i.charId===c.id).forEach(i=>{
+    i.hpMax=c.resourcesMax.Vie; i.manaMax=c.resourcesMax.Mana; i.shieldMax=c.resourcesMax.Bouclier;
+    i.hp=Math.min(i.hp,i.hpMax); i.mana=Math.min(i.mana,i.manaMax); i.shield=Math.min(i.shield,i.shieldMax);
+  });
+  saveState(); closeModal(); render();
+}
+function closeModal(){document.getElementById('modalBg').classList.remove('open');}
 
-async function toggleCharVisibility(id) {
-  if(!isMJ()) return; const c=char(id); if(!c)return;
-  c.visibleForPlayers = !c.visibleForPlayers;
-  await supabaseClient.from('characters').update({visibleForPlayers: c.visibleForPlayers}).eq('id', id);
+/* ============================= CAPACITÉS : ÉDITION (MJ uniquement) ============================= */
+function abilitiesPage(){
+  const mj=isMJ();
+  return `<div class="grid2"><div class="card"><div class="row between"><h2>Capacités</h2>${mj?`<button class="btn primary" onclick="openAbility()">＋ Nouvelle capacité</button>`:''}</div>
+  ${S.abilities.map(a=>{
+    const linked=(a.characterIds||[]).map(cid=>char(cid)).filter(Boolean);
+    const linkedText=linked.length?linked.map(c=>c.name).join(', '):'aucun personnage lié';
+    return `<div class="ability"><div class="icon">${a.icon}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${esc(a.type)} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button><button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`:''}</div>`;
+  }).join('')}
+  </div>
+  <div class="card"><h2>Deux modes de création</h2><div class="statgrid"><div class="stat"><label>🟢 Mode simple</label><strong>Visuel</strong><p class="tiny muted">Type, formule, statistique, défense, élément, zone et effet — indépendants pour chaque capacité.</p></div><div class="stat"><label>🔴 Mode avancé</label><strong>Macro</strong><p class="tiny muted">Aperçu de la logique, en lecture seule pour l'instant.</p></div></div><p class="muted">Le moteur gère le jet d100, le multiplicateur de réussite, la formule de dégâts, la défense, la résistance élémentaire, le bouclier puis les PV. Aucune règle D&D n'est imposée : tout est configurable.</p></div></div>`;
+}
+function openAbility(id){
+  if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les capacités.');return;}
+  const a=id?S.abilities.find(x=>x.id===id):{id:'a'+Date.now(),name:'Nouvelle capacité',icon:'✨',type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'single',areaSize:1,range:6,manaCost:0,desc:'',effect:'✨'};
+  const typeOpts=['Sort','Attaque','Compétence','Soin','Bouclier'].map(v=>opt(v,v,a.type)).join('');
+  const elementOpts=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres','Neutre','Soin'].map(v=>opt(v,v,a.element)).join('');
+  const statOpts=['Magie','Force','Agilité','Vitesse'].map(v=>opt(v,v,a.stat)).join('');
+  const defOpts=[['DM',"Défense magique"],['CA',"Classe d'armure"],['none','Aucune']].map(([v,l])=>opt(v,l,a.defense)).join('');
+  const areaOpts=[['single','Cible unique'],['square','Carré'],['circle','Cercle (aperçu)']].map(([v,l])=>opt(v,l,a.area)).join('');
+  const linkedIds=a.characterIds||[];
+  const charListHtml=S.characters.length?S.characters.map(c=>`<label class="ability-char-item" data-name="${esc(c.name.toLowerCase())}"><input type="checkbox" class="ac-check" value="${c.id}" ${linkedIds.includes(c.id)?'checked':''}> <span>${c.icon} ${esc(c.name)} <small class="muted">(${c.type==='player'?'Joueur':'Monstre'})</small></span></label>`).join(''):'<p class="tiny muted">Aucun personnage créé pour l’instant (page 🧙 Personnages).</p>';
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une capacité</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <div class="form">
+  <div class="field"><label>Nom</label><input id="a_name" value="${esc(a.name)}"></div>
+  <div class="field"><label>Icône</label><input id="a_icon" value="${esc(a.icon)}"></div>
+  <div class="field"><label>Type</label><select id="a_type">${typeOpts}</select></div>
+  <div class="field"><label>Formule de dégâts / soin</label><input id="a_formula" value="${esc(a.formula)}"></div>
+  <div class="field"><label>Statistique</label><select id="a_stat">${statOpts}</select></div>
+  <div class="field"><label>Défense ciblée</label><select id="a_def">${defOpts}</select></div>
+  <div class="field"><label>Élément</label><select id="a_element">${elementOpts}</select></div>
+  <div class="field"><label>Zone</label><select id="a_area">${areaOpts}</select></div>
+  <div class="field"><label>Taille de zone (cases)</label><input id="a_size" type="number" min="1" value="${a.areaSize||1}"></div>
+  <div class="field"><label>Portée maximale (cases, 0 = illimitée)</label><input id="a_range" type="number" min="0" value="${a.range??0}"></div>
+  <div class="field"><label>Coût en mana (0 = aucun)</label><input id="a_manacost" type="number" min="0" value="${a.manaCost??0}"></div>
+  <div class="field full"><label>Description</label><textarea id="a_desc">${esc(a.desc||'')}</textarea></div>
+  <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
+  <div class="field full">
+    <label>Personnages liés (peuvent lancer cette capacité)</label>
+    <input id="a_char_search" placeholder="Rechercher un personnage par nom…" oninput="filterAbilityCharList()">
+    <div id="a_char_list" style="max-height:180px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px;margin-top:6px">${charListHtml}</div>
+  </div>
+  </div>
+  <p class="tiny muted">Le type et l'élément sont deux propriétés totalement indépendantes : un Soin peut être Neutre, Feu, etc.</p>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveAbility('${id||''}')">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function filterAbilityCharList(){
+  const q=(document.getElementById('a_char_search')?.value||'').trim().toLowerCase();
+  document.querySelectorAll('.ability-char-item').forEach(el=>{
+    el.style.display=el.dataset.name.includes(q)?'grid':'none';
+  });
+}
+function saveAbility(id){
+  if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les capacités.');return;}
+  const target=id?S.abilities.find(x=>x.id===id):{id:'a'+Date.now()};
+  target.name=document.getElementById('a_name').value||'Capacité';
+  target.icon=document.getElementById('a_icon').value||'✨';
+  target.type=document.getElementById('a_type').value;
+  target.formula=document.getElementById('a_formula').value||'1d20';
+  target.stat=document.getElementById('a_stat').value;
+  target.defense=document.getElementById('a_def').value;
+  target.element=document.getElementById('a_element').value;
+  target.area=document.getElementById('a_area').value;
+  target.areaSize=+document.getElementById('a_size').value||1;
+  target.range=Math.max(0,+document.getElementById('a_range').value||0);
+  target.manaCost=Math.max(0,+document.getElementById('a_manacost').value||0);
+  target.desc=document.getElementById('a_desc').value;
+  target.effect=document.getElementById('a_effect').value||'✨';
+  target.characterIds=[...document.querySelectorAll('.ac-check:checked')].map(el=>el.value);
+  if(!id)S.abilities.push(target);
+  saveState(); closeModal(); render();
+}
+function openAdvancedAbility(id){
+  if(!isMJ()){toast('⛔ Seul le MJ peut accéder au mode avancé.');return;}
+  const a=S.abilities.find(x=>x.id===id); if(!a)return;
+  const macro=`ABILITY "${a.name}"\n\nTYPE = ${a.type}\nELEMENT = ${a.element}\nRANGE = ${a.range?a.range+' cases (Chebyshev)':'illimitée'}\nMANA_COST = ${a.manaCost||0}\n\nATTACK = d100\nRESULT = SUCCESS_BAND(ATTACK)\n\nEFFECT\n    FORMULA = ${a.formula}\n    STAT = ${a.stat}\n    DEFENSE = ${a.defense}\n\nAREA\n    SHAPE = ${a.area.toUpperCase()}\n    SIZE = ${a.areaSize}\n\nON_TARGET\n    ${a.type==='Soin'?'APPLY_HEAL()':a.type==='Bouclier'?'APPLY_SHIELD()':'APPLY_DAMAGE()'}`;
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>🔴 Aperçu macro — ${esc(a.name)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div><p class="muted">Lecture seule pour ce prototype : le mode simple reste la configuration principale.</p><div class="field"><label>Macro</label><textarea readonly style="min-height:340px;font-family:ui-monospace,monospace">${esc(macro)}</textarea></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+
+/* ============================= BIBLIOTHÈQUE (page dédiée) ============================= */
+function libraryPage(){
+  return `<div class="grid3"><div class="card"><h2>🗺️ Cartes</h2><p class="muted">Import d'images de cartes prévu ici.</p><button class="btn">＋ Importer une carte</button></div><div class="card"><h2>🖼️ Effets</h2><p class="muted">Bibliothèque d'effets visuels : feu, glace, magie, explosions…</p><button class="btn">＋ Ajouter un effet</button></div><div class="card"><h2>🎲 Assets</h2><p class="muted">Tokens, portraits, objets et autres ressources.</p><button class="btn">＋ Ajouter un asset</button></div></div><div class="card" style="margin-top:16px"><h2>Prochaine étape</h2><p>Cette bibliothèque deviendra le stockage local de tes cartes et assets, sans abonnement externe. Les fiches et instances sont déjà gérées séparément (voir l'onglet 📚 Bibliothèque du panneau de droite sur la Table de jeu).</p></div>`;
+}
+
+/* ============================= DRAG & DROP DEPUIS LA BIBLIOTHÈQUE (MJ uniquement) ============================= */
+function assetDragStart(ev,charId){
+  if(!isMJ()){ev.preventDefault();return;}
+  ev.dataTransfer.setData('text/plain',charId);
+  ev.dataTransfer.effectAllowed='copy';
+  document.getElementById('mapDropHint')?.classList.add('show');
+}
+
+/* ============================= PLEIN ÉCRAN ============================= */
+function toggleFullscreen(){
+  stageFullscreen=!stageFullscreen;
+  document.body.classList.toggle('stage-fullscreen',stageFullscreen);
+  if(stageFullscreen)document.documentElement.requestFullscreen?.().catch(()=>{});
+  else if(document.fullscreenElement)document.exitFullscreen?.().catch(()=>{});
   render();
 }
+function exitStageFullscreen(){
+  if(!stageFullscreen)return;
+  stageFullscreen=false;
+  document.body.classList.remove('stage-fullscreen');
+  if(document.fullscreenElement)document.exitFullscreen?.().catch(()=>{});
+  render();
+}
+document.addEventListener('fullscreenchange',()=>{
+  if(!document.fullscreenElement&&stageFullscreen){stageFullscreen=false;document.body.classList.remove('stage-fullscreen');render();}
+});
 
-function abilitiesPage(){ return `<div class="card"><h2>✨ Capacités</h2><p class="muted">Gérées automatiquement en ligne.</p></div>`; }
-function libraryPage(){ return `<div class="card"><h2>📚 Bibliothèque</h2><p class="muted">Contenu synchronisé.</p></div>`; }
-function assetDragStart(ev,charId){ ev.dataTransfer.setData('text/plain',charId); }
-function toggleFullscreen(){ stageFullscreen=!stageFullscreen; document.body.classList.toggle('stage-fullscreen',stageFullscreen); render(); }
+/* ============================= RACCOURCIS CLAVIER ============================= */
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){
+    if(stageFullscreen){exitStageFullscreen();return;}
+    if(activeAbility){activeAbility=null;hoverCell=null;render();return;}
+  }
+  if(e.key==='Delete'&&selectedToken&&!activeAbility){
+    if(!isMJ()){toast('⛔ Seul le MJ peut retirer un token de la carte.');return;}
+    const t=inst(selectedToken);
+    if(t){removeInstance(selectedToken);saveState();render();toast('🗑 Token retiré de la carte');}
+  }
+});
 
-document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>{currentPage=n.dataset.page;activeAbility=null;render();});
+/* ============================= NAVIGATION / INIT ============================= */
+document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>{currentPage=n.dataset.page;activeAbility=null;hoverCell=null;render();});
+render();
 </script>
 </body>
 </html>
