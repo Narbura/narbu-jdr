@@ -113,6 +113,7 @@ body.stage-fullscreen .targeting-banner{top:64px}
   <button class="nav" data-page="characters">🧙 <span>Personnages</span></button>
   <button class="nav" data-page="abilities">✨ <span>Capacités</span></button>
   <button class="nav" data-page="library">📚 <span>Bibliothèque</span></button>
+  <button class="nav" data-page="mysheet">🪪 <span>Ma fiche</span></button>
   <div class="spacer"></div>
   <div class="server" id="serverInfo">Connexion en cours…</div>
   <button class="btn ghost" style="width:100%" onclick="logout()">↩ Se déconnecter</button>
@@ -241,7 +242,7 @@ function normalizeState(){
 let S=JSON.parse(localStorage.getItem('arcanum-vtt')||'null')||structuredClone(DEFAULT);
 normalizeState();
 
-const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',library:'Bibliothèque'};
+const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',library:'Bibliothèque',mysheet:'Ma fiche'};
 
 let currentPage='table';
 let selectedToken=null;
@@ -395,6 +396,7 @@ function render(){
   else if(currentPage==='characters')c.innerHTML=charactersPage();
   else if(currentPage==='abilities')c.innerHTML=abilitiesPage();
   else if(currentPage==='library')c.innerHTML=libraryPage();
+  else if(currentPage==='mysheet')c.innerHTML=mySheetPage();
   updateTargetingBanner();
   updateUserBadge();
   if(currentPage==='table')setupMapInteractions();
@@ -985,7 +987,45 @@ function libraryPage(){
   return `<div class="grid3"><div class="card"><h2>🗺️ Cartes</h2><p class="muted">Import d'images de cartes prévu ici.</p><button class="btn">＋ Importer une carte</button></div><div class="card"><h2>🖼️ Effets</h2><p class="muted">Bibliothèque d'effets visuels : feu, glace, magie, explosions…</p><button class="btn">＋ Ajouter un effet</button></div><div class="card"><h2>🎲 Assets</h2><p class="muted">Tokens, portraits, objets et autres ressources.</p><button class="btn">＋ Ajouter un asset</button></div></div><div class="card" style="margin-top:16px"><h2>Prochaine étape</h2><p>Cette bibliothèque deviendra le stockage local de tes cartes et assets, sans abonnement externe. Les fiches et instances sont déjà gérées séparément (voir l'onglet 📚 Bibliothèque du panneau de droite sur la Table de jeu).</p></div>`;
 }
 
-/* ============================= DRAG & DROP DEPUIS LA BIBLIOTHÈQUE (MJ uniquement) ============================= */
+/* ============================= MA FICHE (lecture seule, par joueur) ============================= */
+function mySheetPage(){
+  if(!currentUser)return `<div class="card"><p class="muted">Connectez-vous pour voir votre fiche.</p></div>`;
+  const mine=S.characters.filter(c=>c.ownerId===currentUser.id);
+  if(!mine.length){
+    return `<div class="card"><h2>🪪 Ma fiche</h2><p class="muted">Aucun personnage ne vous a été assigné pour le moment. Demandez au Maître du Jeu de vous assigner une fiche depuis la page 🧙 Personnages.</p></div>`;
+  }
+  return `<div style="display:flex;flex-direction:column;gap:16px">${mine.map(myCharacterCard).join('')}</div>`;
+}
+function myCharacterCard(c){
+  const abilities=characterAbilities(c.id);
+  const instances=S.instances.filter(i=>i.charId===c.id);
+  const statsHtml=Object.entries(c.stats||{}).map(([k,v])=>`<div class="stat"><label>${esc(k)}</label><strong>${v}</strong></div>`).join('');
+  const defHtml=`<div class="stat"><label>Classe d'armure</label><strong>${c.def.CA??0}</strong></div><div class="stat"><label>Défense magique</label><strong>${c.def.DM??0}</strong></div>`;
+  const resHtml=ELEMENT_RES_KEYS.map(k=>`<div class="stat"><label>${esc(k)}</label><strong>${c.res?.[k]??0}%</strong></div>`).join('');
+  const abilitiesHtml=abilities.length
+    ? abilities.map(a=>`<div class="ability"><div class="icon">${a.icon}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${esc(a.type)} · ${esc(a.formula)} · ${esc(a.element)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}</small></div></div>`).join('')
+    : `<p class="tiny muted">Aucune capacité connue.</p>`;
+  const instancesHtml=instances.length
+    ? instances.map(i=>`<div class="row between" style="padding:8px;background:#20232a;border-radius:8px;margin-bottom:6px"><span>${esc(i.label)} — case (${i.x+1}, ${i.y+1})</span><span class="tiny">❤️ ${i.hp}/${i.hpMax} · 💧 ${i.mana}/${i.manaMax} · 🛡 ${i.shield}/${i.shieldMax}</span></div>`).join('')
+    : `<p class="tiny muted">Ce personnage n'est pas actuellement sur la carte.</p>`;
+  return `<div class="card">
+    <div class="row between" style="margin-bottom:14px">
+      <div class="row"><div class="icon" style="width:44px;height:44px;font-size:22px;border-radius:12px;background:#2b1d3b;display:grid;place-items:center">${c.icon}</div>
+      <div><h2 style="margin:0">${esc(c.name)}</h2><span class="tiny muted">${c.type==='player'?'Joueur':'Monstre'} · Déplacement ${c.move??6} case(s)/tour</span></div></div>
+      <span class="pill">🔒 Lecture seule</span>
+    </div>
+    <h3 style="font-size:13px;margin:0 0 8px">Sur la carte</h3>
+    ${instancesHtml}
+    <h3 style="font-size:13px;margin:14px 0 8px">Statistiques</h3>
+    <div class="statgrid">${statsHtml}${defHtml}</div>
+    <h3 style="font-size:13px;margin:14px 0 8px">Résistances élémentaires</h3>
+    <div class="statgrid">${resHtml}</div>
+    <h3 style="font-size:13px;margin:14px 0 8px">Capacités connues</h3>
+    ${abilitiesHtml}
+  </div>`;
+}
+
+
 function assetDragStart(ev,charId){
   if(!isMJ()){ev.preventDefault();return;}
   ev.dataTransfer.setData('text/plain',charId);
