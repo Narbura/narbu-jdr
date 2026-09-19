@@ -210,7 +210,8 @@ const DEFAULT={
     {id:'a1',name:"Balle d'air",icon:'💨',type:'Sort',formula:'3d20',stat:'Magie',defense:'DM',element:'Air',area:'single',areaSize:1,range:8,manaCost:10,characterIds:['p1'],desc:"Projectile perforant.",effect:'💨'},
     {id:'a2',name:'Explosion de feu',icon:'🔥',type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'square',areaSize:4,range:6,manaCost:30,characterIds:['p1'],desc:"Explosion de feu touchant toutes les créatures dans une zone 4×4.",effect:'🔥'},
     {id:'a3',name:'Soin de groupe',icon:'💚',type:'Soin',formula:'1d20 + 8',stat:'Magie',defense:'none',element:'Neutre',area:'circle',areaSize:3,range:5,manaCost:25,characterIds:['p1'],desc:"Soigne les alliés dans la zone.",effect:'✨'},
-    {id:'a4',name:'Bouclier arcanique',icon:'🛡',type:'Bouclier',formula:'1d20 + 10',stat:'Magie',defense:'none',element:'Neutre',area:'single',areaSize:1,range:5,manaCost:15,characterIds:['p1'],desc:"Confère un bouclier magique à un allié.",effect:'🛡'}
+    {id:'a4',name:'Bouclier arcanique',icon:'🛡',type:'Bouclier',formula:'1d20 + 10',stat:'Magie',defense:'none',element:'Neutre',area:'single',areaSize:1,range:5,manaCost:15,characterIds:['p1'],desc:"Confère un bouclier magique à un allié.",effect:'🛡'},
+    {id:'a5',name:'Potion de mana',icon:'🧪',type:'Potion',resource:'Mana',formula:'2d20 + 20',stat:'Force',defense:'none',element:'Neutre',area:'single',areaSize:1,range:1,manaCost:0,characterIds:['p1'],desc:"Restaure du mana à celui qui la boit.",effect:'🧪'}
   ],
   instances:[
     {id:'i_p1',charId:'p1',label:'Zephyr',x:4,y:7,hp:290,hpMax:290,mana:215,manaMax:215,shield:0,shieldMax:100,remainingMove:6},
@@ -745,7 +746,7 @@ function affected(a,start,explicitTargetInstId){
   const casterInst=selectedToken?inst(selectedToken):null;
   const casterTpl=casterInst?instTemplate(casterInst):null;
   const casterType=casterTpl?.type||'player';
-  const targetType=(a.type==='Soin'||a.type==='Bouclier')?casterType:(casterType==='enemy'?'player':'enemy');
+  const targetType=(a.type==='Soin'||a.type==='Bouclier'||a.type==='Potion')?casterType:(casterType==='enemy'?'player':'enemy');
   const pool=S.instances.filter(i=>i.id!==selectedToken&&instTemplate(i)?.type===targetType);
   if(a.area==='single'){
     if(explicitTargetInstId){const t=inst(explicitTargetInstId);return (t&&instTemplate(t)?.type===targetType)?[t]:[];}
@@ -809,6 +810,21 @@ function resolveAbility(a,start,explicitTargetInstId){
       lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
       lines.push(`🛡 Bouclier accordé : ${amount}`);
       lines.push(`🛡 ${esc(t.label)} : ${t.shield}/${t.shieldMax}`);
+      continue;
+    }
+    if(a.type==='Potion'){
+      const r=roll(a.formula);
+      const amount=Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100);
+      lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
+      if(a.resource==='Mana'){
+        t.mana=Math.min(t.manaMax,t.mana+amount);
+        lines.push(`🧪 Mana restauré : ${amount}`);
+        lines.push(`💧 ${esc(t.label)} : +${amount} Mana (${t.mana}/${t.manaMax})`);
+      }else{
+        t.hp=Math.min(t.hpMax,t.hp+amount);
+        lines.push(`🧪 PV restaurés : ${amount}`);
+        lines.push(`❤️ ${esc(t.label)} : +${amount} PV (${t.hp}/${t.hpMax})`);
+      }
       continue;
     }
     if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);continue;}
@@ -949,15 +965,15 @@ function abilitiesPage(){
   ${S.abilities.map(a=>{
     const linked=(a.characterIds||[]).map(cid=>char(cid)).filter(Boolean);
     const linkedText=linked.length?linked.map(c=>c.name).join(', '):'aucun personnage lié';
-    return `<div class="ability"><div class="icon">${a.icon}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${esc(a.type)} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button><button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`:''}</div>`;
+    return `<div class="ability"><div class="icon">${a.icon}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${esc(a.type)} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}${a.type==='Potion'?` · Restaure ${a.resource==='Mana'?'💧 Mana':'❤️ Vie'}`:''}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button><button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`:''}</div>`;
   }).join('')}
   </div>
   <div class="card"><h2>Deux modes de création</h2><div class="statgrid"><div class="stat"><label>🟢 Mode simple</label><strong>Visuel</strong><p class="tiny muted">Type, formule, statistique, défense, élément, zone et effet — indépendants pour chaque capacité.</p></div><div class="stat"><label>🔴 Mode avancé</label><strong>Macro</strong><p class="tiny muted">Aperçu de la logique, en lecture seule pour l'instant.</p></div></div><p class="muted">Le moteur gère le jet d100, le multiplicateur de réussite, la formule de dégâts, la défense, la résistance élémentaire, le bouclier puis les PV. Aucune règle D&D n'est imposée : tout est configurable.</p></div></div>`;
 }
 function openAbility(id){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les capacités.');return;}
-  const a=id?S.abilities.find(x=>x.id===id):{id:'a'+Date.now(),name:'Nouvelle capacité',icon:'✨',type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'single',areaSize:1,range:6,manaCost:0,desc:'',effect:'✨'};
-  const typeOpts=['Sort','Attaque','Compétence','Soin','Bouclier'].map(v=>opt(v,v,a.type)).join('');
+  const a=id?S.abilities.find(x=>x.id===id):{id:'a'+Date.now(),name:'Nouvelle capacité',icon:'✨',type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'single',areaSize:1,range:6,manaCost:0,resource:'Vie',desc:'',effect:'✨'};
+  const typeOpts=['Sort','Attaque','Compétence','Soin','Bouclier','Potion'].map(v=>opt(v,v,a.type)).join('');
   const elementOpts=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres','Neutre','Soin'].map(v=>opt(v,v,a.element)).join('');
   const statOpts=['Magie','Force','Agilité','Vitesse'].map(v=>opt(v,v,a.stat)).join('');
   const defOpts=[['DM',"Défense magique"],['CA',"Classe d'armure"],['none','Aucune']].map(([v,l])=>opt(v,l,a.defense)).join('');
@@ -977,6 +993,7 @@ function openAbility(id){
   <div class="field"><label>Taille de zone (cases)</label><input id="a_size" type="number" min="1" value="${a.areaSize||1}"></div>
   <div class="field"><label>Portée maximale (cases, 0 = illimitée)</label><input id="a_range" type="number" min="0" value="${a.range??0}"></div>
   <div class="field"><label>Coût en mana (0 = aucun)</label><input id="a_manacost" type="number" min="0" value="${a.manaCost??0}"></div>
+  <div class="field"><label>Ressource restaurée (type Potion uniquement)</label><select id="a_resource">${opt('Vie','❤️ Vie (PV)',a.resource||'Vie')}${opt('Mana','💧 Mana',a.resource||'Vie')}</select></div>
   <div class="field full"><label>Description</label><textarea id="a_desc">${esc(a.desc||'')}</textarea></div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
   <div class="field full">
@@ -1009,6 +1026,7 @@ function saveAbility(id){
   target.areaSize=+document.getElementById('a_size').value||1;
   target.range=Math.max(0,+document.getElementById('a_range').value||0);
   target.manaCost=Math.max(0,+document.getElementById('a_manacost').value||0);
+  target.resource=document.getElementById('a_resource').value;
   target.desc=document.getElementById('a_desc').value;
   target.effect=document.getElementById('a_effect').value||'✨';
   target.characterIds=[...document.querySelectorAll('.ac-check:checked')].map(el=>el.value);
@@ -1018,7 +1036,7 @@ function saveAbility(id){
 function openAdvancedAbility(id){
   if(!isMJ()){toast('⛔ Seul le MJ peut accéder au mode avancé.');return;}
   const a=S.abilities.find(x=>x.id===id); if(!a)return;
-  const macro=`ABILITY "${a.name}"\n\nTYPE = ${a.type}\nELEMENT = ${a.element}\nRANGE = ${a.range?a.range+' cases (Chebyshev)':'illimitée'}\nMANA_COST = ${a.manaCost||0}\n\nATTACK = d100\nRESULT = SUCCESS_BAND(ATTACK)\n\nEFFECT\n    FORMULA = ${a.formula}\n    STAT = ${a.stat}\n    DEFENSE = ${a.defense}\n\nAREA\n    SHAPE = ${a.area.toUpperCase()}\n    SIZE = ${a.areaSize}\n\nON_TARGET\n    ${a.type==='Soin'?'APPLY_HEAL()':a.type==='Bouclier'?'APPLY_SHIELD()':'APPLY_DAMAGE()'}`;
+  const macro=`ABILITY "${a.name}"\n\nTYPE = ${a.type}\nELEMENT = ${a.element}\nRANGE = ${a.range?a.range+' cases (Chebyshev)':'illimitée'}\nMANA_COST = ${a.manaCost||0}\n\nATTACK = d100\nRESULT = SUCCESS_BAND(ATTACK)\n\nEFFECT\n    FORMULA = ${a.formula}\n    STAT = ${a.stat}\n    DEFENSE = ${a.defense}\n\nAREA\n    SHAPE = ${a.area.toUpperCase()}\n    SIZE = ${a.areaSize}\n\nON_TARGET\n    ${a.type==='Soin'?'APPLY_HEAL()':a.type==='Bouclier'?'APPLY_SHIELD()':a.type==='Potion'?`APPLY_RESTORE(${a.resource||'Vie'})`:'APPLY_DAMAGE()'}`;
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>🔴 Aperçu macro — ${esc(a.name)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div><p class="muted">Lecture seule pour ce prototype : le mode simple reste la configuration principale.</p><div class="field"><label>Macro</label><textarea readonly style="min-height:340px;font-family:ui-monospace,monospace">${esc(macro)}</textarea></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
 }
