@@ -1,133 +1,3 @@
-<!doctype html>
-<html lang="fr">
-<head>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NarbuDR — Prototype</title>
-<style>
-:root{
-  --bg:#111216; --panel:#191b20; --panel2:#20232a; --line:#343842;
-  --text:#f3f4f7; --muted:#9da3b0; --accent:#9b4dff; --accent2:#c084fc;
-  --danger:#ef6262; --success:#62d394; --gold:#e7b85c;
-}
-*{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 30% 0,#241b31 0,#111216 42%);color:var(--text);font:14px Inter,Segoe UI,Arial,sans-serif;height:100vh;overflow:hidden}
-button,input,select,textarea{font:inherit} button{cursor:pointer}
-.app{display:grid;grid-template-columns:235px 1fr;height:100vh}
-.sidebar{background:#15161a;border-right:1px solid var(--line);padding:18px 14px;display:flex;flex-direction:column;gap:10px}
-.brand{font-size:20px;font-weight:800;padding:8px 10px 18px;letter-spacing:.2px}.brand span{color:var(--accent2)}
-.nav{display:flex;gap:8px;align-items:center;padding:11px 12px;border-radius:10px;color:#b9bec9;border:0;background:transparent;text-align:left}.nav:hover,.nav.active{background:#2a1d38;color:white}.nav.active{box-shadow:inset 3px 0 var(--accent)}
-.spacer{flex:1}.server{font-size:11px;color:var(--muted);padding:12px;border:1px solid var(--line);border-radius:10px}
-.main{min-width:0;display:flex;flex-direction:column}.top{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:#15161a}.top h1{font-size:17px;margin:0}.actions{display:flex;gap:8px}
-.btn{border:1px solid var(--line);background:#252831;color:#fff;border-radius:9px;padding:9px 13px}.btn:hover{background:#2f333d}.btn.primary{background:var(--accent);border-color:var(--accent)}.btn.primary:hover{background:#8b3ee9}.btn.ghost{background:transparent}
-.content{padding:18px;overflow:auto;height:calc(100vh - 64px)}
-.grid2{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-.card{background:rgba(25,27,32,.94);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 12px 35px #0002}.card h2{font-size:15px;margin:0 0 13px}.muted{color:var(--muted)}.tiny{font-size:11px}.row{display:flex;gap:10px;align-items:center}.between{justify-content:space-between}.pill{padding:4px 8px;border-radius:99px;background:#2a2d35;color:#cdd1da;font-size:11px}.statgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.stat{background:#202229;border:1px solid #30333c;border-radius:10px;padding:9px}.stat label{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}.stat strong{font-size:17px}
-.tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin:-2px 0 16px}.tab{padding:9px 12px;background:none;border:0;color:var(--muted);border-bottom:2px solid transparent}.tab.active{color:white;border-color:var(--accent)}
-.side-tabs{display:flex;gap:6px;margin-bottom:10px;border-bottom:1px solid var(--line)}
-.ability{display:flex;align-items:center;gap:10px;padding:11px;border:1px solid var(--line);border-radius:10px;background:#1f2127;margin-bottom:8px}.ability .icon{width:34px;height:34px;border-radius:9px;background:#2b1d3b;display:grid;place-items:center;font-size:17px}.ability-info{flex:1}.ability-info b{display:block}.ability-info small{color:var(--muted)}.ability button{padding:7px 9px}
-.form{display:grid;grid-template-columns:1fr 1fr;gap:11px}.field{display:flex;flex-direction:column;gap:5px}.field.full{grid-column:1/-1}.field label{font-size:11px;color:var(--muted)}.field input,.field select,.field textarea{width:100%;background:#111318;color:white;border:1px solid #3a3e48;border-radius:8px;padding:9px;outline:none}.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}textarea{min-height:170px;resize:vertical}
-.map-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:10px;height:calc(100vh - 101px)}
-.map-card{min-width:0;display:flex;flex-direction:column;position:relative}
-.map-toolbar{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
-.map-wrap{flex:1;position:relative;overflow:hidden;background:#0d0f13;border:1px solid var(--line);border-radius:12px;cursor:grab}
-.map-wrap.panning{cursor:grabbing}
-.map{position:absolute;top:0;left:0;background:linear-gradient(145deg,#2a3134,#1f2629);border:1px solid #59606a;box-shadow:0 15px 50px #0008;user-select:none;transform-origin:0 0}
-.cell{position:absolute;border-right:1px solid #ffffff18;border-bottom:1px solid #ffffff18;pointer-events:none}
-.zone{position:absolute;pointer-events:none;background:#a44cff38;border:2px solid #c084fc;box-shadow:0 0 25px #a44cff55 inset,0 0 18px #a44cff33;z-index:20}
-.zone-effect{position:absolute;inset:0;display:grid;place-items:center;opacity:.42}
-.token-wrap{position:absolute;z-index:30;pointer-events:none}
-.token{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-weight:800;color:#fff;border:2px solid #fff8;box-shadow:0 5px 12px #0009;cursor:pointer;pointer-events:auto}
-.token.player{background:#3578d4}.token.enemy{background:#b74646}
-.token-wrap.selected .token{outline:3px solid #fff;outline-offset:3px}
-.token-wrap.current-turn .token{outline:2px dashed var(--gold);outline-offset:3px}
-.token-hud{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);width:74px;display:none;flex-direction:column;gap:2px;pointer-events:none;text-align:center}
-.token-wrap.selected .token-hud{display:flex}
-.hud-row{font-size:9px;line-height:1.2;color:#e7e9f0;text-shadow:0 1px 2px #000c}
-.mini-bar{height:4px;width:32px;margin:0 auto;background:#343740;border-radius:5px;overflow:hidden;border:1px solid #0008}
-.mini-bar i{display:block;height:100%}
-.mini-hp i{background:#58cf83}.mini-mana i{background:#5da5ff}.mini-shield i{background:#d4ad57}
-.token-label{position:absolute;left:50%;top:26px;transform:translateX(-50%);width:90px;text-align:center;font-size:10px;color:#c8cdd6;text-shadow:0 1px 2px #000c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;display:none}
-.token-wrap.selected .token-label{display:block}
-.ability-char-item{display:grid;grid-template-columns:18px 1fr;align-items:start;gap:8px;padding:5px 2px}
-.ability-char-item input[type="checkbox"]{margin:2px 0 0 0;width:16px;height:16px}
-.log{max-height:320px;overflow:auto;font-size:12px}.log div{padding:8px 0;border-bottom:1px solid #2b2e35;line-height:1.6}
-.modal-bg{position:fixed;inset:0;background:#0009;display:none;align-items:center;justify-content:center;z-index:100}.modal-bg.open{display:flex}.modal{width:min(720px,92vw);max-height:88vh;overflow:auto;background:#191b20;border:1px solid #414550;border-radius:16px;padding:18px;box-shadow:0 25px 80px #000b}.modal h2{margin:0 0 15px}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
-.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px}.modal-header h2{margin:0}
-.modal-close{background:none;border:0;color:var(--muted);font-size:20px;line-height:1;padding:4px 10px;border-radius:8px}.modal-close:hover{background:#2a2d35;color:#fff}
-.targeting-banner{position:fixed;left:50%;top:76px;transform:translateX(-50%);background:#2a1d38;border:1px solid #8e4be5;padding:10px 16px;border-radius:10px;z-index:95;box-shadow:0 10px 30px #0008;display:none}.targeting-banner.show{display:block}.targeting-banner b{color:#fff}
-.toast{position:fixed;right:20px;bottom:20px;background:#252831;border:1px solid #4a4e59;padding:11px 14px;border-radius:10px;display:none;z-index:200}.toast.show{display:block}
-.asset-panel{height:100%;display:flex;flex-direction:column;overflow:auto}.asset-panel h2{font-size:14px;margin:0}
-.asset-section{border-bottom:1px solid var(--line)}.asset-section>button{width:100%;display:flex;justify-content:space-between;align-items:center;background:none;border:0;color:#fff;padding:11px 4px;font-weight:700}
-.asset-list{display:flex;flex-direction:column;gap:3px;padding:0 0 9px}
-.asset-item{display:flex;align-items:center;gap:9px;padding:8px;border-radius:8px;background:#17191e;border:1px solid transparent;cursor:grab}.asset-item:hover{background:#252832;border-color:#3a3e48}.asset-item:active{cursor:grabbing}
-.asset-icon{width:30px;height:30px;border-radius:7px;display:grid;place-items:center;background:#252833;font-size:18px}
-.asset-info{min-width:0;flex:1}.asset-info b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.asset-info small{color:var(--muted)}
-.combat-panel{margin-top:8px;border-top:1px solid var(--line);padding-top:8px}
-.initiative-list{display:flex;flex-direction:column;gap:4px;max-height:190px;overflow:auto}
-.initiative-row{display:flex;justify-content:space-between;gap:8px;padding:6px 8px;background:#20232a;border-radius:7px;font-size:12px}.initiative-row.current{outline:2px solid var(--accent)}
-.turn-banner{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:70;background:#17191fe8;border:1px solid #5a426e;border-radius:9px;padding:7px 12px;box-shadow:0 8px 25px #0008}
-.bottom-abilities{display:flex;gap:6px;overflow-x:auto;padding:7px 2px 0}.bottom-abilities .btn{white-space:nowrap;padding:7px 10px}
-.map-drop-hint{position:absolute;inset:0;display:none;place-items:center;background:#9b4dff18;border:2px dashed #c084fc88;z-index:60;pointer-events:none;font-size:18px;font-weight:700}.map-drop-hint.show{display:grid}
-
-/* Plein écran (mode Table de jeu) — une seule implémentation, indépendante de la Fullscreen API */
-body.stage-fullscreen .app{display:block;height:100vh}
-body.stage-fullscreen .sidebar,body.stage-fullscreen .top{display:none}
-body.stage-fullscreen .main{height:100vh}
-body.stage-fullscreen .content{height:100vh;padding:8px}
-body.stage-fullscreen .map-layout{display:block;height:100%}
-body.stage-fullscreen .map-card{height:100%;padding:0;border:0;background:transparent}
-body.stage-fullscreen .side-panel{display:none}
-body.stage-fullscreen .map-toolbar{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:90;background:#17191fee;border:1px solid #454956;border-radius:12px;padding:7px;max-width:92vw;overflow-x:auto;flex-wrap:nowrap}
-body.stage-fullscreen .bottom-abilities{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);z-index:90;background:#17191fee;border:1px solid #454956;border-radius:12px;padding:7px;max-width:92vw}
-body.stage-fullscreen .map-wrap{height:100%;border:0;border-radius:0}
-body.stage-fullscreen .targeting-banner{top:64px}
-
-@media(max-width:900px){.app{grid-template-columns:70px}.brand{font-size:0}.brand span{font-size:20px}.nav span{display:none}.grid2,.map-layout{grid-template-columns:1fr}.map-layout{height:auto}.map-card{height:600px}}
-.auth-overlay{position:fixed;inset:0;background:radial-gradient(circle at 50% 30%,#241b31 0,#111216 70%);display:flex;align-items:center;justify-content:center;z-index:9999}
-.auth-box{background:var(--panel);border:1px solid var(--line);padding:30px;border-radius:16px;width:min(400px,90vw);box-shadow:0 20px 50px #000c;text-align:center}
-.auth-box h2{margin:0 0 8px;font-size:22px;font-weight:800}.auth-box h2 span{color:var(--accent2)}
-.auth-box p{margin:0 0 20px;color:var(--muted);font-size:13px}
-.auth-box .field{text-align:left;margin-bottom:14px}
-.auth-tabs{display:flex;gap:10px;margin-top:15px;justify-content:center;font-size:12px}
-.auth-tabs button{background:none;border:0;color:var(--accent2);text-decoration:underline;padding:0}
-</style>
-</head>
-<body>
-  <div class="auth-overlay" id="authOverlay">
-  <div class="auth-box">
-    <h2>✦ <span>NarbuDR</span></h2>
-    <p id="authDesc">Connectez-vous pour rejoindre la table de jeu</p>
-    <div class="field"><label>Adresse Email</label><input type="email" id="authEmail" placeholder="nom@exemple.com"></div>
-    <div class="field"><label>Mot de passe</label><input type="password" id="authPassword" placeholder="••••••••"></div>
-    <button class="btn primary" id="authBtn" onclick="handleAuth()" style="width:100%;margin-top:10px;padding:12px">Se connecter</button>
-    <div class="auth-tabs" id="authToggleMode">
-      Pas de compte ? <button onclick="toggleAuthMode(true)">Créer un compte</button>
-    </div>
-  </div>
-</div>
-<div class="app">
-<aside class="sidebar">
-  <div class="brand">✦ <span>NarbuDR</span></div>
-  <button class="nav active" data-page="table">🗺️ <span>Table de jeu</span></button>
-  <button class="nav" data-page="characters">🧙 <span>Personnages</span></button>
-  <button class="nav" data-page="abilities">✨ <span>Capacités</span></button>
-  <button class="nav" data-page="library">📚 <span>Bibliothèque</span></button>
-  <button class="nav" data-page="mysheet">🪪 <span>Ma fiche</span></button>
-  <div class="spacer"></div>
-  <div class="server" id="serverInfo">Connexion en cours…</div>
-  <button class="btn ghost" style="width:100%" onclick="logout()">↩ Se déconnecter</button>
-</aside>
-<main class="main">
-<header class="top"><h1 id="pageTitle">Table de jeu</h1><div class="actions"><button class="btn" id="resetBtn" onclick="resetDemo()">Réinitialiser la démo</button><button class="btn primary" onclick="saveState()">💾 Sauvegarder</button></div></header>
-<section class="content" id="content"></section>
-</main>
-</div>
-
-<div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
-<div class="targeting-banner" id="targetingBanner"></div>
-<div class="toast" id="toast"></div>
-
 <script>
 
 /* ============================= CONFIGURATION SUPABASE ============================= */
@@ -218,7 +88,8 @@ const DEFAULT={
     {id:'i_m3',charId:'m3',label:'Slime rouge',x:7,y:10,hp:40,hpMax:40,mana:0,manaMax:0,shield:0,shieldMax:0,remainingMove:4}
   ],
   map:{cols:18,rows:12,cell:44},
-  chat:[]
+  chat:[],
+  combat:{active:false,order:[],turn:0,initiatives:{}}
 };
 const ELEMENT_RES_KEYS=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres'];
 
@@ -226,6 +97,7 @@ function normalizeState(){
   if(!S.instances)S.instances=[];
   if(!S.chat)S.chat=[];
   if(!S.map)S.map=structuredClone(DEFAULT.map);
+  if(!S.combat)S.combat=structuredClone(DEFAULT.combat);
   if(!S.characters)S.characters=[];
   if(!S.abilities)S.abilities=[];
   S.characters.forEach(c=>{
@@ -249,7 +121,6 @@ let selectedToken=null;
 let activeAbility=null;
 let hoverCell=null;
 let mapZoom=1, mapPan={x:0,y:0};
-let combat={active:false,order:[],turn:0,initiatives:{}};
 let collapsedAssets={players:false,enemies:false};
 let sidePanelTab='library';
 let stageFullscreen=false;
@@ -275,6 +146,7 @@ async function loadGameState(){
     S=JSON.parse(localStorage.getItem('arcanum-vtt')||'null')||structuredClone(DEFAULT);
   }
   normalizeState();
+  syncTurnSelection();
 }
 async function persistState(){
   try{
@@ -283,6 +155,15 @@ async function persistState(){
   }catch(e){ console.error('persistState', e); }
   localStorage.setItem('arcanum-vtt', JSON.stringify(S));
 }
+let lastTurnCombatant=null;
+function syncTurnSelection(){
+  if(!S.combat.active){ lastTurnCombatant=null; return; }
+  const currentId=S.combat.order[S.combat.turn];
+  if(currentId && currentId!==lastTurnCombatant){
+    lastTurnCombatant=currentId;
+    if(canControlInstance(currentId)) selectedToken=currentId;
+  }
+}
 function subscribeRealtime(){
   if(gameChannel){ supabaseClient.removeChannel(gameChannel); gameChannel=null; }
   gameChannel=supabaseClient.channel('game_state_sync')
@@ -290,6 +171,7 @@ function subscribeRealtime(){
       if(payload.new && payload.new.data){
         S=payload.new.data;
         normalizeState();
+        syncTurnSelection();
         render();
       }
     })
@@ -320,7 +202,7 @@ function saveState(){ persistState(); toast('Sauvegarde effectuée'); }
 function resetDemo(){
   if(!isMJ()){toast('⛔ Seul le MJ peut réinitialiser la partie.');return;}
   if(!confirm('Réinitialiser les données de démonstration pour TOUTE la table ?'))return;
-  S=structuredClone(DEFAULT); combat={active:false,order:[],turn:0,initiatives:{}};
+  S=structuredClone(DEFAULT);
   selectedToken=null; activeAbility=null; hoverCell=null;
   saveState(); render();
 }
@@ -376,13 +258,13 @@ function spawnInstance(charId,x,y){
 function removeInstance(id){
   S.instances=S.instances.filter(i=>i.id!==id);
   if(selectedToken===id)selectedToken=null;
-  if(combat.active){
-    const idx=combat.order.indexOf(id);
+  if(S.combat.active){
+    const idx=S.combat.order.indexOf(id);
     if(idx!==-1){
-      combat.order.splice(idx,1); delete combat.initiatives[id];
-      if(idx<combat.turn)combat.turn--;
-      if(!combat.order.length){combat.active=false;combat.turn=0;}
-      else combat.turn=((combat.turn%combat.order.length)+combat.order.length)%combat.order.length;
+      S.combat.order.splice(idx,1); delete S.combat.initiatives[id];
+      if(idx<S.combat.turn)S.combat.turn--;
+      if(!S.combat.order.length){S.combat.active=false;S.combat.turn=0;}
+      else S.combat.turn=((S.combat.turn%S.combat.order.length)+S.combat.order.length)%S.combat.order.length;
     }
   }
 }
@@ -416,8 +298,8 @@ function updateTargetingBanner(){
 function tablePage(){
   const mj=isMJ();
   const combatControls = mj
-    ? (combat.active?`<button class="btn" onclick="endCombat()">⏹ Fin du combat</button><button class="btn" onclick="nextTurn()">⏭ Tour suivant</button>`:`<button class="btn primary" onclick="startCombat()">⚔ Démarrer le combat</button>`)
-    : (combat.active?`<span class="pill">⚔ Combat en cours</span>`:'');
+    ? (S.combat.active?`<button class="btn" onclick="endCombat()">⏹ Fin du combat</button><button class="btn" onclick="nextTurn()">⏭ Tour suivant</button>`:`<button class="btn primary" onclick="startCombat()">⚔ Démarrer le combat</button>`)
+    : (S.combat.active?`<span class="pill">⚔ Combat en cours</span>`:'');
   return `<div class="map-layout" id="mapLayout">
   <div class="card map-card">
     <div class="map-toolbar">
@@ -427,7 +309,7 @@ function tablePage(){
     <div class="map-wrap" id="mapWrap">
       <div class="map-drop-hint" id="mapDropHint">➕ Déposer sur la carte</div>
       <div class="map" id="map" style="width:${S.map.cols*S.map.cell}px;height:${S.map.rows*S.map.cell}px">${mapCells()}${tokensHtml()}</div>
-      ${combat.active?`<div class="turn-banner">⚔ Tour : <b>${esc(inst(combat.order[combat.turn])?.label||'—')}</b></div>`:''}
+      ${S.combat.active?`<div class="turn-banner">⚔ Tour : <b>${esc(inst(S.combat.order[S.combat.turn])?.label||'—')}</b></div>`:''}
     </div>
     <div class="bottom-abilities">${(()=>{
       const selInst=selectedToken?inst(selectedToken):null;
@@ -451,7 +333,7 @@ function tokensHtml(){
   return S.instances.map(t=>{
     const tpl=instTemplate(t); if(!tpl)return '';
     const px=t.x*S.map.cell+S.map.cell/2, py=t.y*S.map.cell+S.map.cell/2;
-    const isTurn=combat.active&&combat.order[combat.turn]===t.id;
+    const isTurn=S.combat.active&&S.combat.order[S.combat.turn]===t.id;
     const hideStats=tpl.hidden&&!mj;
     const hud=hideStats
       ? `<div class="hud-row">❤️ ???</div>`
@@ -514,10 +396,10 @@ function chatPanel(){
   return `<h2>💬 Journal de combat</h2><div class="log">${entries}</div>`;
 }
 function combatPanel(){
-  if(!combat.active)return `<div class="combat-panel"><h2>⚔ Combat</h2><p class="muted tiny">Le MJ démarre le combat. L'initiative est déterminée par 1d20 + Vitesse (égalité : 1d100).</p></div>`;
-  const current=inst(combat.order[combat.turn]);
+  if(!S.combat.active)return `<div class="combat-panel"><h2>⚔ Combat</h2><p class="muted tiny">Le MJ démarre le combat. L'initiative est déterminée par 1d20 + Vitesse (égalité : 1d100).</p></div>`;
+  const current=inst(S.combat.order[S.combat.turn]);
   return `<div class="combat-panel"><div class="row between"><h2>⚔ Initiative</h2>${isMJ()?'<button class="btn" onclick="nextTurn()">Tour suivant</button>':''}</div>
-  <div class="initiative-list">${combat.order.map((id,i)=>{const t=inst(id);return `<div class="initiative-row ${i===combat.turn?'current':''}"><span>${i===combat.turn?'▶ ':''}${esc(t?.label||id)}</span><b>${combat.initiatives[id]}</b></div>`;}).join('')}</div>
+  <div class="initiative-list">${S.combat.order.map((id,i)=>{const t=inst(id);return `<div class="initiative-row ${i===S.combat.turn?'current':''}"><span>${i===S.combat.turn?'▶ ':''}${esc(t?.label||id)}</span><b>${S.combat.initiatives[id]}</b></div>`;}).join('')}</div>
   <div class="tiny muted" style="margin-top:6px">Déplacement restant : ${current?.remainingMove??'—'}</div></div>`;
 }
 
@@ -536,24 +418,27 @@ function startCombat(){
     }
   });
   const order=[...ids].sort((a,b)=>init[b]-init[a]);
-  combat={active:true,order,turn:0,initiatives:Object.fromEntries(order.map(id=>[id,Math.floor(init[id])]))};
+  S.combat={active:true,order,turn:0,initiatives:Object.fromEntries(order.map(id=>[id,Math.floor(init[id])]))};
   S.instances.forEach(t=>{const tpl=instTemplate(t);t.remainingMove=tpl?.move??6;});
-  selectedToken=order[0]??selectedToken;
-  addLog('⚔ <b>Combat démarré</b> — initiative : '+order.map(id=>`${esc(inst(id).label)} (${combat.initiatives[id]})`).join(', ')+'.');
+  lastTurnCombatant=order[0]||null;
+  if(order[0]&&canControlInstance(order[0]))selectedToken=order[0];
+  addLog('⚔ <b>Combat démarré</b> — initiative : '+order.map(id=>`${esc(inst(id).label)} (${S.combat.initiatives[id]})`).join(', ')+'.');
   saveState(); render();
 }
 function endCombat(){
   if(!isMJ()){toast('⛔ Seul le MJ peut terminer le combat.');return;}
-  combat={active:false,order:[],turn:0,initiatives:{}};
+  S.combat={active:false,order:[],turn:0,initiatives:{}};
+  lastTurnCombatant=null;
   addLog('⏹ Fin du combat.');
   saveState(); render();
 }
 function advanceTurn(){
-  if(!combat.active||!combat.order.length)return;
-  combat.turn=(combat.turn+1)%combat.order.length;
-  const nt=inst(combat.order[combat.turn]);
+  if(!S.combat.active||!S.combat.order.length)return;
+  S.combat.turn=(S.combat.turn+1)%S.combat.order.length;
+  const nt=inst(S.combat.order[S.combat.turn]);
   if(nt){const tpl=instTemplate(nt);nt.remainingMove=tpl?.move??6;}
-  selectedToken=combat.order[combat.turn];
+  lastTurnCombatant=S.combat.order[S.combat.turn];
+  if(canControlInstance(lastTurnCombatant))selectedToken=lastTurnCombatant;
 }
 function nextTurn(){
   if(!isMJ()){toast('⛔ Seul le MJ peut avancer le tour.');return;}
@@ -612,7 +497,7 @@ function setupMapInteractions(){
       if(!canControlInstance(id)){
         render(); return; // vue seule : ce token ne t'appartient pas
       }
-      if(combat.active&&combat.order[combat.turn]!==id){
+      if(S.combat.active&&S.combat.order[S.combat.turn]!==id){
         toast('⏳ Ce n’est pas le tour de ce personnage.'); render(); return;
       }
       const c=inst(id);
@@ -665,7 +550,7 @@ function setupMapInteractions(){
         if(occupant){
           t.x=origX; t.y=origY;
           toast(`🚫 ${occupant.label} est déjà sur cette case — choisis un autre déplacement.`);
-        }else if(combat.active&&combat.order[combat.turn]===id){
+        }else if(S.combat.active&&S.combat.order[S.combat.turn]===id){
           const tpl=instTemplate(t);
           const dist=Math.abs(t.x-origX)+Math.abs(t.y-origY);
           const remaining=t.remainingMove??(tpl?.move??6);
@@ -676,7 +561,7 @@ function setupMapInteractions(){
             t.remainingMove=remaining-dist;
             addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
           }
-        }else if(!combat.active){
+        }else if(!S.combat.active){
           addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
         }
         saveState();
@@ -792,13 +677,13 @@ function resolveAbility(a,start,explicitTargetInstId){
 
   addLog(lines.join('<br>'));
   activeAbility=null; hoverCell=null;
-  if(combat.active&&combat.order[combat.turn]===casterInst.id)advanceTurn();
+  if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
   saveState(); render();
 }
 function startAbility(id){
   if(!selectedToken){toast('Sélectionne d’abord un personnage sur la carte.');return;}
   if(!canControlInstance(selectedToken)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
-  if(combat.active&&combat.order[combat.turn]!==selectedToken){toast('⏳ Ce n’est pas le tour de ce personnage.');return;}
+  if(S.combat.active&&S.combat.order[S.combat.turn]!==selectedToken){toast('⏳ Ce n’est pas le tour de ce personnage.');return;}
   const a=S.abilities.find(x=>x.id===id); if(!a)return;
   const caster=inst(selectedToken);
   if(a.manaCost>0&&caster&&(caster.mana||0)<a.manaCost){
@@ -1069,5 +954,3 @@ document.addEventListener('keydown',e=>{
 document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>{currentPage=n.dataset.page;activeAbility=null;hoverCell=null;render();});
 render();
 </script>
-</body>
-</html>
