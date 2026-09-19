@@ -98,6 +98,7 @@ body.stage-fullscreen .targeting-banner{top:64px}
   <div class="auth-box">
     <h2>✦ <span>NarbuDR</span></h2>
     <p id="authDesc">Connectez-vous pour rejoindre la table de jeu</p>
+    <div class="field" id="authPseudoField" style="display:none;"><label>Pseudo en jeu</label><input type="text" id="authPseudo" placeholder="Ex: Gandalf, MJ..."></div>
     <div class="field"><label>Adresse Email</label><input type="email" id="authEmail" placeholder="nom@exemple.com"></div>
     <div class="field"><label>Mot de passe</label><input type="password" id="authPassword" placeholder="••••••••"></div>
     <button class="btn primary" id="authBtn" onclick="handleAuth()" style="width:100%;margin-top:10px;padding:12px">Se connecter</button>
@@ -157,15 +158,16 @@ supabaseClient.auth.getSession().then(({ data: { session } }) => {
     initApp();
   }
 });
-
 function toggleAuthMode(signUp) {
   isSignUpMode = signUp;
+  document.getElementById('authPseudoField').style.display = signUp ? 'flex' : 'none'; // Affiche ou cache le pseudo
   document.getElementById('authDesc').textContent = signUp ? "Créez votre compte de joueur" : "Connectez-vous pour rejoindre la table de jeu";
   document.getElementById('authBtn').textContent = signUp ? "S'inscrire" : "Se connecter";
-  document.getElementById('authToggleMode').innerHTML = signUp ?
-    `Déjà un compte ? <button onclick="toggleAuthMode(false)">Se connecter</button>` :
+  document.getElementById('authToggleMode').innerHTML = signUp ? 
+    `Déjà un compte ? <button onclick="toggleAuthMode(false)">Se connecter</button>` : 
     `Pas de compte ? <button onclick="toggleAuthMode(true)">Créer un compte</button>`;
 }
+
 
 async function handleAuth() {
   const email = document.getElementById('authEmail').value.trim();
@@ -185,6 +187,13 @@ async function handleAuth() {
   if (error) { toast("❌ Erreur : " + error.message); btn.disabled = false; btn.textContent = isSignUpMode ? "S'inscrire" : "Se connecter"; return; }
 
   currentUser = data.user;
+    // On récupère le pseudo tapé, s'il est vide on prend le début de l'adresse e-mail par défaut
+  const pseudoTape = document.getElementById('authPseudo').value.trim();
+  currentUser.pseudo = pseudoTape || email.split('@')[0];
+  
+  document.getElementById('authOverlay').style.display = 'none';
+  initGameNetwork();
+
   document.getElementById('authOverlay').style.display = 'none';
   await initApp();
 }
