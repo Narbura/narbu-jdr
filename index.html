@@ -116,6 +116,7 @@ body.stage-fullscreen .targeting-banner{top:64px}
   <button class="nav" data-page="mysheet">🪪 <span>Ma fiche</span></button>
   <div class="spacer"></div>
   <div class="server" id="serverInfo">Connexion en cours…</div>
+  <button class="btn ghost" style="width:100%" onclick="openNicknameModal()">✏️ Changer de pseudo</button>
   <button class="btn ghost" style="width:100%" onclick="logout()">↩ Se déconnecter</button>
 </aside>
 <main class="main">
@@ -260,7 +261,7 @@ let panState=null;
 /* ============================= SYNCHRONISATION SUPABASE ============================= */
 async function loadProfiles(){
   try{
-    const { data, error } = await supabaseClient.from('profiles').select('id,email');
+    const { data, error } = await supabaseClient.from('profiles').select('id,email,display_name');
     if(!error && data) profiles=data;
   }catch(e){ console.error('loadProfiles', e); }
 }
@@ -319,10 +320,35 @@ async function initApp(){
   updateUserBadge();
   render();
 }
+function myProfile(){ return profiles.find(p=>p.id===currentUser?.id); }
+function displayNameOf(profile){ return (profile?.display_name&&profile.display_name.trim())||profile?.email||'Joueur'; }
+function myDisplayName(){ return displayNameOf(myProfile())||currentUser?.email||'Joueur'; }
+function openNicknameModal(){
+  if(!currentUser)return;
+  const current=myDisplayName();
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>Changer de pseudo</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <div class="field"><label>Pseudo affiché aux autres joueurs</label><input id="nickname_input" value="${esc(current)}" maxlength="30" placeholder="Ton pseudo…"></div>
+  <p class="tiny muted">Ce pseudo remplace ton e-mail partout dans l'application (fiches, listes de personnages, etc.).</p>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveNickname()">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+async function saveNickname(){
+  const val=(document.getElementById('nickname_input').value||'').trim();
+  if(!val){toast('⚠️ Le pseudo ne peut pas être vide.');return;}
+  if(val.length>30){toast('⚠️ Pseudo trop long (30 caractères maximum).');return;}
+  try{
+    const { error } = await supabaseClient.from('profiles').update({display_name:val}).eq('id',currentUser.id);
+    if(error){toast('❌ '+error.message);return;}
+  }catch(e){ console.error('saveNickname',e); toast('❌ Erreur réseau, réessaie.'); return; }
+  const p=myProfile();
+  if(p)p.display_name=val; else profiles.push({id:currentUser.id,email:currentUser.email,display_name:val});
+  closeModal(); updateUserBadge(); render();
+  toast('✅ Pseudo mis à jour.');
+}
 function updateUserBadge(){
   const el=document.getElementById('serverInfo');
   if(!el||!currentUser)return;
-  el.innerHTML=`${isMJ()?'🎲 <b>Maître du Jeu</b>':'🧙 Joueur'}<br><span class="tiny">${esc(currentUser.email)}</span>`;
+  el.innerHTML=`${isMJ()?'🎲 <b>Maître du Jeu</b>':'🧙 Joueur'}<br><span class="tiny">${esc(myDisplayName())}</span>`;
   const resetBtn=document.getElementById('resetBtn');
   if(resetBtn) resetBtn.style.display=isMJ()?'':'none';
 }
@@ -832,7 +858,7 @@ function charactersPage(){
   ${S.characters.map(c=>{
     const count=S.instances.filter(i=>i.charId===c.id).length;
     const nbAb=characterAbilities(c.id).length;
-    const ownerLabel=c.ownerId?(profiles.find(p=>p.id===c.ownerId)?.email||'Joueur inconnu'):(c.type==='player'?'Non assigné':'MJ / PNJ');
+    const ownerLabel=c.ownerId?(displayNameOf(profiles.find(p=>p.id===c.ownerId))||'Joueur inconnu'):(c.type==='player'?'Non assigné':'MJ / PNJ');
     return `<div class="ability"><div class="icon">${c.icon}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${c.type==='player'?'Joueur':'Monstre'} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button>`:''}</div>`;
   }).join('')}
   </div>
@@ -850,7 +876,7 @@ function openCharacter(id){
   const c=id?char(id):null;
   const base=c||{name:'Nouveau personnage',icon:'🧙',type:'player',move:6,ownerId:null,hidden:false,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}};
   const typeOpts=[['player','Joueur'],['enemy','Monstre / PNJ']].map(([v,l])=>opt(v,l,base.type)).join('');
-  const ownerOpts=`<option value="">— MJ / PNJ (aucun joueur) —</option>`+profiles.map(p=>`<option value="${esc(p.id)}" ${base.ownerId===p.id?'selected':''}>${esc(p.email)}</option>`).join('');
+  const ownerOpts=`<option value="">— MJ / PNJ (aucun joueur) —</option>`+profiles.map(p=>`<option value="${esc(p.id)}" ${base.ownerId===p.id?'selected':''}>${esc(displayNameOf(p))}</option>`).join('');
   const known=id?characterAbilities(id):[];
   const knownLine=id?(known.length?`<p class="tiny muted">Capacités liées : ${known.map(a=>`${a.icon} ${esc(a.name)}`).join(', ')} <span style="opacity:.7">(à gérer depuis la page ✨ Capacités)</span></p>`:'<p class="tiny muted">Aucune capacité liée à ce personnage pour l’instant (page ✨ Capacités).</p>'):'';
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une fiche</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div><div class="form">
