@@ -154,10 +154,16 @@ function canControlInstance(instId){ const i=inst(instId); return i ? canControl
 supabaseClient.auth.getSession().then(({ data: { session } }) => {
   if (session) {
     currentUser = session.user;
+    
+    // On va chercher le pseudo enregistré dans le coffre-fort de Supabase
+    const pseudoEnregistre = currentUser.user_metadata?.display_name;
+    currentUser.pseudo = pseudoEnregistre || currentUser.email.split('@')[0];
+    
     document.getElementById('authOverlay').style.display = 'none';
-    initApp();
+    initGameNetwork();
   }
 });
+
 function toggleAuthMode(signUp) {
   isSignUpMode = signUp;
   document.getElementById('authPseudoField').style.display = signUp ? 'flex' : 'none'; // Affiche ou cache le pseudo
@@ -177,19 +183,36 @@ async function handleAuth() {
   const btn = document.getElementById('authBtn');
   btn.disabled = true; btn.textContent = "Chargement...";
 
-  if (isSignUpMode) {
-    const { error } = await supabaseClient.auth.signUp({ email, password });
-    if (error) { toast("❌ Erreur : " + error.message); btn.disabled = false; toggleAuthMode(true); return; }
-    toast("✅ Compte créé ! Connexion en cours...");
+    if (isSignUpMode) {
+    const pseudoTape = document.getElementById('authPseudo').value.trim();
+    const { error } = await supabaseClient.auth.signUp({ 
+      email, 
+      password,
+      options: { data: { display_name: pseudoTape } }
+    });
+    if (error) { toast("❌ Erreur : " + error.message); btn.disabled = false; return; }
+    toast("✅ Compte créé ! Connexion...");
   }
+
 
   const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
   if (error) { toast("❌ Erreur : " + error.message); btn.disabled = false; btn.textContent = isSignUpMode ? "S'inscrire" : "Se connecter"; return; }
 
   currentUser = data.user;
-    // On récupère le pseudo tapé, s'il est vide on prend le début de l'adresse e-mail par défaut
-  const pseudoTape = document.getElementById('authPseudo').value.trim();
-  currentUser.pseudo = pseudoTape || email.split('@')[0];
+  // Vérifier la session au chargement automatique de la page
+supabaseClient.auth.getSession().then(({ data: { session } }) => {
+  if (session) {
+    currentUser = session.user;
+    
+    // On extrait le pseudo des métadonnées de Supabase
+    const pseudoEnregistre = currentUser.user_metadata?.display_name;
+    currentUser.pseudo = pseudoEnregistre || currentUser.email.split('@')[0];
+    
+    document.getElementById('authOverlay').style.display = 'none';
+    initGameNetwork();
+  }
+});
+
   
   document.getElementById('authOverlay').style.display = 'none';
   initGameNetwork();
