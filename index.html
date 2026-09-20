@@ -527,12 +527,13 @@ function updateZonePreview(){
 
 /* ---- Panneau latéral : Bibliothèque / Chat + combat ---- */
 function sidePanelHtml(){
+  const mj=isMJ();
   return `<div class="side-tabs">
     <button class="tab ${sidePanelTab==='library'?'active':''}" onclick="switchSideTab('library')">📚 Bibliothèque</button>
-    <button class="tab ${sidePanelTab==='maps'?'active':''}" onclick="switchSideTab('maps')">🗺️ Cartes</button>
+    ${mj?`<button class="tab ${sidePanelTab==='maps'?'active':''}" onclick="switchSideTab('maps')">🗺️ Cartes</button>`:''}
     <button class="tab ${sidePanelTab==='chat'?'active':''}" onclick="switchSideTab('chat')">💬 Chat</button>
   </div>
-  <div class="asset-panel">${sidePanelTab==='library'?assetPanel():sidePanelTab==='maps'?mapsPanel():chatPanel()}${combatPanel()}</div>`;
+  <div class="asset-panel">${sidePanelTab==='library'?assetPanel():(mj&&sidePanelTab==='maps')?mapsPanel():chatPanel()}${combatPanel()}</div>`;
 }
 function switchSideTab(t){sidePanelTab=t;render();}
 function assetPanel(){
@@ -1228,11 +1229,30 @@ async function loadMapLibrary(){
     });
   }catch(e){ console.error('loadMapLibrary',e); }
 }
-function mapDragStart(ev,url){
+function mapDragStart(ev,url,mapId){
   if(!isMJ()){ev.preventDefault();return;}
   ev.dataTransfer.setData('text/plain','map:'+url);
-  ev.dataTransfer.effectAllowed='copy';
+  if(mapId)ev.dataTransfer.setData('application/x-map-id',mapId);
+  ev.dataTransfer.effectAllowed='copyMove';
   document.getElementById('mapDropHint')?.classList.add('show');
+}
+function handleCategoryDrop(ev,categoryId){
+  ev.preventDefault(); ev.stopPropagation();
+  if(!isMJ())return;
+  const mapId=ev.dataTransfer.getData('application/x-map-id');
+  if(!mapId)return;
+  moveMapToCategory(mapId,categoryId);
+}
+async function moveMapToCategory(mapId,categoryId){
+  if(!isMJ())return;
+  try{
+    const { error } = await supabaseClient.from('map_library').update({category_id:categoryId}).eq('id',mapId);
+    if(error){toast('❌ '+error.message);return;}
+  }catch(e){ console.error('moveMapToCategory',e); toast('❌ Erreur réseau.'); return; }
+  const m=mapLibrary.find(x=>x.id===mapId);
+  if(m)m.categoryId=categoryId;
+  render();
+  toast('✅ Carte déplacée.');
 }
 function applyExistingMap(url){
   if(!isMJ()){toast('⛔ Seul le MJ peut changer la carte.');return;}
@@ -1249,8 +1269,8 @@ function mapBreadcrumb(catId){
     chain.unshift(c);
     cur=c.parent_id;
   }
-  const rootLink=`<button class="btn ghost" style="padding:3px 8px" onclick="openMapCategory(null)">🏠 Racine</button>`;
-  const rest=chain.map(c=>`<span class="tiny muted">›</span> <button class="btn ghost" style="padding:3px 8px" onclick="openMapCategory('${c.id}')">${esc(c.name)}</button>`).join(' ');
+  const rootLink=`<button class="btn ghost" style="padding:3px 8px" onclick="openMapCategory(null)" ondragover="event.preventDefault()" ondrop="handleCategoryDrop(event,null)">🏠 Racine</button>`;
+  const rest=chain.map(c=>`<span class="tiny muted">›</span> <button class="btn ghost" style="padding:3px 8px" onclick="openMapCategory('${c.id}')" ondragover="event.preventDefault()" ondrop="handleCategoryDrop(event,'${c.id}')">${esc(c.name)}</button>`).join(' ');
   return `<div class="row" style="flex-wrap:wrap;gap:4px;margin-bottom:8px">${rootLink} ${rest}</div>`;
 }
 function openNewCategoryModal(){
@@ -1296,7 +1316,7 @@ async function renameMap(id,newName){
 }
 function mapItemHtml(m){
   const mj=isMJ();
-  return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="mapDragStart(event,'${esc(m.url)}')"`:''} title="${mj?'Glisser sur la carte pour réutiliser ce terrain':'Lecture seule'}">
+  return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="mapDragStart(event,'${esc(m.url)}','${m.id||''}')"`:''} title="${mj?'Glisser sur la carte pour réutiliser ce terrain, ou sur un dossier pour la ranger':'Lecture seule'}">
     <img src="${esc(m.url)}" style="width:30px;height:30px;object-fit:cover;border-radius:6px;flex-shrink:0" alt="">
     <div class="asset-info"><b>${esc(m.displayName)}</b></div>
     ${mj&&m.id?`<button class="btn ghost" style="padding:4px 8px" onclick="openRenameMapModal('${m.id}')" title="Renommer">✏️</button>`:''}
@@ -1304,6 +1324,7 @@ function mapItemHtml(m){
   </div>`;
 }
 function mapsPanel(){
+  if(!isMJ())return '';
   const mj=isMJ();
   const query=mapSearchQuery.trim().toLowerCase();
   const header=`<div class="row between" style="margin-bottom:8px"><h2>🗺️ Cartes</h2><div class="row" style="gap:6px">${mj?`<button class="btn ghost" onclick="openNewCategoryModal()" title="Nouvelle catégorie">📁＋</button>`:''}<button class="btn ghost" onclick="refreshMapLibrary()" title="Rafraîchir">⟳</button></div></div>`;
@@ -1317,7 +1338,7 @@ function mapsPanel(){
   const breadcrumb=mapBreadcrumb(currentMapCategory);
   const subCats=mapCategories.filter(c=>(c.parent_id||null)===(currentMapCategory||null));
   const mapsHere=mapLibrary.filter(m=>(m.categoryId||null)===(currentMapCategory||null));
-  const catsHtml=subCats.map(c=>`<div class="asset-item" onclick="openMapCategory('${c.id}')" style="cursor:pointer">
+  const catsHtml=subCats.map(c=>`<div class="asset-item" onclick="openMapCategory('${c.id}')" ondragover="event.preventDefault()" ondrop="handleCategoryDrop(event,'${c.id}')" style="cursor:pointer">
       <div class="asset-icon">📁</div><div class="asset-info"><b>${esc(c.name)}</b><small>${mapCategories.filter(cc=>cc.parent_id===c.id).length} sous-dossier(s) · ${mapLibrary.filter(m=>m.categoryId===c.id).length} carte(s)</small></div>
     </div>`).join('');
   const mapsHtml=mapsHere.length?mapsHere.map(mapItemHtml).join(''):'';
