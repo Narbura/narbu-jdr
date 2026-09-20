@@ -9,7 +9,7 @@
 :root{
   --bg:#111216; --panel:#191b20; --panel2:#20232a; --line:#343842;
   --text:#f3f4f7; --muted:#9da3b0; --accent:#9b4dff; --accent2:#c084fc;
-  --danger:#ef6262; --success:#62d394; --gold:#e7b85c;
+  --danger:#ef6262; --success:#62d394; --gold:#e7b85c; --grid-opacity:1;
 }
 *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 30% 0,#241b31 0,#111216 42%);color:var(--text);font:14px Inter,Segoe UI,Arial,sans-serif;height:100vh;overflow:hidden}
 button,input,select,textarea{font:inherit} button{cursor:pointer}
@@ -33,7 +33,9 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .map-wrap{flex:1;position:relative;overflow:hidden;background:#0d0f13;border:1px solid var(--line);border-radius:12px;cursor:grab}
 .map-wrap.panning{cursor:grabbing}
 .map{position:absolute;top:0;left:0;background:linear-gradient(145deg,#2a3134,#1f2629);border:1px solid #59606a;box-shadow:0 15px 50px #0008;user-select:none;transform-origin:0 0}
-.cell{position:absolute;border-right:1px solid #ffffffaa;border-bottom:1px solid #ffffffaa;pointer-events:none;mix-blend-mode:difference;z-index:15}
+.cell{position:absolute;border-right:1px solid #ffffffaa;border-bottom:1px solid #ffffffaa;pointer-events:none;mix-blend-mode:difference;z-index:15;opacity:var(--grid-opacity,1)}
+.grid-opacity-popover{position:absolute;top:44px;left:0;background:#17191fee;border:1px solid #454956;border-radius:10px;padding:10px 14px;z-index:96;min-width:210px;box-shadow:0 10px 30px #0008}
+.grid-opacity-popover input[type="range"]{width:100%;margin-top:6px}
 .zone{position:absolute;pointer-events:none;background:#a44cff38;border:2px solid #c084fc;box-shadow:0 0 25px #a44cff55 inset,0 0 18px #a44cff33;z-index:20}
 .zone-effect{position:absolute;inset:0;display:grid;place-items:center;opacity:.42}
 .token-wrap{position:absolute;z-index:30;pointer-events:none}
@@ -257,6 +259,9 @@ let mapZoom=1, mapPan={x:0,y:0};
 let collapsedAssets={players:false,enemies:false};
 let sidePanelTab='library';
 let stageFullscreen=false;
+let gridOpacity=Math.max(0,Math.min(100,parseInt(localStorage.getItem('narbudr-grid-opacity')||'100',10)));
+let gridVisible=localStorage.getItem('narbudr-grid-visible')!=='0';
+let gridPopoverOpen=false;
 let dragCandidate=null;
 let panState=null;
 
@@ -464,6 +469,15 @@ function tablePage(){
   <div class="card map-card">
     <div class="map-toolbar">
       <button class="btn" onclick="toggleFullscreen()">${stageFullscreen?'✕ Quitter le plein écran':'⛶ Plein écran'}</button>
+      <button class="btn" id="gridToggleBtn" onclick="toggleGridVisible()" title="Afficher/masquer la grille">${gridVisible?'▦':'⬜'} Grille</button>
+      <div style="position:relative;display:inline-block">
+        <button class="btn ghost" title="Réglage de l'opacité de la grille" onclick="toggleGridOpacityPopover()">⚙</button>
+        <div id="gridOpacityPopover" class="grid-opacity-popover" style="display:${gridPopoverOpen?'block':'none'}">
+          <label class="tiny muted">Opacité de la grille : <span id="gridOpacityValue">${gridOpacity}%</span></label>
+          <input type="range" min="0" max="100" value="${gridOpacity}" id="gridOpacitySlider" oninput="onGridOpacityInput(this.value)">
+          <p class="tiny muted" style="margin:6px 0 0">Ce réglage n'affecte que ton propre écran.</p>
+        </div>
+      </div>
       ${combatControls}
     </div>
     <div class="map-wrap" id="mapWrap">
@@ -1440,6 +1454,40 @@ function mapsResultsHtml(){
 }
 
 /* ============================= PLEIN ÉCRAN ============================= */
+/* ============================= GRILLE : OPACITÉ ET AFFICHAGE (préférence locale, jamais synchronisée) ============================= */
+function applyGridOpacity(){
+  document.documentElement.style.setProperty('--grid-opacity', gridVisible?(gridOpacity/100):0);
+}
+function onGridOpacityInput(value){
+  gridOpacity=Math.max(0,Math.min(100,parseInt(value,10)||0));
+  localStorage.setItem('narbudr-grid-opacity',String(gridOpacity));
+  const label=document.getElementById('gridOpacityValue');
+  if(label)label.textContent=gridOpacity+'%';
+  applyGridOpacity();
+}
+function toggleGridVisible(){
+  gridVisible=!gridVisible;
+  localStorage.setItem('narbudr-grid-visible',gridVisible?'1':'0');
+  applyGridOpacity();
+  const btn=document.getElementById('gridToggleBtn');
+  if(btn)btn.innerHTML=(gridVisible?'▦':'⬜')+' Grille';
+}
+function toggleGridOpacityPopover(){
+  gridPopoverOpen=!gridPopoverOpen;
+  const pop=document.getElementById('gridOpacityPopover');
+  if(pop)pop.style.display=gridPopoverOpen?'block':'none';
+}
+document.addEventListener('click',e=>{
+  if(!gridPopoverOpen)return;
+  const pop=document.getElementById('gridOpacityPopover');
+  const gearBtn=e.target.closest('button[title="Réglage de l\'opacité de la grille"]');
+  if(pop && !pop.contains(e.target) && !gearBtn){
+    gridPopoverOpen=false;
+    pop.style.display='none';
+  }
+});
+applyGridOpacity();
+
 function toggleFullscreen(){
   stageFullscreen=!stageFullscreen;
   document.body.classList.toggle('stage-fullscreen',stageFullscreen);
