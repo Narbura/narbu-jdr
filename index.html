@@ -33,7 +33,7 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .map-wrap{flex:1;position:relative;overflow:hidden;background:#0d0f13;border:1px solid var(--line);border-radius:12px;cursor:grab}
 .map-wrap.panning{cursor:grabbing}
 .map{position:absolute;top:0;left:0;background:linear-gradient(145deg,#2a3134,#1f2629);border:1px solid #59606a;box-shadow:0 15px 50px #0008;user-select:none;transform-origin:0 0}
-.cell{position:absolute;border-right:1px solid #ffffff18;border-bottom:1px solid #ffffff18;pointer-events:none}
+.cell{position:absolute;border-right:1px solid #ffffffaa;border-bottom:1px solid #ffffffaa;pointer-events:none;mix-blend-mode:difference;z-index:15}
 .zone{position:absolute;pointer-events:none;background:#a44cff38;border:2px solid #c084fc;box-shadow:0 0 25px #a44cff55 inset,0 0 18px #a44cff33;z-index:20}
 .zone-effect{position:absolute;inset:0;display:grid;place-items:center;opacity:.42}
 .token-wrap{position:absolute;z-index:30;pointer-events:none}
@@ -219,7 +219,7 @@ const DEFAULT={
     {id:'i_m2',charId:'m2',label:'Sorcier gobelin',x:13,y:8,hp:65,hpMax:65,mana:30,manaMax:30,shield:0,shieldMax:0,remainingMove:6},
     {id:'i_m3',charId:'m3',label:'Slime rouge',x:7,y:10,hp:40,hpMax:40,mana:0,manaMax:0,shield:0,shieldMax:0,remainingMove:4}
   ],
-  map:{cols:18,rows:12,cell:44},
+  map:{cols:18,rows:12,cell:44,backgroundImage:null},
   chat:[],
   combat:{active:false,order:[],turn:0,initiatives:{}}
 };
@@ -229,6 +229,7 @@ function normalizeState(){
   if(!S.instances)S.instances=[];
   if(!S.chat)S.chat=[];
   if(!S.map)S.map=structuredClone(DEFAULT.map);
+  if(S.map.backgroundImage===undefined)S.map.backgroundImage=null;
   if(!S.combat)S.combat=structuredClone(DEFAULT.combat);
   if(!S.characters)S.characters=[];
   if(!S.abilities)S.abilities=[];
@@ -313,6 +314,7 @@ async function initApp(){
   try{
     await loadProfiles();
     await loadGameState();
+    await loadMapLibrary();
     subscribeRealtime();
   }catch(e){
     console.error('initApp', e);
@@ -465,7 +467,7 @@ function tablePage(){
     </div>
     <div class="map-wrap" id="mapWrap">
       <div class="map-drop-hint" id="mapDropHint">➕ Déposer sur la carte</div>
-      <div class="map" id="map" style="width:${S.map.cols*S.map.cell}px;height:${S.map.rows*S.map.cell}px">${mapCells()}${tokensHtml()}</div>
+      <div class="map" id="map" style="width:${S.map.cols*S.map.cell}px;height:${S.map.rows*S.map.cell}px${S.map.backgroundImage?`;background-image:url('${esc(S.map.backgroundImage)}');background-size:100% 100%;background-repeat:no-repeat`:''}">${mapCells()}${tokensHtml()}</div>
       ${S.combat.active?`<div class="turn-banner">⚔ Tour : <b>${esc(inst(S.combat.order[S.combat.turn])?.label||'—')}</b></div>`:''}
     </div>
     <div class="bottom-abilities">${(()=>{
@@ -526,9 +528,10 @@ function updateZonePreview(){
 function sidePanelHtml(){
   return `<div class="side-tabs">
     <button class="tab ${sidePanelTab==='library'?'active':''}" onclick="switchSideTab('library')">📚 Bibliothèque</button>
+    <button class="tab ${sidePanelTab==='maps'?'active':''}" onclick="switchSideTab('maps')">🗺️ Cartes</button>
     <button class="tab ${sidePanelTab==='chat'?'active':''}" onclick="switchSideTab('chat')">💬 Chat</button>
   </div>
-  <div class="asset-panel">${sidePanelTab==='library'?assetPanel():chatPanel()}${combatPanel()}</div>`;
+  <div class="asset-panel">${sidePanelTab==='library'?assetPanel():sidePanelTab==='maps'?mapsPanel():chatPanel()}${combatPanel()}</div>`;
 }
 function switchSideTab(t){sidePanelTab=t;render();}
 function assetPanel(){
@@ -620,8 +623,29 @@ function setupMapInteractions(){
   wrap.ondragleave=()=>hint?.classList.remove('show');
   wrap.ondrop=e=>{
     e.preventDefault(); hint?.classList.remove('show');
-    if(!isMJ()){toast('⛔ Seul le MJ peut ajouter des tokens.');return;}
-    const charId=e.dataTransfer.getData('text/plain'); const tpl=char(charId); if(!tpl)return;
+    if(!isMJ()){toast('⛔ Seul le MJ peut modifier la carte ou ajouter des tokens.');return;}
+
+    // Cas 1 : image glissée directement depuis l'ordinateur
+    if(e.dataTransfer.files && e.dataTransfer.files.length>0){
+      const file=e.dataTransfer.files[0];
+      if(!/^image\/(png|jpe?g|webp)$/i.test(file.type)){
+        toast('⚠️ Format non supporté — utilise une image PNG, JPG ou WebP.');
+        return;
+      }
+      handleMapImageFile(file);
+      return;
+    }
+
+    const data=e.dataTransfer.getData('text/plain');
+
+    // Cas 2 : carte déjà envoyée, réutilisée depuis l'onglet 🗺️ Cartes
+    if(data && data.startsWith('map:')){
+      handleMapImageUrl(data.slice(4));
+      return;
+    }
+
+    // Cas 3 : personnage / monstre glissé depuis la bibliothèque
+    const charId=data; const tpl=char(charId); if(!tpl)return;
     const pt=mapPoint(e.clientX,e.clientY);
     const free=findFreeCell(pt[0],pt[1]);
     if(!free){toast('🚫 Plus aucune case libre sur la carte.');return;}
@@ -1106,6 +1130,96 @@ function assetDragStart(ev,charId){
   ev.dataTransfer.setData('text/plain',charId);
   ev.dataTransfer.effectAllowed='copy';
   document.getElementById('mapDropHint')?.classList.add('show');
+}
+
+/* ============================= CARTES : UPLOAD, DIMENSIONNEMENT, BIBLIOTHÈQUE ============================= */
+const MAPS_BUCKET='JDR';
+let mapLibrary=[]; // [{name,url}]
+
+function loadImageDimensions(src){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>resolve({w:img.naturalWidth,h:img.naturalHeight});
+    img.onerror=()=>reject(new Error('image illisible'));
+    img.src=src;
+  });
+}
+function openMapSizeModal(onConfirm){
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>🗺️ Dimensionner la carte</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <p class="tiny muted">Combien de cases de large fait cette carte (colonnes) ? Le nombre de lignes sera calculé automatiquement pour respecter les proportions de l'image, sans la déformer.</p>
+  <div class="field"><label>Colonnes</label><input id="map_cols_input" type="number" min="2" max="60" value="${S.map.cols||20}"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" id="map_cols_confirm">Valider</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+  document.getElementById('map_cols_confirm').onclick=()=>{
+    const cols=Math.max(2,Math.min(60,parseInt(document.getElementById('map_cols_input').value,10)||20));
+    closeModal();
+    onConfirm(cols);
+  };
+}
+function applyMapBackground(cols,publicUrl,naturalW,naturalH){
+  const rows=Math.max(2,Math.round(cols*naturalH/naturalW));
+  S.map.cols=cols; S.map.rows=rows; S.map.backgroundImage=publicUrl;
+  mapZoom=1; mapPan={x:0,y:0};
+  addLog(`🗺️ Le MJ a changé le fond de carte (${cols}×${rows} cases).`);
+  saveState(); render();
+  toast(`🗺️ Carte mise à jour (${cols}×${rows} cases).`);
+}
+function handleMapImageFile(file){
+  const objectUrl=URL.createObjectURL(file);
+  loadImageDimensions(objectUrl).then(dims=>{
+    openMapSizeModal(async cols=>{
+      toast('⏳ Envoi de la carte en cours…');
+      try{
+        const safeName=file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+        const filePath=`map_${Date.now()}_${safeName}`;
+        const { error:upErr } = await supabaseClient.storage.from(MAPS_BUCKET).upload(filePath,file,{cacheControl:'3600',upsert:false});
+        if(upErr){ toast('❌ Échec de l\'envoi : '+upErr.message); return; }
+        const { data:pub } = supabaseClient.storage.from(MAPS_BUCKET).getPublicUrl(filePath);
+        applyMapBackground(cols,pub.publicUrl,dims.w,dims.h);
+        loadMapLibrary().then(render);
+      }catch(e){ console.error('handleMapImageFile',e); toast('❌ Erreur lors de l\'envoi de la carte.'); }
+      finally{ URL.revokeObjectURL(objectUrl); }
+    });
+  }).catch(()=>{ toast('⚠️ Impossible de lire cette image.'); URL.revokeObjectURL(objectUrl); });
+}
+function handleMapImageUrl(url){
+  loadImageDimensions(url).then(dims=>{
+    openMapSizeModal(cols=>applyMapBackground(cols,url,dims.w,dims.h));
+  }).catch(()=>toast('⚠️ Impossible de charger cette image.'));
+}
+async function loadMapLibrary(){
+  try{
+    const { data, error } = await supabaseClient.storage.from(MAPS_BUCKET).list('',{limit:100,sortBy:{column:'created_at',order:'desc'}});
+    if(error){ console.error('loadMapLibrary',error); return; }
+    mapLibrary=(data||[]).filter(f=>f.name && !f.name.startsWith('.')).map(f=>{
+      const { data:pub } = supabaseClient.storage.from(MAPS_BUCKET).getPublicUrl(f.name);
+      return { name:f.name, url:pub.publicUrl };
+    });
+  }catch(e){ console.error('loadMapLibrary',e); }
+}
+function mapDragStart(ev,url){
+  if(!isMJ()){ev.preventDefault();return;}
+  ev.dataTransfer.setData('text/plain','map:'+url);
+  ev.dataTransfer.effectAllowed='copy';
+  document.getElementById('mapDropHint')?.classList.add('show');
+}
+function applyExistingMap(url){
+  if(!isMJ()){toast('⛔ Seul le MJ peut changer la carte.');return;}
+  handleMapImageUrl(url);
+}
+function refreshMapLibrary(){ loadMapLibrary().then(render); }
+function mapsPanel(){
+  const mj=isMJ();
+  const items=mapLibrary.length
+    ? mapLibrary.map(m=>`<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="mapDragStart(event,'${esc(m.url)}')"`:''} title="${mj?'Glisser sur la carte pour réutiliser ce terrain':'Lecture seule'}">
+        <img src="${esc(m.url)}" style="width:30px;height:30px;object-fit:cover;border-radius:6px;flex-shrink:0" alt="">
+        <div class="asset-info"><b>${esc(m.name)}</b></div>
+        ${mj?`<button class="btn ghost" style="padding:4px 8px" onclick="applyExistingMap('${esc(m.url)}')" title="Utiliser cette carte">↺</button>`:''}
+      </div>`).join('')
+    : '<p class="tiny muted">Aucune carte envoyée pour l’instant.</p>';
+  return `<div class="row between" style="margin-bottom:8px"><h2>🗺️ Cartes</h2>${mj?`<button class="btn ghost" onclick="refreshMapLibrary()" title="Rafraîchir la liste">⟳</button>`:''}</div>
+  <p class="tiny muted">${mj?'Glisse une image (PNG/JPG/WebP) depuis ton ordinateur directement sur la carte, ou réutilise un terrain ci-dessous en le glissant sur la carte.':'Seul le MJ peut changer le fond de la carte.'}</p>
+  <div class="asset-list">${items}</div>`;
 }
 
 /* ============================= PLEIN ÉCRAN ============================= */
