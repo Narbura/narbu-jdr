@@ -1314,6 +1314,81 @@ async function renameMap(id,newName){
   closeModal(); render();
   toast('✅ Carte renommée.');
 }
+function openRenameCategoryModal(id){
+  if(!isMJ())return;
+  const c=mapCategories.find(x=>x.id===id); if(!c)return;
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>Renommer le dossier</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <div class="field"><label>Nom du dossier</label><input id="cat_rename_input" value="${esc(c.name)}" maxlength="40"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" id="cat_rename_confirm">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+  document.getElementById('cat_rename_confirm').onclick=()=>renameCategory(id,document.getElementById('cat_rename_input').value.trim());
+}
+async function renameCategory(id,newName){
+  if(!isMJ())return;
+  if(!newName){toast('⚠️ Le nom ne peut pas être vide.');return;}
+  try{
+    const { error } = await supabaseClient.from('map_categories').update({name:newName}).eq('id',id);
+    if(error){toast('❌ '+error.message);return;}
+  }catch(e){ console.error('renameCategory',e); toast('❌ Erreur réseau.'); return; }
+  const c=mapCategories.find(x=>x.id===id); if(c)c.name=newName;
+  closeModal(); render();
+  toast('✅ Dossier renommé.');
+}
+function descendantCategoryIds(rootId){
+  const ids=[rootId];
+  let frontier=[rootId];
+  while(frontier.length){
+    const children=mapCategories.filter(c=>frontier.includes(c.parent_id)).map(c=>c.id);
+    ids.push(...children);
+    frontier=children;
+  }
+  return ids;
+}
+function confirmDeleteCategory(id){
+  if(!isMJ())return;
+  const cat=mapCategories.find(x=>x.id===id); if(!cat)return;
+  const ids=descendantCategoryIds(id);
+  const affectedMaps=mapLibrary.filter(m=>ids.includes(m.categoryId));
+  const subCount=ids.length-1;
+  const warning=(affectedMaps.length||subCount)
+    ? `Ce dossier contient ${subCount>0?`${subCount} sous-dossier(s) et `:''}${affectedMaps.length} carte(s). Les supprimer effacera <b>définitivement</b> ces cartes (fichier et fiche) de la base de données — cette action est irréversible.`
+    : `Ce dossier est vide.`;
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>⚠️ Supprimer « ${esc(cat.name)} »</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <p class="tiny muted">${warning}</p>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn" style="background:var(--danger);border-color:var(--danger)" id="cat_delete_confirm">Supprimer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+  document.getElementById('cat_delete_confirm').onclick=()=>deleteCategory(id,ids,affectedMaps);
+}
+async function deleteCategory(id,descendantIds,affectedMaps){
+  if(!isMJ())return;
+  toast('⏳ Suppression en cours…');
+  try{
+    if(affectedMaps.length){
+      const paths=affectedMaps.map(m=>m.storagePath).filter(Boolean);
+      if(paths.length){
+        const { error:storErr } = await supabaseClient.storage.from(MAPS_BUCKET).remove(paths);
+        if(storErr) console.error('remove storage files',storErr);
+      }
+      const mapIds=affectedMaps.map(m=>m.id).filter(Boolean);
+      if(mapIds.length){
+        const { error:delMapsErr } = await supabaseClient.from('map_library').delete().in('id',mapIds);
+        if(delMapsErr) console.error('delete map_library rows',delMapsErr);
+      }
+    }
+    const { error:delCatErr } = await supabaseClient.from('map_categories').delete().eq('id',id);
+    if(delCatErr){ toast('❌ '+delCatErr.message); return; }
+    const subIds=descendantIds.filter(i=>i!==id);
+    if(subIds.length){
+      const { error:delSubErr } = await supabaseClient.from('map_categories').delete().in('id',subIds);
+      if(delSubErr) console.error('delete descendant categories',delSubErr);
+    }
+  }catch(e){ console.error('deleteCategory',e); toast('❌ Erreur lors de la suppression.'); return; }
+  closeModal();
+  if(currentMapCategory && descendantIds.includes(currentMapCategory)) currentMapCategory=null;
+  await Promise.all([loadMapCategories(),loadMapLibrary()]);
+  render();
+  toast('🗑️ Dossier supprimé.');
+}
 function mapItemHtml(m){
   const mj=isMJ();
   return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="mapDragStart(event,'${esc(m.url)}','${m.id||''}')"`:''} title="${mj?'Glisser sur la carte pour réutiliser ce terrain, ou sur un dossier pour la ranger':'Lecture seule'}">
@@ -1325,26 +1400,41 @@ function mapItemHtml(m){
 }
 function mapsPanel(){
   if(!isMJ())return '';
+  const header=`<div class="row between" style="margin-bottom:8px"><h2>🗺️ Cartes</h2><div class="row" style="gap:6px"><button class="btn ghost" onclick="openNewCategoryModal()" title="Nouvelle catégorie">📁＋</button><button class="btn ghost" onclick="refreshMapLibrary()" title="Rafraîchir">⟳</button></div></div>`;
+  const searchBar=`<input id="map_search_input" placeholder="🔎 Rechercher une carte par nom…" value="${esc(mapSearchQuery)}" oninput="onMapSearchInput(this.value)" style="margin-bottom:10px">`;
+  return `${header}${searchBar}<div id="mapsResultsContainer">${mapsResultsHtml()}</div>`;
+}
+function onMapSearchInput(value){
+  mapSearchQuery=value;
+  const container=document.getElementById('mapsResultsContainer');
+  if(container)container.innerHTML=mapsResultsHtml();
+  // Volontairement pas de render() ici : ça recréerait le champ de recherche et ferait perdre le focus à chaque lettre tapée.
+}
+function mapsResultsHtml(){
   const mj=isMJ();
   const query=mapSearchQuery.trim().toLowerCase();
-  const header=`<div class="row between" style="margin-bottom:8px"><h2>🗺️ Cartes</h2><div class="row" style="gap:6px">${mj?`<button class="btn ghost" onclick="openNewCategoryModal()" title="Nouvelle catégorie">📁＋</button>`:''}<button class="btn ghost" onclick="refreshMapLibrary()" title="Rafraîchir">⟳</button></div></div>`;
-  const searchBar=`<input id="map_search_input" placeholder="🔎 Rechercher une carte par nom…" value="${esc(mapSearchQuery)}" oninput="mapSearchQuery=this.value;render();" style="margin-bottom:10px">`;
 
   if(query){
     const results=mapLibrary.filter(m=>m.displayName.toLowerCase().includes(query));
-    return `${header}${searchBar}<div class="asset-list">${results.length?results.map(mapItemHtml).join(''):'<p class="tiny muted">Aucune carte ne correspond à cette recherche.</p>'}</div>`;
+    return `<div class="asset-list">${results.length?results.map(mapItemHtml).join(''):'<p class="tiny muted">Aucune carte ne correspond à cette recherche.</p>'}</div>`;
   }
 
   const breadcrumb=mapBreadcrumb(currentMapCategory);
   const subCats=mapCategories.filter(c=>(c.parent_id||null)===(currentMapCategory||null));
   const mapsHere=mapLibrary.filter(m=>(m.categoryId||null)===(currentMapCategory||null));
-  const catsHtml=subCats.map(c=>`<div class="asset-item" onclick="openMapCategory('${c.id}')" ondragover="event.preventDefault()" ondrop="handleCategoryDrop(event,'${c.id}')" style="cursor:pointer">
-      <div class="asset-icon">📁</div><div class="asset-info"><b>${esc(c.name)}</b><small>${mapCategories.filter(cc=>cc.parent_id===c.id).length} sous-dossier(s) · ${mapLibrary.filter(m=>m.categoryId===c.id).length} carte(s)</small></div>
-    </div>`).join('');
+  const catsHtml=subCats.map(c=>{
+    const subCount=mapCategories.filter(cc=>cc.parent_id===c.id).length;
+    const mapCount=mapLibrary.filter(m=>m.categoryId===c.id).length;
+    return `<div class="asset-item" onclick="openMapCategory('${c.id}')" ondragover="event.preventDefault()" ondrop="handleCategoryDrop(event,'${c.id}')" style="cursor:pointer">
+      <div class="asset-icon">📁</div><div class="asset-info"><b>${esc(c.name)}</b><small>${subCount} sous-dossier(s) · ${mapCount} carte(s)</small></div>
+      <button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();openRenameCategoryModal('${c.id}')" title="Renommer le dossier">✏️</button>
+      <button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();confirmDeleteCategory('${c.id}')" title="Supprimer le dossier">🗑️</button>
+    </div>`;
+  }).join('');
   const mapsHtml=mapsHere.length?mapsHere.map(mapItemHtml).join(''):'';
   const emptyMsg=(!subCats.length&&!mapsHere.length)?'<p class="tiny muted">Ce dossier est vide.</p>':'';
 
-  return `${header}${searchBar}${breadcrumb}
+  return `${breadcrumb}
   <p class="tiny muted">${mj?'Glisse une image (PNG/JPG/WebP) depuis ton ordinateur directement sur la carte pour l’ajouter dans ce dossier, ou réutilise un terrain ci-dessous en le glissant sur la carte.':'Seul le MJ peut changer le fond de la carte.'}</p>
   <div class="asset-list">${catsHtml}${mapsHtml}${emptyMsg}</div>`;
 }
