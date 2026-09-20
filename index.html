@@ -314,6 +314,7 @@ async function initApp(){
   try{
     await loadProfiles();
     await loadGameState();
+    await loadMapCategories();
     await loadMapLibrary();
     subscribeRealtime();
   }catch(e){
@@ -1134,7 +1135,10 @@ function assetDragStart(ev,charId){
 
 /* ============================= CARTES : UPLOAD, DIMENSIONNEMENT, BIBLIOTHÈQUE ============================= */
 const MAPS_BUCKET='JDR';
-let mapLibrary=[]; // [{name,url}]
+let mapLibrary=[];       // [{id,storagePath,url,displayName,categoryId}]
+let mapCategories=[];    // [{id,name,parent_id}]
+let currentMapCategory=null; // catégorie actuellement parcourue (null = racine)
+let mapSearchQuery='';
 
 function loadImageDimensions(src){
   return new Promise((resolve,reject)=>{
@@ -1175,8 +1179,11 @@ function handleMapImageFile(file){
         const { error:upErr } = await supabaseClient.storage.from(MAPS_BUCKET).upload(filePath,file,{cacheControl:'3600',upsert:false});
         if(upErr){ toast('❌ Échec de l\'envoi : '+upErr.message); return; }
         const { data:pub } = supabaseClient.storage.from(MAPS_BUCKET).getPublicUrl(filePath);
+        const niceName=file.name.replace(/\.[^.]+$/,'');
+        const { error:metaErr } = await supabaseClient.from('map_library').insert({storage_path:filePath,display_name:niceName,category_id:currentMapCategory});
+        if(metaErr)console.error('map_library insert',metaErr);
         applyMapBackground(cols,pub.publicUrl,dims.w,dims.h);
-        loadMapLibrary().then(render);
+        await loadMapLibrary(); render();
       }catch(e){ console.error('handleMapImageFile',e); toast('❌ Erreur lors de l\'envoi de la carte.'); }
       finally{ URL.revokeObjectURL(objectUrl); }
     });
@@ -1187,13 +1194,37 @@ function handleMapImageUrl(url){
     openMapSizeModal(cols=>applyMapBackground(cols,url,dims.w,dims.h));
   }).catch(()=>toast('⚠️ Impossible de charger cette image.'));
 }
+async function loadMapCategories(){
+  try{
+    const { data, error } = await supabaseClient.from('map_categories').select('*');
+    if(!error) mapCategories=data||[];
+  }catch(e){ console.error('loadMapCategories',e); }
+}
 async function loadMapLibrary(){
   try{
-    const { data, error } = await supabaseClient.storage.from(MAPS_BUCKET).list('',{limit:100,sortBy:{column:'created_at',order:'desc'}});
-    if(error){ console.error('loadMapLibrary',error); return; }
-    mapLibrary=(data||[]).filter(f=>f.name && !f.name.startsWith('.')).map(f=>{
+    const [{data:files,error:filesErr},{data:meta,error:metaErr}] = await Promise.all([
+      supabaseClient.storage.from(MAPS_BUCKET).list('',{limit:200,sortBy:{column:'created_at',order:'desc'}}),
+      supabaseClient.from('map_library').select('*')
+    ]);
+    if(filesErr){ console.error('loadMapLibrary(storage)',filesErr); return; }
+    if(metaErr) console.error('loadMapLibrary(meta)',metaErr);
+    const metaByPath={};
+    (meta||[]).forEach(m=>metaByPath[m.storage_path]=m);
+    const validFiles=(files||[]).filter(f=>f.name && !f.name.startsWith('.'));
+    // Rattrapage : des cartes envoyées avant la mise en place des catégories n'ont pas encore de métadonnées.
+    const orphans=validFiles.filter(f=>!metaByPath[f.name]);
+    if(orphans.length && isMJ()){
+      for(const f of orphans){
+        try{
+          const { data:inserted, error:insErr } = await supabaseClient.from('map_library').insert({storage_path:f.name,display_name:f.name,category_id:null}).select().single();
+          if(!insErr && inserted) metaByPath[f.name]=inserted;
+        }catch(e){ console.error('backfill map_library',e); }
+      }
+    }
+    mapLibrary=validFiles.map(f=>{
       const { data:pub } = supabaseClient.storage.from(MAPS_BUCKET).getPublicUrl(f.name);
-      return { name:f.name, url:pub.publicUrl };
+      const m=metaByPath[f.name];
+      return { id:m?.id||null, storagePath:f.name, url:pub.publicUrl, displayName:m?.display_name||f.name, categoryId:m?.category_id||null };
     });
   }catch(e){ console.error('loadMapLibrary',e); }
 }
@@ -1207,19 +1238,94 @@ function applyExistingMap(url){
   if(!isMJ()){toast('⛔ Seul le MJ peut changer la carte.');return;}
   handleMapImageUrl(url);
 }
-function refreshMapLibrary(){ loadMapLibrary().then(render); }
+function refreshMapLibrary(){ Promise.all([loadMapCategories(),loadMapLibrary()]).then(render); }
+function openMapCategory(id){ currentMapCategory=id; render(); }
+function mapBreadcrumb(catId){
+  const chain=[];
+  let cur=catId;
+  while(cur){
+    const c=mapCategories.find(x=>x.id===cur);
+    if(!c)break;
+    chain.unshift(c);
+    cur=c.parent_id;
+  }
+  const rootLink=`<button class="btn ghost" style="padding:3px 8px" onclick="openMapCategory(null)">🏠 Racine</button>`;
+  const rest=chain.map(c=>`<span class="tiny muted">›</span> <button class="btn ghost" style="padding:3px 8px" onclick="openMapCategory('${c.id}')">${esc(c.name)}</button>`).join(' ');
+  return `<div class="row" style="flex-wrap:wrap;gap:4px;margin-bottom:8px">${rootLink} ${rest}</div>`;
+}
+function openNewCategoryModal(){
+  if(!isMJ())return;
+  const parentName=currentMapCategory?(mapCategories.find(c=>c.id===currentMapCategory)?.name||''):'';
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>Nouvelle catégorie</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <p class="tiny muted">${currentMapCategory?`Sera créée à l’intérieur de « ${esc(parentName)} ».`:'Sera créée à la racine de la bibliothèque.'}</p>
+  <div class="field"><label>Nom de la catégorie</label><input id="new_cat_input" placeholder="Ex : Cartes de glace" maxlength="40"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" id="new_cat_confirm">Créer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+  document.getElementById('new_cat_confirm').onclick=()=>createCategory(document.getElementById('new_cat_input').value.trim());
+}
+async function createCategory(name){
+  if(!isMJ())return;
+  if(!name){toast('⚠️ Le nom ne peut pas être vide.');return;}
+  try{
+    const { error } = await supabaseClient.from('map_categories').insert({name,parent_id:currentMapCategory});
+    if(error){toast('❌ '+error.message);return;}
+  }catch(e){ console.error('createCategory',e); toast('❌ Erreur réseau.'); return; }
+  closeModal();
+  await loadMapCategories(); render();
+  toast('✅ Catégorie créée.');
+}
+function openRenameMapModal(id){
+  if(!isMJ())return;
+  const m=mapLibrary.find(x=>x.id===id); if(!m)return;
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>Renommer la carte</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <div class="field"><label>Nom de la carte</label><input id="map_rename_input" value="${esc(m.displayName)}" maxlength="60"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" id="map_rename_confirm">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+  document.getElementById('map_rename_confirm').onclick=()=>renameMap(id,document.getElementById('map_rename_input').value.trim());
+}
+async function renameMap(id,newName){
+  if(!isMJ())return;
+  if(!newName){toast('⚠️ Le nom ne peut pas être vide.');return;}
+  try{
+    const { error } = await supabaseClient.from('map_library').update({display_name:newName}).eq('id',id);
+    if(error){toast('❌ '+error.message);return;}
+  }catch(e){ console.error('renameMap',e); toast('❌ Erreur réseau.'); return; }
+  const m=mapLibrary.find(x=>x.id===id); if(m)m.displayName=newName;
+  closeModal(); render();
+  toast('✅ Carte renommée.');
+}
+function mapItemHtml(m){
+  const mj=isMJ();
+  return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="mapDragStart(event,'${esc(m.url)}')"`:''} title="${mj?'Glisser sur la carte pour réutiliser ce terrain':'Lecture seule'}">
+    <img src="${esc(m.url)}" style="width:30px;height:30px;object-fit:cover;border-radius:6px;flex-shrink:0" alt="">
+    <div class="asset-info"><b>${esc(m.displayName)}</b></div>
+    ${mj&&m.id?`<button class="btn ghost" style="padding:4px 8px" onclick="openRenameMapModal('${m.id}')" title="Renommer">✏️</button>`:''}
+    ${mj?`<button class="btn ghost" style="padding:4px 8px" onclick="applyExistingMap('${esc(m.url)}')" title="Utiliser cette carte">↺</button>`:''}
+  </div>`;
+}
 function mapsPanel(){
   const mj=isMJ();
-  const items=mapLibrary.length
-    ? mapLibrary.map(m=>`<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="mapDragStart(event,'${esc(m.url)}')"`:''} title="${mj?'Glisser sur la carte pour réutiliser ce terrain':'Lecture seule'}">
-        <img src="${esc(m.url)}" style="width:30px;height:30px;object-fit:cover;border-radius:6px;flex-shrink:0" alt="">
-        <div class="asset-info"><b>${esc(m.name)}</b></div>
-        ${mj?`<button class="btn ghost" style="padding:4px 8px" onclick="applyExistingMap('${esc(m.url)}')" title="Utiliser cette carte">↺</button>`:''}
-      </div>`).join('')
-    : '<p class="tiny muted">Aucune carte envoyée pour l’instant.</p>';
-  return `<div class="row between" style="margin-bottom:8px"><h2>🗺️ Cartes</h2>${mj?`<button class="btn ghost" onclick="refreshMapLibrary()" title="Rafraîchir la liste">⟳</button>`:''}</div>
-  <p class="tiny muted">${mj?'Glisse une image (PNG/JPG/WebP) depuis ton ordinateur directement sur la carte, ou réutilise un terrain ci-dessous en le glissant sur la carte.':'Seul le MJ peut changer le fond de la carte.'}</p>
-  <div class="asset-list">${items}</div>`;
+  const query=mapSearchQuery.trim().toLowerCase();
+  const header=`<div class="row between" style="margin-bottom:8px"><h2>🗺️ Cartes</h2><div class="row" style="gap:6px">${mj?`<button class="btn ghost" onclick="openNewCategoryModal()" title="Nouvelle catégorie">📁＋</button>`:''}<button class="btn ghost" onclick="refreshMapLibrary()" title="Rafraîchir">⟳</button></div></div>`;
+  const searchBar=`<input id="map_search_input" placeholder="🔎 Rechercher une carte par nom…" value="${esc(mapSearchQuery)}" oninput="mapSearchQuery=this.value;render();" style="margin-bottom:10px">`;
+
+  if(query){
+    const results=mapLibrary.filter(m=>m.displayName.toLowerCase().includes(query));
+    return `${header}${searchBar}<div class="asset-list">${results.length?results.map(mapItemHtml).join(''):'<p class="tiny muted">Aucune carte ne correspond à cette recherche.</p>'}</div>`;
+  }
+
+  const breadcrumb=mapBreadcrumb(currentMapCategory);
+  const subCats=mapCategories.filter(c=>(c.parent_id||null)===(currentMapCategory||null));
+  const mapsHere=mapLibrary.filter(m=>(m.categoryId||null)===(currentMapCategory||null));
+  const catsHtml=subCats.map(c=>`<div class="asset-item" onclick="openMapCategory('${c.id}')" style="cursor:pointer">
+      <div class="asset-icon">📁</div><div class="asset-info"><b>${esc(c.name)}</b><small>${mapCategories.filter(cc=>cc.parent_id===c.id).length} sous-dossier(s) · ${mapLibrary.filter(m=>m.categoryId===c.id).length} carte(s)</small></div>
+    </div>`).join('');
+  const mapsHtml=mapsHere.length?mapsHere.map(mapItemHtml).join(''):'';
+  const emptyMsg=(!subCats.length&&!mapsHere.length)?'<p class="tiny muted">Ce dossier est vide.</p>':'';
+
+  return `${header}${searchBar}${breadcrumb}
+  <p class="tiny muted">${mj?'Glisse une image (PNG/JPG/WebP) depuis ton ordinateur directement sur la carte pour l’ajouter dans ce dossier, ou réutilise un terrain ci-dessous en le glissant sur la carte.':'Seul le MJ peut changer le fond de la carte.'}</p>
+  <div class="asset-list">${catsHtml}${mapsHtml}${emptyMsg}</div>`;
 }
 
 /* ============================= PLEIN ÉCRAN ============================= */
