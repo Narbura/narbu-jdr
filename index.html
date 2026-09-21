@@ -24,7 +24,7 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .grid2{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .card{background:rgba(25,27,32,.94);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 12px 35px #0002}.card h2{font-size:15px;margin:0 0 13px}.muted{color:var(--muted)}.tiny{font-size:11px}.row{display:flex;gap:10px;align-items:center}.between{justify-content:space-between}.pill{padding:4px 8px;border-radius:99px;background:#2a2d35;color:#cdd1da;font-size:11px}.statgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.stat{background:#202229;border:1px solid #30333c;border-radius:10px;padding:9px}.stat label{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}.stat strong{font-size:17px}
 .tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin:-2px 0 16px}.tab{padding:9px 12px;background:none;border:0;color:var(--muted);border-bottom:2px solid transparent}.tab.active{color:white;border-color:var(--accent)}
-.side-tabs{display:flex;gap:6px;margin-bottom:10px;border-bottom:1px solid var(--line)}
+.side-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;border-bottom:1px solid var(--line)}
 .ability{display:flex;align-items:center;gap:10px;padding:11px;border:1px solid var(--line);border-radius:10px;background:#1f2127;margin-bottom:8px}.ability .icon{width:34px;height:34px;border-radius:9px;background:#2b1d3b;display:grid;place-items:center;font-size:17px;overflow:hidden}.ability-info{flex:1}.ability-info b{display:block}.ability-info small{color:var(--muted)}.ability button{padding:7px 9px}
 .icon-dropzone{border:2px dashed #3a3e48;border-radius:10px;padding:10px;text-align:center;cursor:pointer}
 .icon-dropzone.drag{border-color:var(--accent);background:#2a1d3833}
@@ -245,6 +245,8 @@ function normalizeState(){
   if(!S.abilities)S.abilities=[];
   if(!S.characterCategories)S.characterCategories=[];
   if(!S.notes)S.notes=[];
+  if(!S.noteCategories)S.noteCategories=[];
+  S.notes.forEach(n=>{ if(n.categoryId===undefined)n.categoryId=null; });
   if(S.notesReveal===undefined)S.notesReveal=null;
   S.instances.forEach(t=>{
     if(t.px===undefined)t.px=null;
@@ -293,6 +295,8 @@ let chatDraft='';     // texte en cours de saisie dans le chat
 let currentCharCategory=null; // dossier courant dans la bibliothèque de personnages
 let charSearchQuery='';       // recherche texte dans la bibliothèque de personnages
 let lastShownNotesReveal=null; // évite de rouvrir la même note en boucle
+let currentNoteCategory=null;  // dossier courant dans les notes du MJ
+let noteSearchQuery='';        // recherche texte dans les notes du MJ
 
 /* ============================= SYNCHRONISATION SUPABASE ============================= */
 async function loadProfiles(){
@@ -1900,19 +1904,125 @@ function mapsResultsHtml(){
 /* ============================= NOTES DU MJ ============================= */
 function notesPanel(){
   if(!isMJ())return '';
-  const header=`<div class="row between" style="margin-bottom:8px"><h2>📝 Notes du MJ</h2><button class="btn primary" onclick="openNoteEditModal()">＋ Nouvelle note</button></div>`;
-  const list=(S.notes||[]).map(n=>`<div class="asset-item" style="cursor:default">
+  const header=`<div class="row between" style="margin-bottom:8px"><h2>📝 Notes du MJ</h2><div class="row" style="gap:6px"><button class="btn ghost" onclick="openNewNoteCategoryModal()" title="Nouveau dossier">📁＋</button><button class="btn" onclick="openNoteEditModal()">＋</button></div></div>`;
+  const searchBar=`<input id="note_search_input" placeholder="🔎 Rechercher une note par titre…" value="${esc(noteSearchQuery)}" oninput="onNoteSearchInput(this.value)" style="margin-bottom:10px">`;
+  return `${header}${searchBar}<div id="noteResultsContainer">${notesResultsHtml()}</div>`;
+}
+function onNoteSearchInput(v){
+  noteSearchQuery=v;
+  const c=document.getElementById('noteResultsContainer');
+  if(c)c.innerHTML=notesResultsHtml();
+}
+function noteItemHtml(n){
+  return `<div class="asset-item" draggable="true" ondragstart="noteDragStart(event,'${n.id}')" onclick="openNoteEditModal('${n.id}')" title="Glisser vers un dossier — cliquer pour modifier">
     <div class="asset-icon">${n.image?`<img src="${esc(n.image)}" style="width:100%;height:100%;object-fit:cover;border-radius:7px">`:'📝'}</div>
     <div class="asset-info"><b>${esc(n.title)}</b></div>
-    <button class="btn ghost" style="padding:4px 8px" onclick="openNoteEditModal('${n.id}')" title="Modifier">✏️</button>
-    <button class="btn ghost" style="padding:4px 8px" onclick="showNoteToPlayers('${n.id}')" title="Montrer aux joueurs">👁</button>
-    <button class="btn ghost" style="padding:4px 8px" onclick="deleteNote('${n.id}')" title="Supprimer">🗑️</button>
-  </div>`).join('');
-  return `${header}<div class="asset-list">${list||'<p class="tiny muted">Aucune note pour l’instant.</p>'}</div>`;
+    <button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();showNoteToPlayers('${n.id}')" title="Montrer aux joueurs">👁</button>
+    <button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();deleteNote('${n.id}')" title="Supprimer">🗑️</button>
+  </div>`;
+}
+function noteDragStart(ev,noteId){
+  ev.dataTransfer.setData('text/plain','note:'+noteId);
+  ev.dataTransfer.effectAllowed='move';
+}
+function handleNoteCategoryDrop(ev,categoryId){
+  ev.preventDefault(); ev.stopPropagation();
+  const data=ev.dataTransfer.getData('text/plain');
+  if(!data||!data.startsWith('note:'))return;
+  moveNoteToCategory(data.slice(5),categoryId);
+}
+function moveNoteToCategory(noteId,categoryId){
+  const n=(S.notes||[]).find(x=>x.id===noteId); if(!n)return;
+  n.categoryId=categoryId;
+  saveState(); render();
+  toast('✅ Note déplacée.');
+}
+function noteBreadcrumb(catId){
+  const chain=[]; let cur=catId;
+  while(cur){const c=(S.noteCategories||[]).find(x=>x.id===cur); if(!c)break; chain.unshift(c); cur=c.parent_id;}
+  const root=`<button class="btn ghost" style="padding:3px 8px" onclick="openNoteCategory(null)" ondragover="event.preventDefault()" ondrop="handleNoteCategoryDrop(event,null)">🏠 Racine</button>`;
+  const rest=chain.map(c=>`<span class="tiny muted">›</span> <button class="btn ghost" style="padding:3px 8px" onclick="openNoteCategory('${c.id}')" ondragover="event.preventDefault()" ondrop="handleNoteCategoryDrop(event,'${c.id}')">${esc(c.name)}</button>`).join(' ');
+  return `<div class="row" style="flex-wrap:wrap;gap:4px;margin-bottom:8px">${root} ${rest}</div>`;
+}
+function openNoteCategory(id){currentNoteCategory=id;render();}
+function notesResultsHtml(){
+  const query=noteSearchQuery.trim().toLowerCase();
+  if(query){
+    const results=(S.notes||[]).filter(n=>n.title.toLowerCase().includes(query));
+    return `<div class="asset-list">${results.length?results.map(noteItemHtml).join(''):'<p class="tiny muted">Aucune note ne correspond.</p>'}</div>`;
+  }
+  const breadcrumb=noteBreadcrumb(currentNoteCategory);
+  const subCats=(S.noteCategories||[]).filter(c=>(c.parent_id||null)===(currentNoteCategory||null));
+  const notesHere=(S.notes||[]).filter(n=>(n.categoryId||null)===(currentNoteCategory||null));
+  const catsHtml=subCats.map(c=>{
+    const subCount=(S.noteCategories||[]).filter(cc=>cc.parent_id===c.id).length;
+    const noteCount=(S.notes||[]).filter(n=>n.categoryId===c.id).length;
+    return `<div class="asset-item" onclick="openNoteCategory('${c.id}')" ondragover="event.preventDefault()" ondrop="handleNoteCategoryDrop(event,'${c.id}')" style="cursor:pointer">
+      <div class="asset-icon">📁</div><div class="asset-info"><b>${esc(c.name)}</b><small>${subCount} sous-dossier(s) · ${noteCount} note(s)</small></div>
+      <button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();openRenameNoteCategoryModal('${c.id}')" title="Renommer">✏️</button>
+      <button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();confirmDeleteNoteCategory('${c.id}')" title="Supprimer le dossier">🗑️</button>
+    </div>`;
+  }).join('');
+  const notesHtml=notesHere.map(noteItemHtml).join('');
+  const emptyMsg=(!subCats.length&&!notesHere.length)?'<p class="tiny muted">Ce dossier est vide.</p>':'';
+  return `${breadcrumb}<p class="tiny muted">Glisse une note sur un dossier (ou sur 🏠 Racine) pour la ranger.</p><div class="asset-list">${catsHtml}${notesHtml}${emptyMsg}</div>`;
+}
+function openNewNoteCategoryModal(){
+  if(!isMJ())return;
+  const parentName=currentNoteCategory?((S.noteCategories||[]).find(c=>c.id===currentNoteCategory)?.name||''):'';
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>Nouveau dossier</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+  <p class="tiny muted">${currentNoteCategory?`Sera créé dans « ${esc(parentName)} ».`:'Sera créé à la racine.'}</p>
+  <div class="field"><label>Nom</label><input id="new_notecat_input" maxlength="40"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="createNoteCategory(document.getElementById('new_notecat_input').value.trim())">Créer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function createNoteCategory(name){
+  if(!isMJ())return;
+  if(!name){toast('⚠️ Le nom ne peut pas être vide.');return;}
+  if(!S.noteCategories)S.noteCategories=[];
+  S.noteCategories.push({id:'nc'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),name,parent_id:currentNoteCategory});
+  saveState(); closeModal(); render();
+}
+function openRenameNoteCategoryModal(id){
+  if(!isMJ())return;
+  const c=(S.noteCategories||[]).find(x=>x.id===id); if(!c)return;
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>Renommer</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+  <div class="field"><label>Nom</label><input id="rename_notecat_input" value="${esc(c.name)}" maxlength="40"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="renameNoteCategory('${id}',document.getElementById('rename_notecat_input').value.trim())">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function renameNoteCategory(id,name){
+  if(!isMJ())return;
+  if(!name){toast('⚠️ Le nom ne peut pas être vide.');return;}
+  const c=(S.noteCategories||[]).find(x=>x.id===id); if(c)c.name=name;
+  saveState(); closeModal(); render();
+}
+function noteCatDescendants(rootId){
+  const ids=[rootId]; let frontier=[rootId];
+  while(frontier.length){const children=(S.noteCategories||[]).filter(c=>frontier.includes(c.parent_id)).map(c=>c.id);ids.push(...children);frontier=children;}
+  return ids;
+}
+function confirmDeleteNoteCategory(id){
+  if(!isMJ())return;
+  const cat=(S.noteCategories||[]).find(x=>x.id===id); if(!cat)return;
+  const ids=noteCatDescendants(id);
+  const affected=(S.notes||[]).filter(n=>ids.includes(n.categoryId));
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>⚠️ Supprimer « ${esc(cat.name)} »</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+  <p class="tiny muted">${affected.length?`${affected.length} note(s) seront déplacée(s) à la racine (elles ne sont PAS supprimées).`:'Ce dossier est vide.'}</p>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn" style="background:var(--danger);border-color:var(--danger)" onclick="deleteNoteCategory('${id}')">Supprimer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function deleteNoteCategory(id){
+  if(!isMJ())return;
+  const ids=noteCatDescendants(id);
+  S.notes.forEach(n=>{if(ids.includes(n.categoryId))n.categoryId=null;});
+  S.noteCategories=(S.noteCategories||[]).filter(c=>!ids.includes(c.id));
+  if(ids.includes(currentNoteCategory))currentNoteCategory=null;
+  saveState(); closeModal(); render();
 }
 function openNoteEditModal(id){
   if(!isMJ())return;
-  const n=id?(S.notes||[]).find(x=>x.id===id):{id:'n'+Date.now(),title:'',text:'',image:null};
+  const n=id?(S.notes||[]).find(x=>x.id===id):{id:'n'+Date.now(),title:'',text:'',image:null,categoryId:currentNoteCategory};
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Nouvelle'} note</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
   <div class="field full"><label>Titre</label><input id="note_title" value="${esc(n.title)}"></div>
   <div class="field full"><label>Texte</label><textarea id="note_text">${esc(n.text||'')}</textarea></div>
@@ -1925,6 +2035,7 @@ function openNoteEditModal(id){
     </div>
     <input type="hidden" id="note_image" value="${esc(n.image||'')}">
   </div>
+  <input type="hidden" id="note_category" value="${esc(n.categoryId||'')}">
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveNote('${n.id}')">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
 }
@@ -1933,10 +2044,11 @@ function saveNote(id){
   const title=(document.getElementById('note_title').value||'').trim()||'Sans titre';
   const text=document.getElementById('note_text').value;
   const image=document.getElementById('note_image').value.trim()||null;
+  const categoryId=document.getElementById('note_category').value||null;
   if(!S.notes)S.notes=[];
   let n=S.notes.find(x=>x.id===id);
-  if(!n){n={id};S.notes.push(n);}
-  n.title=title; n.text=text; n.image=image;
+  if(!n){n={id,categoryId};S.notes.push(n);}
+  n.title=title; n.text=text; n.image=image; n.categoryId=categoryId;
   saveState(); closeModal(); render();
   toast('✅ Note enregistrée.');
 }
