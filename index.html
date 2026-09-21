@@ -243,6 +243,7 @@ function normalizeState(){
   if(S.freeMovement===undefined)S.freeMovement=false;
   if(!S.characters)S.characters=[];
   if(!S.abilities)S.abilities=[];
+  if(!S.characterCategories)S.characterCategories=[];
   S.instances.forEach(t=>{
     if(t.px===undefined)t.px=null;
     if(t.py===undefined)t.py=null;
@@ -254,6 +255,7 @@ function normalizeState(){
     ELEMENT_RES_KEYS.forEach(k=>{if(c.res[k]===undefined)c.res[k]=0;});
     if(c.hidden===undefined)c.hidden=(c.type==='enemy');
     if(c.ownerId===undefined)c.ownerId=null;
+    if(c.categoryId===undefined)c.categoryId=null;
     if(c.iconImage===undefined)c.iconImage=null;
     if(!c.stats)c.stats={};
     if(c.stats.Constitution===undefined)c.stats.Constitution=Math.max(1,Math.ceil((c.resourcesMax?.Vie||1)/2.5));
@@ -286,6 +288,8 @@ let panState=null;
 let multiSel=[];      // multisélection MJ (ids d'instances)
 let selBox=null;      // rectangle de sélection en cours
 let chatDraft='';     // texte en cours de saisie dans le chat
+let currentCharCategory=null; // dossier courant dans la bibliothèque de personnages
+let charSearchQuery='';       // recherche texte dans la bibliothèque de personnages
 
 /* ============================= SYNCHRONISATION SUPABASE ============================= */
 async function loadProfiles(){
@@ -630,21 +634,126 @@ function sidePanelHtml(){
 function switchSideTab(t){sidePanelTab=t;render();}
 function assetPanel(){
   const mj=isMJ();
-  const players=S.characters.filter(c=>c.type==='player');
-  const enemies=S.characters.filter(c=>c.type==='enemy');
-  const section=(title,key,items)=>`<div class="asset-section"><button onclick="toggleAssetSection('${key}')"><span>${collapsedAssets[key]?'▸':'▾'} ${title}</span><small>${items.length}</small></button>${collapsedAssets[key]?'':`<div class="asset-list">${items.map(c=>{
-      const count=S.instances.filter(i=>i.charId===c.id).length;
-      return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="assetDragStart(event,'${c.id}')"`:''} onclick="openCharacter('${c.id}')" title="${mj?'Glisser sur la carte pour créer un token, cliquer pour modifier la fiche':'Fiche (lecture seule)'}">
-        <div class="asset-icon">${iconBoxHtml(c,'7px')}</div>
-        <div class="asset-info"><b>${esc(c.name)}</b><small>${c.type==='player'?'Joueur':'Monstre'}${count?` · ${count} sur la carte`:''}</small></div>
-      </div>`;
-    }).join('')}</div>`}</div>`;
-  return `<div class="row between" style="margin-bottom:8px"><h2>📚 Bibliothèque</h2>${mj?'<button class="btn" onclick="openCharacter()">＋</button>':''}</div>
-  <p class="tiny muted">${mj?'Glisse un élément sur la carte pour créer un token (plusieurs exemplaires possibles).':'Seul le MJ peut ajouter des tokens sur la carte.'}</p>
-  ${section('Personnages','players',players)}${section('Créatures','enemies',enemies)}
-  ${mj?`<div style="margin-top:8px"><button class="btn" style="width:100%" onclick="openCharacter()">＋ Nouveau personnage / monstre</button></div>`:''}`;
+  const header=`<div class="row between" style="margin-bottom:8px"><h2>📚 Bibliothèque</h2>${mj?`<div class="row" style="gap:6px"><button class="btn ghost" onclick="openNewCharCategoryModal()" title="Nouvelle catégorie">📁＋</button><button class="btn" onclick="openCharacter()">＋</button></div>`:''}</div>`;
+  const searchBar=`<input id="char_search_input" placeholder="🔎 Rechercher un personnage par nom…" value="${esc(charSearchQuery)}" oninput="onCharSearchInput(this.value)" style="margin-bottom:10px">`;
+  return `${header}${searchBar}<div id="charResultsContainer">${charResultsHtml()}</div>`;
 }
 function toggleAssetSection(key){collapsedAssets[key]=!collapsedAssets[key];render();}
+function onCharSearchInput(v){
+  charSearchQuery=v;
+  const c=document.getElementById('charResultsContainer');
+  if(c)c.innerHTML=charResultsHtml();
+}
+function charItemHtml(c){
+  const mj=isMJ();
+  const count=S.instances.filter(i=>i.charId===c.id).length;
+  return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="assetDragStart(event,'${c.id}')"`:''} onclick="openCharacter('${c.id}')" title="${mj?'Glisser sur la carte pour créer un token, cliquer pour modifier la fiche':'Fiche (lecture seule)'}">
+    <div class="asset-icon">${iconBoxHtml(c,'7px')}</div>
+    <div class="asset-info"><b>${esc(c.name)}</b><small>${c.type==='player'?'Joueur':'Monstre'}${count?` · ${count} sur la carte`:''}</small></div>
+    ${mj?`<button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();confirmDeleteCharacter('${c.id}')" title="Supprimer définitivement">🗑️</button>`:''}
+  </div>`;
+}
+function charBreadcrumb(catId){
+  const chain=[]; let cur=catId;
+  while(cur){const c=(S.characterCategories||[]).find(x=>x.id===cur); if(!c)break; chain.unshift(c); cur=c.parent_id;}
+  const root=`<button class="btn ghost" style="padding:3px 8px" onclick="openCharCategory(null)">🏠 Racine</button>`;
+  const rest=chain.map(c=>`<span class="tiny muted">›</span> <button class="btn ghost" style="padding:3px 8px" onclick="openCharCategory('${c.id}')">${esc(c.name)}</button>`).join(' ');
+  return `<div class="row" style="flex-wrap:wrap;gap:4px;margin-bottom:8px">${root} ${rest}</div>`;
+}
+function openCharCategory(id){currentCharCategory=id;render();}
+function charResultsHtml(){
+  const mj=isMJ();
+  const query=charSearchQuery.trim().toLowerCase();
+  if(query){
+    const results=S.characters.filter(c=>c.name.toLowerCase().includes(query));
+    return `<div class="asset-list">${results.length?results.map(charItemHtml).join(''):'<p class="tiny muted">Aucun personnage ne correspond.</p>'}</div>`;
+  }
+  const breadcrumb=charBreadcrumb(currentCharCategory);
+  const subCats=(S.characterCategories||[]).filter(c=>(c.parent_id||null)===(currentCharCategory||null));
+  const charsHere=S.characters.filter(c=>(c.categoryId||null)===(currentCharCategory||null));
+  const catsHtml=subCats.map(c=>{
+    const subCount=(S.characterCategories||[]).filter(cc=>cc.parent_id===c.id).length;
+    const charCount=S.characters.filter(ch=>ch.categoryId===c.id).length;
+    return `<div class="asset-item" onclick="openCharCategory('${c.id}')" style="cursor:pointer">
+      <div class="asset-icon">📁</div><div class="asset-info"><b>${esc(c.name)}</b><small>${subCount} sous-dossier(s) · ${charCount} fiche(s)</small></div>
+      ${mj?`<button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();openRenameCharCategoryModal('${c.id}')" title="Renommer">✏️</button><button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();confirmDeleteCharCategory('${c.id}')" title="Supprimer le dossier">🗑️</button>`:''}
+    </div>`;
+  }).join('');
+  const charsHtml=charsHere.map(charItemHtml).join('');
+  const emptyMsg=(!subCats.length&&!charsHere.length)?'<p class="tiny muted">Ce dossier est vide.</p>':'';
+  return `${breadcrumb}${mj?'<p class="tiny muted">Glisse un élément sur la carte pour créer un token.</p>':''}<div class="asset-list">${catsHtml}${charsHtml}${emptyMsg}</div>${mj?'<div style="margin-top:8px"><button class="btn" style="width:100%" onclick="openCharacter()">＋ Nouveau personnage / monstre</button></div>':''}`;
+}
+function openNewCharCategoryModal(){
+  if(!isMJ())return;
+  const parentName=currentCharCategory?((S.characterCategories||[]).find(c=>c.id===currentCharCategory)?.name||''):'';
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>Nouvelle catégorie</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+  <p class="tiny muted">${currentCharCategory?`Sera créée dans « ${esc(parentName)} ».`:'Sera créée à la racine.'}</p>
+  <div class="field"><label>Nom</label><input id="new_charcat_input" maxlength="40"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="createCharCategory(document.getElementById('new_charcat_input').value.trim())">Créer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function createCharCategory(name){
+  if(!isMJ())return;
+  if(!name){toast('⚠️ Le nom ne peut pas être vide.');return;}
+  if(!S.characterCategories)S.characterCategories=[];
+  S.characterCategories.push({id:'cc'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),name,parent_id:currentCharCategory});
+  saveState(); closeModal(); render();
+}
+function openRenameCharCategoryModal(id){
+  if(!isMJ())return;
+  const c=(S.characterCategories||[]).find(x=>x.id===id); if(!c)return;
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>Renommer</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+  <div class="field"><label>Nom</label><input id="rename_charcat_input" value="${esc(c.name)}" maxlength="40"></div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="renameCharCategory('${id}',document.getElementById('rename_charcat_input').value.trim())">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function renameCharCategory(id,name){
+  if(!isMJ())return;
+  if(!name){toast('⚠️ Le nom ne peut pas être vide.');return;}
+  const c=(S.characterCategories||[]).find(x=>x.id===id); if(c)c.name=name;
+  saveState(); closeModal(); render();
+}
+function charCatDescendants(rootId){
+  const ids=[rootId]; let frontier=[rootId];
+  while(frontier.length){const children=(S.characterCategories||[]).filter(c=>frontier.includes(c.parent_id)).map(c=>c.id);ids.push(...children);frontier=children;}
+  return ids;
+}
+function confirmDeleteCharCategory(id){
+  if(!isMJ())return;
+  const cat=(S.characterCategories||[]).find(x=>x.id===id); if(!cat)return;
+  const ids=charCatDescendants(id);
+  const affected=S.characters.filter(c=>ids.includes(c.categoryId));
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>⚠️ Supprimer « ${esc(cat.name)} »</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+  <p class="tiny muted">${affected.length?`${affected.length} fiche(s) seront déplacée(s) à la racine (elles ne sont PAS supprimées).`:'Ce dossier est vide.'}</p>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn" style="background:var(--danger);border-color:var(--danger)" onclick="deleteCharCategory('${id}')">Supprimer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function deleteCharCategory(id){
+  if(!isMJ())return;
+  const ids=charCatDescendants(id);
+  S.characters.forEach(c=>{if(ids.includes(c.categoryId))c.categoryId=null;});
+  S.characterCategories=(S.characterCategories||[]).filter(c=>!ids.includes(c.id));
+  if(ids.includes(currentCharCategory))currentCharCategory=null;
+  saveState(); closeModal(); render();
+}
+function confirmDeleteCharacter(id){
+  if(!isMJ())return;
+  const c=char(id); if(!c)return;
+  const count=S.instances.filter(i=>i.charId===id).length;
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>⚠️ Supprimer « ${esc(c.name)} »</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+  <p class="tiny muted">${count?`Cette fiche a ${count} instance(s) sur la carte : elles seront aussi retirées (et du combat en cours si besoin). `:''}Action définitive et irréversible.</p>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn" style="background:var(--danger);border-color:var(--danger)" onclick="deleteCharacterCascade('${id}')">Supprimer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function deleteCharacterCascade(id){
+  if(!isMJ())return;
+  const c=char(id); if(!c)return;
+  S.instances.filter(i=>i.charId===id).map(i=>i.id).forEach(instId=>removeInstance(instId));
+  S.abilities.forEach(a=>{if(a.characterIds)a.characterIds=a.characterIds.filter(cid=>cid!==id);});
+  S.characters=S.characters.filter(x=>x.id!==id);
+  addLog(`🗑️ Le MJ supprime définitivement la fiche « ${esc(c.name)} ».`);
+  saveState(); closeModal(); render();
+}
 function chatPanel(){
   const entries=S.chat.length?S.chat.slice().reverse().map(e=>`<div>${e}</div>`).join(''):'<p class="muted tiny">Aucun événement pour l’instant.</p>';
   return `<h2>💬 Chat &amp; journal</h2>
@@ -1189,7 +1298,8 @@ function toggleHidden(id){
 function openCharacter(id){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les fiches.');return;}
   const c=id?char(id):null;
-  const base=c||{name:'Nouveau personnage',icon:'🧙',iconImage:null,type:'player',move:6,ownerId:null,hidden:false,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10,Constitution:4,Endurance:0,Social:0,Artisanat:0},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}};
+  const base=c||{name:'Nouveau personnage',icon:'🧙',iconImage:null,type:'player',move:6,ownerId:null,hidden:false,categoryId:currentCharCategory,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10,Constitution:4,Endurance:0,Social:0,Artisanat:0},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}};
+  const catOpts=`<option value="">— Racine —</option>`+(S.characterCategories||[]).map(cc=>`<option value="${esc(cc.id)}" ${base.categoryId===cc.id?'selected':''}>${esc(cc.name)}</option>`).join('');
   const typeOpts=[['player','Joueur'],['enemy','Monstre / PNJ']].map(([v,l])=>opt(v,l,base.type)).join('');
   const ownerOpts=`<option value="">— MJ / PNJ (aucun joueur) —</option>`+profiles.map(p=>`<option value="${esc(p.id)}" ${base.ownerId===p.id?'selected':''}>${esc(displayNameOf(p))}</option>`).join('');
   const known=id?characterAbilities(id):[];
@@ -1212,6 +1322,7 @@ function openCharacter(id){
   <div class="field"><label>Type</label><select id="c_type">${typeOpts}</select></div>
   <div class="field"><label>Déplacement (cases/tour)</label><input id="c_move" type="number" value="${base.move??6}"></div>
   <div class="field full"><label>Joueur propriétaire (peut déplacer / lancer les sorts de ce personnage)</label><select id="c_owner">${ownerOpts}</select></div>
+  <div class="field full"><label>Catégorie (dossier dans la bibliothèque)</label><select id="c_category">${catOpts}</select></div>
   <div class="field full"><label>Visibilité des PV / mana / bouclier</label><select id="c_hidden">
     <option value="false" ${!base.hidden?'selected':''}>👁 Visible des joueurs</option>
     <option value="true" ${base.hidden?'selected':''}>🙈 Caché des joueurs (MJ uniquement)</option>
@@ -1252,6 +1363,7 @@ function saveCharacter(id){
   c.type=document.getElementById('c_type').value;
   c.move=parseNum(document.getElementById('c_move').value)||6;
   c.ownerId=document.getElementById('c_owner').value||null;
+  c.categoryId=document.getElementById('c_category').value||null;
   c.hidden=document.getElementById('c_hidden').value==='true';
   c.resourcesMax={Vie:maxHpFromCon(document.getElementById('s_con').value),Mana:parseNum(document.getElementById('c_manamax').value),Bouclier:parseNum(document.getElementById('c_shieldmax').value)};
   c.stats={...(c.stats||{}),Constitution:parseNum(document.getElementById('s_con').value),Endurance:parseNum(document.getElementById('s_end').value),Social:parseNum(document.getElementById('s_soc').value),Artisanat:parseNum(document.getElementById('s_craft').value),Force:parseNum(document.getElementById('s_force').value),Magie:parseNum(document.getElementById('s_magic').value),Agilité:parseNum(document.getElementById('s_agi').value),Vitesse:parseNum(document.getElementById('s_speed').value)};
