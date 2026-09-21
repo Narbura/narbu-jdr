@@ -244,6 +244,8 @@ function normalizeState(){
   if(!S.characters)S.characters=[];
   if(!S.abilities)S.abilities=[];
   if(!S.characterCategories)S.characterCategories=[];
+  if(!S.notes)S.notes=[];
+  if(S.notesReveal===undefined)S.notesReveal=null;
   S.instances.forEach(t=>{
     if(t.px===undefined)t.px=null;
     if(t.py===undefined)t.py=null;
@@ -290,6 +292,7 @@ let selBox=null;      // rectangle de sélection en cours
 let chatDraft='';     // texte en cours de saisie dans le chat
 let currentCharCategory=null; // dossier courant dans la bibliothèque de personnages
 let charSearchQuery='';       // recherche texte dans la bibliothèque de personnages
+let lastShownNotesReveal=null; // évite de rouvrir la même note en boucle
 
 /* ============================= SYNCHRONISATION SUPABASE ============================= */
 async function loadProfiles(){
@@ -311,6 +314,7 @@ async function loadGameState(){
   }
   normalizeState();
   syncTurnSelection();
+  lastShownNotesReveal=S.notesReveal?S.notesReveal.ts:null;
 }
 async function persistState(){
   try{
@@ -512,6 +516,7 @@ function removeInstance(id){
 
 /* ============================= RENDU ============================= */
 function render(){
+  checkNotesReveal();
   const hadChatFocus=document.activeElement?.id==='chat_input';
   if(S.combat.active)multiSel=[]; else multiSel=multiSel.filter(id=>inst(id));
   document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.page===currentPage));
@@ -627,9 +632,10 @@ function sidePanelHtml(){
   return `<div class="side-tabs">
     <button class="tab ${sidePanelTab==='library'?'active':''}" onclick="switchSideTab('library')">📚 Bibliothèque</button>
     ${mj?`<button class="tab ${sidePanelTab==='maps'?'active':''}" onclick="switchSideTab('maps')">🗺️ Cartes</button>`:''}
+    ${mj?`<button class="tab ${sidePanelTab==='notes'?'active':''}" onclick="switchSideTab('notes')">📝 Notes MJ</button>`:''}
     <button class="tab ${sidePanelTab==='chat'?'active':''}" onclick="switchSideTab('chat')">💬 Chat</button>
   </div>
-  <div class="asset-panel">${sidePanelTab==='library'?assetPanel():(mj&&sidePanelTab==='maps')?mapsPanel():chatPanel()}${combatPanel()}</div>`;
+  <div class="asset-panel">${sidePanelTab==='library'?assetPanel():(mj&&sidePanelTab==='maps')?mapsPanel():(mj&&sidePanelTab==='notes')?notesPanel():chatPanel()}${combatPanel()}</div>`;
 }
 function switchSideTab(t){sidePanelTab=t;render();}
 function assetPanel(){
@@ -1889,6 +1895,78 @@ function mapsResultsHtml(){
   return `${breadcrumb}
   <p class="tiny muted">${mj?'Glisse une image (PNG/JPG/WebP) depuis ton ordinateur directement sur la carte pour l’ajouter dans ce dossier, ou réutilise un terrain ci-dessous en le glissant sur la carte.':'Seul le MJ peut changer le fond de la carte.'}</p>
   <div class="asset-list">${catsHtml}${mapsHtml}${emptyMsg}</div>`;
+}
+
+/* ============================= NOTES DU MJ ============================= */
+function notesPanel(){
+  if(!isMJ())return '';
+  const header=`<div class="row between" style="margin-bottom:8px"><h2>📝 Notes du MJ</h2><button class="btn primary" onclick="openNoteEditModal()">＋ Nouvelle note</button></div>`;
+  const list=(S.notes||[]).map(n=>`<div class="asset-item" style="cursor:default">
+    <div class="asset-icon">${n.image?`<img src="${esc(n.image)}" style="width:100%;height:100%;object-fit:cover;border-radius:7px">`:'📝'}</div>
+    <div class="asset-info"><b>${esc(n.title)}</b></div>
+    <button class="btn ghost" style="padding:4px 8px" onclick="openNoteEditModal('${n.id}')" title="Modifier">✏️</button>
+    <button class="btn ghost" style="padding:4px 8px" onclick="showNoteToPlayers('${n.id}')" title="Montrer aux joueurs">👁</button>
+    <button class="btn ghost" style="padding:4px 8px" onclick="deleteNote('${n.id}')" title="Supprimer">🗑️</button>
+  </div>`).join('');
+  return `${header}<div class="asset-list">${list||'<p class="tiny muted">Aucune note pour l’instant.</p>'}</div>`;
+}
+function openNoteEditModal(id){
+  if(!isMJ())return;
+  const n=id?(S.notes||[]).find(x=>x.id===id):{id:'n'+Date.now(),title:'',text:'',image:null};
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Nouvelle'} note</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <div class="field full"><label>Titre</label><input id="note_title" value="${esc(n.title)}"></div>
+  <div class="field full"><label>Texte</label><textarea id="note_text">${esc(n.text||'')}</textarea></div>
+  <div class="field full">
+    <label>Image (optionnelle)</label>
+    <div class="icon-dropzone" onclick="document.getElementById('note_image_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'note_image','note_image_preview')">
+      <div id="note_image_preview" class="icon-preview">${n.image?`<img src="${esc(n.image)}">`:'<span>🖼️</span>'}</div>
+      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir</p>
+      <input type="file" id="note_image_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'note_image','note_image_preview')">
+    </div>
+    <input type="hidden" id="note_image" value="${esc(n.image||'')}">
+  </div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveNote('${n.id}')">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function saveNote(id){
+  if(!isMJ())return;
+  const title=(document.getElementById('note_title').value||'').trim()||'Sans titre';
+  const text=document.getElementById('note_text').value;
+  const image=document.getElementById('note_image').value.trim()||null;
+  if(!S.notes)S.notes=[];
+  let n=S.notes.find(x=>x.id===id);
+  if(!n){n={id};S.notes.push(n);}
+  n.title=title; n.text=text; n.image=image;
+  saveState(); closeModal(); render();
+  toast('✅ Note enregistrée.');
+}
+function deleteNote(id){
+  if(!isMJ())return;
+  if(!confirm('Supprimer cette note ?'))return;
+  S.notes=(S.notes||[]).filter(x=>x.id!==id);
+  saveState(); render();
+}
+function showNoteToPlayers(id){
+  if(!isMJ())return;
+  const n=(S.notes||[]).find(x=>x.id===id); if(!n)return;
+  S.notesReveal={noteId:id,ts:Date.now()};
+  addLog(`📝 Le MJ montre la note « ${esc(n.title)} » aux joueurs.`);
+  saveState(); render();
+  toast('👁 Note affichée à tous les joueurs.');
+}
+function checkNotesReveal(){
+  if(S.notesReveal && S.notesReveal.ts!==lastShownNotesReveal){
+    lastShownNotesReveal=S.notesReveal.ts;
+    const n=(S.notes||[]).find(x=>x.id===S.notesReveal.noteId);
+    if(n)openNoteViewModal(n);
+  }
+}
+function openNoteViewModal(n){
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>📝 ${esc(n.title)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  ${n.image?`<img src="${esc(n.image)}" style="width:100%;border-radius:10px;margin-bottom:12px">`:''}
+  <p style="white-space:pre-wrap">${esc(n.text||'')}</p>
+  <div class="modal-actions"><button class="btn primary" onclick="closeModal()">Fermer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
 }
 
 /* ============================= PLEIN ÉCRAN ============================= */
