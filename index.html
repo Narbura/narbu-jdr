@@ -394,6 +394,10 @@ function updateUserBadge(){
   el.innerHTML=`${isMJ()?'🎲 <b>Maître du Jeu</b>':'🧙 Joueur'}<br><span class="tiny">${esc(myDisplayName())}</span>`;
   const resetBtn=document.getElementById('resetBtn');
   if(resetBtn) resetBtn.style.display=isMJ()?'':'none';
+  const libNav=document.querySelector('.nav[data-page="library"]');
+  if(libNav) libNav.style.display=isMJ()?'':'none';
+  if(!isMJ()&&currentPage==='library'){currentPage='table';}
+  if(!isMJ()&&sidePanelTab==='library'){sidePanelTab='chat';}
 }
 
 /* ============================= UTILITAIRES ============================= */
@@ -634,12 +638,12 @@ function updateZonePreview(){
 function sidePanelHtml(){
   const mj=isMJ();
   return `<div class="side-tabs">
-    <button class="tab ${sidePanelTab==='library'?'active':''}" onclick="switchSideTab('library')">📚 Bibliothèque</button>
+    ${mj?`<button class="tab ${sidePanelTab==='library'?'active':''}" onclick="switchSideTab('library')">📚 Bibliothèque</button>`:''}
     ${mj?`<button class="tab ${sidePanelTab==='maps'?'active':''}" onclick="switchSideTab('maps')">🗺️ Cartes</button>`:''}
     ${mj?`<button class="tab ${sidePanelTab==='notes'?'active':''}" onclick="switchSideTab('notes')">📝 Notes MJ</button>`:''}
     <button class="tab ${sidePanelTab==='chat'?'active':''}" onclick="switchSideTab('chat')">💬 Chat</button>
   </div>
-  <div class="asset-panel">${sidePanelTab==='library'?assetPanel():(mj&&sidePanelTab==='maps')?mapsPanel():(mj&&sidePanelTab==='notes')?notesPanel():chatPanel()}${combatPanel()}</div>`;
+  <div class="asset-panel">${(mj&&sidePanelTab==='library')?assetPanel():(mj&&sidePanelTab==='maps')?mapsPanel():(mj&&sidePanelTab==='notes')?notesPanel():chatPanel()}${combatPanel()}</div>`;
 }
 function switchSideTab(t){sidePanelTab=t;render();}
 function assetPanel(){
