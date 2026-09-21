@@ -19,7 +19,7 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .nav{display:flex;gap:8px;align-items:center;padding:11px 12px;border-radius:10px;color:#b9bec9;border:0;background:transparent;text-align:left}.nav:hover,.nav.active{background:#2a1d38;color:white}.nav.active{box-shadow:inset 3px 0 var(--accent)}
 .spacer{flex:1}.server{font-size:11px;color:var(--muted);padding:12px;border:1px solid var(--line);border-radius:10px}
 .main{min-width:0;display:flex;flex-direction:column}.top{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:#15161a}.top h1{font-size:17px;margin:0}.actions{display:flex;gap:8px}
-.btn{border:1px solid var(--line);background:#252831;color:#fff;border-radius:9px;padding:9px 13px}.btn:hover{background:#2f333d}.btn.primary{background:var(--accent);border-color:var(--accent)}.btn.primary:hover{background:#8b3ee9}.btn.ghost{background:transparent}
+.btn{border:1px solid var(--line);background:#252831;color:#fff;border-radius:9px;padding:9px 13px}.btn:hover{background:#2f333d}.btn.primary{background:var(--accent);border-color:var(--accent)}.btn.primary:hover{background:#8b3ee9}.btn.ghost{background:transparent}.btn:disabled{opacity:.4;cursor:not-allowed;pointer-events:none}
 .content{padding:18px;overflow:auto;height:calc(100vh - 64px)}
 .grid2{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .card{background:rgba(25,27,32,.94);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 12px 35px #0002}.card h2{font-size:15px;margin:0 0 13px}.muted{color:var(--muted)}.tiny{font-size:11px}.row{display:flex;gap:10px;align-items:center}.between{justify-content:space-between}.pill{padding:4px 8px;border-radius:99px;background:#2a2d35;color:#cdd1da;font-size:11px}.statgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.stat{background:#202229;border:1px solid #30333c;border-radius:10px;padding:9px}.stat label{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}.stat strong{font-size:17px}
@@ -227,7 +227,8 @@ const DEFAULT={
   ],
   map:{cols:18,rows:12,cell:44,backgroundImage:null},
   chat:[],
-  combat:{active:false,order:[],turn:0,initiatives:{}}
+  combat:{active:false,order:[],turn:0,initiatives:{}},
+  freeMovement:false
 };
 const ELEMENT_RES_KEYS=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres'];
 
@@ -237,8 +238,13 @@ function normalizeState(){
   if(!S.map)S.map=structuredClone(DEFAULT.map);
   if(S.map.backgroundImage===undefined)S.map.backgroundImage=null;
   if(!S.combat)S.combat=structuredClone(DEFAULT.combat);
+  if(S.freeMovement===undefined)S.freeMovement=false;
   if(!S.characters)S.characters=[];
   if(!S.abilities)S.abilities=[];
+  S.instances.forEach(t=>{
+    if(t.px===undefined)t.px=null;
+    if(t.py===undefined)t.py=null;
+  });
   S.characters.forEach(c=>{
     if(!c.res)c.res={};
     if(c.res.Gel!==undefined&&c.res.Glace===undefined){c.res.Glace=c.res.Gel;}
@@ -414,6 +420,37 @@ function pct(v,m){return m?Math.max(0,Math.min(100,v/m*100)):0;}
 
 /* ============================= INSTANCES (TOKENS) ============================= */
 function isOccupied(x,y,excludeId){return S.instances.some(i=>i.id!==excludeId&&i.x===x&&i.y===y);}
+function nearestCellCoord(rawPos,maxIndex){
+  // rawPos est exprimé en unités de case (ex: 4.3 = case 4, proche du centre 4.5)
+  if(Number.isInteger(rawPos)){
+    // exactement sur la frontière entre deux cases -> tirage au sort parmi les cases valides adjacentes
+    const candidates=[rawPos-1,rawPos].filter(v=>v>=0&&v<=maxIndex);
+    if(!candidates.length)return Math.max(0,Math.min(maxIndex,Math.floor(rawPos)));
+    return candidates[Math.floor(Math.random()*candidates.length)];
+  }
+  return Math.max(0,Math.min(maxIndex,Math.floor(rawPos)));
+}
+function snapAllTokensToGrid(){
+  S.instances.forEach(t=>{
+    const rawX=(t.px!=null?t.px:t.x*S.map.cell+S.map.cell/2)/S.map.cell;
+    const rawY=(t.py!=null?t.py:t.y*S.map.cell+S.map.cell/2)/S.map.cell;
+    t.x=nearestCellCoord(rawX,S.map.cols-1);
+    t.y=nearestCellCoord(rawY,S.map.rows-1);
+    t.px=null; t.py=null;
+  });
+}
+function toggleFreeMovement(){
+  if(!isMJ()){toast('⛔ Seul le MJ peut activer/désactiver le placement libre.');return;}
+  if(S.combat.active){toast('⛔ Indisponible pendant le combat.');return;}
+  S.freeMovement=!S.freeMovement;
+  if(!S.freeMovement){
+    snapAllTokensToGrid();
+    addLog('🎯 Le MJ a désactivé le placement libre — les tokens reviennent au centre des cases.');
+  }else{
+    addLog('🎯 Le MJ a activé le placement libre des tokens (hors grille, hors combat).');
+  }
+  saveState(); render();
+}
 function findFreeCell(x,y,excludeId){
   if(!isOccupied(x,y,excludeId))return [x,y];
   const maxR=Math.max(S.map.cols,S.map.rows);
@@ -432,7 +469,7 @@ function spawnInstance(charId,x,y){
   const count=S.instances.filter(i=>i.charId===charId).length+1;
   const label=t.type==='enemy'?`${t.name} #${count}`:t.name;
   const rm=t.resourcesMax||{Vie:10,Mana:0,Bouclier:0};
-  const newInst={id:'i'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),charId,label,x,y,
+  const newInst={id:'i'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),charId,label,x,y,px:null,py:null,
     hp:rm.Vie||0,hpMax:rm.Vie||0,mana:rm.Mana||0,manaMax:rm.Mana||0,shield:rm.Bouclier||0,shieldMax:rm.Bouclier||0,
     remainingMove:t.move??6};
   S.instances.push(newInst); return newInst;
@@ -495,6 +532,7 @@ function tablePage(){
           <p class="tiny muted" style="margin:6px 0 0">Ce réglage n'affecte que ton propre écran.</p>
         </div>
       </div>
+      <button class="btn ${S.freeMovement?'primary':''}" ${(isMJ()&&!S.combat.active)?'':'disabled'} onclick="toggleFreeMovement()" title="${S.combat.active?'Indisponible pendant le combat — les tokens sont alignés sur la grille':(isMJ()?'Activer/désactiver le placement libre des tokens (hors combat)':'Seul le MJ peut activer cette option')}">🎯 Placement libre${S.freeMovement?' : ON':''}</button>
       ${combatControls}
     </div>
     <div class="map-wrap" id="mapWrap">
@@ -523,7 +561,8 @@ function tokensHtml(){
   const mj=isMJ();
   return S.instances.map(t=>{
     const tpl=instTemplate(t); if(!tpl)return '';
-    const px=t.x*S.map.cell+S.map.cell/2, py=t.y*S.map.cell+S.map.cell/2;
+    const px=(S.freeMovement&&t.px!=null)?t.px:(t.x*S.map.cell+S.map.cell/2);
+    const py=(S.freeMovement&&t.py!=null)?t.py:(t.y*S.map.cell+S.map.cell/2);
     const isTurn=S.combat.active&&S.combat.order[S.combat.turn]===t.id;
     const hideStats=tpl.hidden&&!mj;
     const hud=hideStats
@@ -601,6 +640,11 @@ function startCombat(){
   if(!isMJ()){toast('⛔ Seul le MJ peut démarrer le combat.');return;}
   const ids=S.instances.map(i=>i.id);
   if(!ids.length){toast('Aucun token sur la carte.');return;}
+  if(S.freeMovement){
+    S.freeMovement=false;
+    snapAllTokensToGrid();
+    addLog('🎯 Placement libre désactivé automatiquement pour le début du combat — les tokens reviennent au centre des cases.');
+  }
   const init={};
   ids.forEach(id=>{const tpl=instTemplate(inst(id));init[id]=roll('1d20').total+(tpl?.stats?.Vitesse||0);});
   const groups={}; ids.forEach(id=>(groups[init[id]]??=[]).push(id));
@@ -644,6 +688,12 @@ function mapPoint(clientX,clientY){
   const x=(clientX-rect.left-mapPan.x)/(S.map.cell*mapZoom);
   const y=(clientY-rect.top-mapPan.y)/(S.map.cell*mapZoom);
   return [Math.max(0,Math.min(S.map.cols-1,Math.floor(x))),Math.max(0,Math.min(S.map.rows-1,Math.floor(y)))];
+}
+function mapPixelPoint(clientX,clientY){
+  const wrap=document.getElementById('mapWrap'); const rect=wrap.getBoundingClientRect();
+  const fx=(clientX-rect.left-mapPan.x)/mapZoom;
+  const fy=(clientY-rect.top-mapPan.y)/mapZoom;
+  return [Math.max(0,Math.min(S.map.cols*S.map.cell,fx)),Math.max(0,Math.min(S.map.rows*S.map.cell,fy))];
 }
 function applyMapTransform(){const map=document.getElementById('map');if(map)map.style.transform=`translate(${mapPan.x}px,${mapPan.y}px) scale(${mapZoom})`;}
 
@@ -737,12 +787,20 @@ function setupMapInteractions(){
       const dx=e.clientX-dragCandidate.startX, dy=e.clientY-dragCandidate.startY;
       if(!dragCandidate.moved&&Math.hypot(dx,dy)<4)return;
       dragCandidate.moved=true;
-      const pt=mapPoint(e.clientX,e.clientY);
       const t=inst(dragCandidate.id);
       if(t){
-        t.x=pt[0]; t.y=pt[1];
         const el=document.querySelector(`[data-token="${dragCandidate.id}"]`);
-        if(el){el.style.left=(pt[0]*S.map.cell+S.map.cell/2)+'px';el.style.top=(pt[1]*S.map.cell+S.map.cell/2)+'px';}
+        if(S.freeMovement){
+          const [fx,fy]=mapPixelPoint(e.clientX,e.clientY);
+          t.px=fx; t.py=fy;
+          t.x=Math.max(0,Math.min(S.map.cols-1,Math.floor(fx/S.map.cell)));
+          t.y=Math.max(0,Math.min(S.map.rows-1,Math.floor(fy/S.map.cell)));
+          if(el){el.style.left=fx+'px';el.style.top=fy+'px';}
+        }else{
+          const pt=mapPoint(e.clientX,e.clientY);
+          t.x=pt[0]; t.y=pt[1];
+          if(el){el.style.left=(pt[0]*S.map.cell+S.map.cell/2)+'px';el.style.top=(pt[1]*S.map.cell+S.map.cell/2)+'px';}
+        }
       }
       return;
     }
@@ -760,23 +818,27 @@ function setupMapInteractions(){
       const {id,moved,origX,origY}=dragCandidate;
       const t=inst(id);
       if(moved&&t){
-        const occupant=S.instances.find(i=>i.id!==id&&i.x===t.x&&i.y===t.y);
-        if(occupant){
-          t.x=origX; t.y=origY;
-          toast(`🚫 ${occupant.label} est déjà sur cette case — choisis un autre déplacement.`);
-        }else if(S.combat.active&&S.combat.order[S.combat.turn]===id){
-          const tpl=instTemplate(t);
-          const dist=Math.abs(t.x-origX)+Math.abs(t.y-origY);
-          const remaining=t.remainingMove??(tpl?.move??6);
-          if(dist>remaining){
+        if(S.freeMovement){
+          addLog(`↦ ${esc(t.label)} déplacé librement sur la carte.`);
+        }else{
+          const occupant=S.instances.find(i=>i.id!==id&&i.x===t.x&&i.y===t.y);
+          if(occupant){
             t.x=origX; t.y=origY;
-            toast('🚫 Déplacement maximal atteint pour ce tour.');
-          }else{
-            t.remainingMove=remaining-dist;
+            toast(`🚫 ${occupant.label} est déjà sur cette case — choisis un autre déplacement.`);
+          }else if(S.combat.active&&S.combat.order[S.combat.turn]===id){
+            const tpl=instTemplate(t);
+            const dist=Math.abs(t.x-origX)+Math.abs(t.y-origY);
+            const remaining=t.remainingMove??(tpl?.move??6);
+            if(dist>remaining){
+              t.x=origX; t.y=origY;
+              toast('🚫 Déplacement maximal atteint pour ce tour.');
+            }else{
+              t.remainingMove=remaining-dist;
+              addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
+            }
+          }else if(!S.combat.active){
             addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
           }
-        }else if(!S.combat.active){
-          addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
         }
         saveState();
       }
