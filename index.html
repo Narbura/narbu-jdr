@@ -255,6 +255,9 @@ function normalizeState(){
     if(c.hidden===undefined)c.hidden=(c.type==='enemy');
     if(c.ownerId===undefined)c.ownerId=null;
     if(c.iconImage===undefined)c.iconImage=null;
+    if(!c.stats)c.stats={};
+    if(c.stats.Constitution===undefined)c.stats.Constitution=Math.max(1,Math.ceil((c.resourcesMax?.Vie||1)/2.5));
+    ['Endurance','Social','Artisanat'].forEach(k=>{if(c.stats[k]===undefined)c.stats[k]=0;});
   });
   S.abilities.forEach(a=>{
     if(a.element==='Gel')a.element='Glace';
@@ -387,6 +390,7 @@ function resetDemo(){
   if(!isMJ()){toast('⛔ Seul le MJ peut réinitialiser la partie.');return;}
   if(!confirm('Réinitialiser les données de démonstration pour TOUTE la table ?'))return;
   S=structuredClone(DEFAULT);
+  normalizeState();
   selectedToken=null; activeAbility=null; hoverCell=null;
   saveState(); render();
 }
@@ -403,6 +407,15 @@ function iconInlineHtml(entity,sizePx){
 }
 function opt(value,label,current){return `<option value="${esc(value)}" ${value===current?'selected':''}>${esc(label)}</option>`;}
 function parseNum(v){const n=+v;return Number.isFinite(n)?n:0;}
+function maxHpFromCon(con){return Math.max(1,Math.ceil(parseNum(con)*2.5));}
+function syncSheetInputs(){
+  document.querySelectorAll('#modal input[data-inst]').forEach(el=>{
+    if(el===document.activeElement||el.dataset.dirty==='1')return;
+    const t=inst(el.dataset.inst); if(!t)return;
+    const v=el.dataset.field==='hp'?t.hp:t.mana;
+    if(String(v)!==el.value)el.value=v;
+  });
+}
 function char(id){return S.characters.find(c=>c.id===id);}
 function inst(id){return S.instances.find(i=>i.id===id);}
 function instTemplate(instance){return instance?char(instance.charId):null;}
@@ -507,6 +520,7 @@ function render(){
   else if(currentPage==='mysheet')c.innerHTML=mySheetPage();
   updateTargetingBanner();
   updateUserBadge();
+  syncSheetInputs();
   if(currentPage==='table')setupMapInteractions();
   if(hadChatFocus){const ci=document.getElementById('chat_input');if(ci){ci.focus();ci.setSelectionRange(ci.value.length,ci.value.length);}}
 }
@@ -1175,10 +1189,12 @@ function toggleHidden(id){
 function openCharacter(id){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les fiches.');return;}
   const c=id?char(id):null;
-  const base=c||{name:'Nouveau personnage',icon:'🧙',iconImage:null,type:'player',move:6,ownerId:null,hidden:false,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}};
+  const base=c||{name:'Nouveau personnage',icon:'🧙',iconImage:null,type:'player',move:6,ownerId:null,hidden:false,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10,Constitution:4,Endurance:0,Social:0,Artisanat:0},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}};
   const typeOpts=[['player','Joueur'],['enemy','Monstre / PNJ']].map(([v,l])=>opt(v,l,base.type)).join('');
   const ownerOpts=`<option value="">— MJ / PNJ (aucun joueur) —</option>`+profiles.map(p=>`<option value="${esc(p.id)}" ${base.ownerId===p.id?'selected':''}>${esc(displayNameOf(p))}</option>`).join('');
   const known=id?characterAbilities(id):[];
+  const insts=id?S.instances.filter(i=>i.charId===id):[];
+  const curResHtml=id?`<div class="field full"><label>Ressources actuelles (jetons sur la carte — synchronisées en direct)</label>${insts.length?insts.map(i=>`<div class="row" style="margin-bottom:6px"><span style="flex:1">${esc(i.label)}</span><span class="tiny muted">❤️ PV</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="hp" value="${i.hp}" oninput="this.dataset.dirty='1'"><span class="tiny muted">💧 Mana</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="mana" value="${i.mana}" oninput="this.dataset.dirty='1'"></div>`).join(''):'<p class="tiny muted">Aucun jeton de ce personnage sur la carte.</p>'}</div>`:'';
   const knownLine=id?(known.length?`<p class="tiny muted">Capacités liées : ${known.map(a=>`${iconInlineHtml(a)} ${esc(a.name)}`).join(', ')} <span style="opacity:.7">(à gérer depuis la page ✨ Capacités)</span></p>`:'<p class="tiny muted">Aucune capacité liée à ce personnage pour l’instant (page ✨ Capacités).</p>'):'';
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une fiche</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div><div class="form">
   <div class="field"><label>Nom</label><input id="c_name" value="${esc(base.name)}"></div>
@@ -1200,13 +1216,18 @@ function openCharacter(id){
     <option value="false" ${!base.hidden?'selected':''}>👁 Visible des joueurs</option>
     <option value="true" ${base.hidden?'selected':''}>🙈 Caché des joueurs (MJ uniquement)</option>
   </select></div>
-  <div class="field"><label>PV maximum</label><input id="c_hpmax" type="number" value="${base.resourcesMax.Vie??10}"></div>
+  <div class="field"><label>PV maximum (automatique : Constitution × 2,5)</label><input id="c_hpmax" type="number" value="${maxHpFromCon(base.stats.Constitution)}" readonly style="opacity:.6"></div>
   <div class="field"><label>Mana maximum</label><input id="c_manamax" type="number" value="${base.resourcesMax.Mana??0}"></div>
   <div class="field"><label>Bouclier maximum</label><input id="c_shieldmax" type="number" value="${base.resourcesMax.Bouclier??0}"></div>
   <div class="field"><label>Force</label><input id="s_force" type="number" value="${base.stats.Force??0}"></div>
   <div class="field"><label>Magie</label><input id="s_magic" type="number" value="${base.stats.Magie??0}"></div>
   <div class="field"><label>Agilité</label><input id="s_agi" type="number" value="${base.stats.Agilité??0}"></div>
   <div class="field"><label>Vitesse</label><input id="s_speed" type="number" value="${base.stats.Vitesse??0}"></div>
+  <div class="field"><label>Constitution (PV max = Constitution × 2,5)</label><input id="s_con" type="number" value="${base.stats.Constitution??0}" oninput="document.getElementById('c_hpmax').value=maxHpFromCon(this.value)"></div>
+  <div class="field"><label>Endurance</label><input id="s_end" type="number" value="${base.stats.Endurance??0}"></div>
+  <div class="field"><label>Social</label><input id="s_soc" type="number" value="${base.stats.Social??0}"></div>
+  <div class="field"><label>Artisanat</label><input id="s_craft" type="number" value="${base.stats.Artisanat??0}"></div>
+  ${curResHtml}
   <div class="field"><label>Classe d'armure</label><input id="d_ca" type="number" value="${base.def.CA??0}"></div>
   <div class="field"><label>Défense magique</label><input id="d_dm" type="number" value="${base.def.DM??0}"></div>
   <div class="field"><label>Résistance Feu (%)</label><input id="r_fire" type="number" value="${base.res.Feu??0}"></div>
@@ -1232,8 +1253,8 @@ function saveCharacter(id){
   c.move=parseNum(document.getElementById('c_move').value)||6;
   c.ownerId=document.getElementById('c_owner').value||null;
   c.hidden=document.getElementById('c_hidden').value==='true';
-  c.resourcesMax={Vie:parseNum(document.getElementById('c_hpmax').value)||1,Mana:parseNum(document.getElementById('c_manamax').value),Bouclier:parseNum(document.getElementById('c_shieldmax').value)};
-  c.stats={Force:parseNum(document.getElementById('s_force').value),Magie:parseNum(document.getElementById('s_magic').value),Agilité:parseNum(document.getElementById('s_agi').value),Vitesse:parseNum(document.getElementById('s_speed').value)};
+  c.resourcesMax={Vie:maxHpFromCon(document.getElementById('s_con').value),Mana:parseNum(document.getElementById('c_manamax').value),Bouclier:parseNum(document.getElementById('c_shieldmax').value)};
+  c.stats={...(c.stats||{}),Constitution:parseNum(document.getElementById('s_con').value),Endurance:parseNum(document.getElementById('s_end').value),Social:parseNum(document.getElementById('s_soc').value),Artisanat:parseNum(document.getElementById('s_craft').value),Force:parseNum(document.getElementById('s_force').value),Magie:parseNum(document.getElementById('s_magic').value),Agilité:parseNum(document.getElementById('s_agi').value),Vitesse:parseNum(document.getElementById('s_speed').value)};
   c.def={CA:parseNum(document.getElementById('d_ca').value),DM:parseNum(document.getElementById('d_dm').value),'CA naturelle':parseNum(document.getElementById('d_ca').value)};
   c.res={
     Feu:parseNum(document.getElementById('r_fire').value),
@@ -1249,6 +1270,12 @@ function saveCharacter(id){
   S.instances.filter(i=>i.charId===c.id).forEach(i=>{
     i.hpMax=c.resourcesMax.Vie; i.manaMax=c.resourcesMax.Mana; i.shieldMax=c.resourcesMax.Bouclier;
     i.hp=Math.min(i.hp,i.hpMax); i.mana=Math.min(i.mana,i.manaMax); i.shield=Math.min(i.shield,i.shieldMax);
+    document.querySelectorAll(`#modal input[data-inst="${i.id}"][data-dirty="1"]`).forEach(el=>{
+      const v=Math.round(parseNum(el.value));
+      if(el.dataset.field==='hp')i.hp=Math.max(0,Math.min(i.hpMax,v));
+      else i.mana=Math.max(0,Math.min(i.manaMax,v));
+    });
+    if(i.hp<=0){addLog(`💀 <b>${esc(i.label)}</b> tombe à 0 PV — retiré de la carte.`);removeInstance(i.id);}
   });
   saveState(); closeModal(); render();
 }
