@@ -46,6 +46,9 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .token{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--cell-size,32px);height:var(--cell-size,32px);border-radius:50%;display:grid;place-items:center;font-size:calc(var(--cell-size,32px)*0.5);font-weight:800;color:#fff;cursor:pointer;pointer-events:auto}
 .token-wrap.selected .token{outline:3px solid #fff;outline-offset:3px}
 .token-wrap.current-turn .token{outline:2px dashed var(--gold);outline-offset:3px}
+.token-wrap.multi .token{outline:3px solid var(--accent2);outline-offset:3px}
+.sel-rect{position:absolute;z-index:80;border:1px dashed var(--accent2);background:#9b4dff22;pointer-events:none}
+.chat-form{display:flex;gap:6px;margin:8px 0 10px}.chat-form input{flex:1;min-width:0;background:#111318;color:#fff;border:1px solid #3a3e48;border-radius:8px;padding:8px;outline:none}.chat-form input:focus{border-color:var(--accent)}
 .token-hud{position:absolute;left:50%;bottom:calc(var(--cell-size,32px)/2 + 10px);transform:translateX(-50%);width:74px;display:none;flex-direction:column;gap:2px;pointer-events:none;text-align:center}
 .token-wrap.selected .token-hud{display:flex}
 .hud-row{font-size:9px;line-height:1.2;color:#e7e9f0;text-shadow:0 1px 2px #000c}
@@ -277,6 +280,9 @@ let gridVisible=localStorage.getItem('narbudr-grid-visible')!=='0';
 let gridPopoverOpen=false;
 let dragCandidate=null;
 let panState=null;
+let multiSel=[];      // multisélection MJ (ids d'instances)
+let selBox=null;      // rectangle de sélection en cours
+let chatDraft='';     // texte en cours de saisie dans le chat
 
 /* ============================= SYNCHRONISATION SUPABASE ============================= */
 async function loadProfiles(){
@@ -489,6 +495,8 @@ function removeInstance(id){
 
 /* ============================= RENDU ============================= */
 function render(){
+  const hadChatFocus=document.activeElement?.id==='chat_input';
+  if(S.combat.active)multiSel=[]; else multiSel=multiSel.filter(id=>inst(id));
   document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.page===currentPage));
   document.getElementById('pageTitle').textContent=PAGE_TITLES[currentPage];
   const c=document.getElementById('content');
@@ -500,6 +508,7 @@ function render(){
   updateTargetingBanner();
   updateUserBadge();
   if(currentPage==='table')setupMapInteractions();
+  if(hadChatFocus){const ci=document.getElementById('chat_input');if(ci){ci.focus();ci.setSelectionRange(ci.value.length,ci.value.length);}}
 }
 function updateTargetingBanner(){
   const banner=document.getElementById('targetingBanner'); if(!banner)return;
@@ -570,7 +579,7 @@ function tokensHtml(){
          <div class="mini-bar mini-hp"><i style="width:${pct(t.hp,t.hpMax)}%"></i></div>
          ${t.manaMax>0?`<div class="hud-row">💧 ${t.mana}/${t.manaMax}</div><div class="mini-bar mini-mana"><i style="width:${pct(t.mana,t.manaMax)}%"></i></div>`:''}
          ${t.shieldMax>0?`<div class="hud-row">🛡 ${t.shield}/${t.shieldMax}</div><div class="mini-bar mini-shield"><i style="width:${pct(t.shield,t.shieldMax)}%"></i></div>`:''}`;
-    return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''}" data-token="${t.id}" style="left:${px}px;top:${py}px;--cell-size:${S.map.cell}px">
+    return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''} ${multiSel.includes(t.id)?'multi':''}" data-token="${t.id}" style="left:${px}px;top:${py}px;--cell-size:${S.map.cell}px">
       <div class="token-hud">${hud}</div>
       <div class="token ${tpl.type}" title="${esc(t.label)}">${iconBoxHtml(tpl,'0')}</div>
       <div class="token-label">${esc(t.label)}</div>
@@ -624,7 +633,9 @@ function assetPanel(){
 function toggleAssetSection(key){collapsedAssets[key]=!collapsedAssets[key];render();}
 function chatPanel(){
   const entries=S.chat.length?S.chat.slice().reverse().map(e=>`<div>${e}</div>`).join(''):'<p class="muted tiny">Aucun événement pour l’instant.</p>';
-  return `<h2>💬 Journal de combat</h2><div class="log">${entries}</div>`;
+  return `<h2>💬 Chat &amp; journal</h2>
+  <div class="chat-form"><input id="chat_input" maxlength="200" placeholder="/r 2d20+5 ou message…" value="${esc(chatDraft)}" oninput="chatDraft=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();sendChat();}"><button class="btn primary" onclick="sendChat()">➤</button></div>
+  <div class="log">${entries}</div>`;
 }
 function combatPanel(){
   if(!S.combat.active)return `<div class="combat-panel"><h2>⚔ Combat</h2><p class="muted tiny">Le MJ démarre le combat. L'initiative est déterminée par 1d20 + Vitesse (égalité : 1d100).</p></div>`;
@@ -632,6 +643,120 @@ function combatPanel(){
   return `<div class="combat-panel"><div class="row between"><h2>⚔ Initiative</h2>${isMJ()?'<button class="btn" onclick="nextTurn()">Tour suivant</button>':''}</div>
   <div class="initiative-list">${S.combat.order.map((id,i)=>{const t=inst(id);return `<div class="initiative-row ${i===S.combat.turn?'current':''}"><span>${i===S.combat.turn?'▶ ':''}${esc(t?.label||id)}</span><b>${S.combat.initiatives[id]}</b></div>`;}).join('')}</div>
   <div class="tiny muted" style="margin-top:6px">Déplacement restant : ${current?.remainingMove??'—'}</div></div>`;
+}
+
+/* ============================= CHAT : COMMANDE /r ============================= */
+function parseDiceExpr(raw){
+  const expr=String(raw||'').replace(/\s+/g,'').toLowerCase();
+  if(!/^[+-]?(\d*d\d+|\d+)([+-](\d*d\d+|\d+))*$/.test(expr))return null;
+  const terms=[...expr.matchAll(/([+-]?)(?:(\d*)d(\d+)|(\d+))/g)];
+  let totalDice=0;
+  for(const t of terms){
+    if(t[3]){const n=+(t[2]||1),s=+t[3];if(n<1||s<1||s>1000)return null;totalDice+=n;}
+  }
+  if(totalDice>50)return null;
+  const parts=[]; let total=0;
+  for(const t of terms){
+    const sign=t[1]==='-'?-1:1;
+    if(t[3]){
+      const n=+(t[2]||1),sides=+t[3];
+      const rolls=Array.from({length:n},()=>1+Math.floor(Math.random()*sides));
+      const sum=rolls.reduce((a,x)=>a+x,0);
+      total+=sign*sum;
+      parts.push({label:`${sign<0?'−':''}${n}d${sides}`,rolls,sum:sign*sum});
+    }else{
+      const v=sign*(+t[4]); total+=v; parts.push({label:null,rolls:null,sum:v});
+    }
+  }
+  return {expr,parts,total};
+}
+function sendChat(){
+  if(!currentUser)return;
+  const text=(document.getElementById('chat_input')?.value||chatDraft||'').trim();
+  if(!text)return;
+  const name=esc(myDisplayName());
+  const m=text.match(/^\/r(?:\s+(.*))?$/i);
+  if(m){
+    const r=parseDiceExpr(m[1]);
+    if(!r){toast('⚠️ Syntaxe : /r d100, /r 2d20+5 (max 50 dés, d1000).');return;}
+    const lines=r.parts.map(p=>p.rolls
+      ?`🎲 ${p.label} : ${p.rolls.join(' + ')}${p.rolls.length>1?` = ${Math.abs(p.sum)}`:''}`
+      :`➕ Bonus : ${p.sum>0?'+':''}${p.sum}`);
+    addLog(`🎲 <b>${name}</b> — /r ${esc(r.expr)}<br>${lines.join('<br>')}<br>🎯 Total : <b>${r.total}</b>`);
+  }else if(text.startsWith('/')){
+    toast('⚠️ Commande inconnue. Utilise /r [expression].');return;
+  }else{
+    addLog(`💬 <b>${name}</b> : ${esc(text)}`);
+  }
+  chatDraft='';
+  persistState(); render();
+  document.getElementById('chat_input')?.focus();
+}
+
+/* ============================= MULTISÉLECTION (MJ, hors combat) ============================= */
+function moveGroupTo(cx,cy){
+  const d=dragCandidate,g=d.group,cell=S.map.cell;
+  const setEl=(id,x,y)=>{const el=document.querySelector(`[data-token="${id}"]`);if(el){el.style.left=x+'px';el.style.top=y+'px';}};
+  if(S.freeMovement){
+    const [fx,fy]=mapPixelPoint(cx,cy);
+    const W=S.map.cols*cell,H=S.map.rows*cell;
+    const dx=Math.max(-Math.min(...g.map(o=>o.px)),Math.min(W-Math.max(...g.map(o=>o.px)),fx-d.startPix[0]));
+    const dy=Math.max(-Math.min(...g.map(o=>o.py)),Math.min(H-Math.max(...g.map(o=>o.py)),fy-d.startPix[1]));
+    g.forEach(o=>{
+      const t=inst(o.id); if(!t)return;
+      t.px=o.px+dx; t.py=o.py+dy;
+      t.x=Math.max(0,Math.min(S.map.cols-1,Math.floor(t.px/cell)));
+      t.y=Math.max(0,Math.min(S.map.rows-1,Math.floor(t.py/cell)));
+      setEl(o.id,t.px,t.py);
+    });
+  }else{
+    const pt=mapPoint(cx,cy);
+    const dx=Math.max(-Math.min(...g.map(o=>o.x)),Math.min(S.map.cols-1-Math.max(...g.map(o=>o.x)),pt[0]-d.startCell[0]));
+    const dy=Math.max(-Math.min(...g.map(o=>o.y)),Math.min(S.map.rows-1-Math.max(...g.map(o=>o.y)),pt[1]-d.startCell[1]));
+    g.forEach(o=>{
+      const t=inst(o.id); if(!t)return;
+      t.x=o.x+dx; t.y=o.y+dy;
+      setEl(o.id,t.x*cell+cell/2,t.y*cell+cell/2);
+    });
+  }
+}
+function finishGroupDrag(){
+  const d=dragCandidate; dragCandidate=null;
+  const g=d.group;
+  if(!d.moved){selectedToken=d.id;multiSel=[];render();return;}
+  let changed=true;
+  if(!S.freeMovement){
+    const ids=g.map(o=>o.id);
+    const blocker=S.instances.find(i=>!ids.includes(i.id)&&g.some(o=>{const t=inst(o.id);return t&&t.x===i.x&&t.y===i.y;}));
+    if(blocker){
+      g.forEach(o=>{const t=inst(o.id);if(t){t.x=o.x;t.y=o.y;}});
+      toast(`🚫 ${blocker.label} bloque le déplacement du groupe — annulé.`);
+      changed=false;
+    }
+  }
+  if(changed){addLog(`↦ Le MJ déplace ${g.length} tokens.`);saveState();}
+  render();
+}
+function finishSelBox(){
+  const b=selBox; selBox=null;
+  document.getElementById('selRect')?.remove();
+  if(!b.moved){
+    if(selectedToken||multiSel.length){selectedToken=null;multiSel=[];render();}
+    return;
+  }
+  const wrap=document.getElementById('mapWrap'); if(!wrap)return;
+  const r=wrap.getBoundingClientRect(),cell=S.map.cell;
+  const toPix=(cx,cy)=>[(cx-r.left-mapPan.x)/mapZoom,(cy-r.top-mapPan.y)/mapZoom];
+  const [ax,ay]=toPix(b.startX,b.startY),[bx,by]=toPix(b.curX,b.curY);
+  const x1=Math.min(ax,bx),x2=Math.max(ax,bx),y1=Math.min(ay,by),y2=Math.max(ay,by);
+  const ids=S.instances.filter(t=>{
+    const cx=(S.freeMovement&&t.px!=null)?t.px:t.x*cell+cell/2;
+    const cy=(S.freeMovement&&t.py!=null)?t.py:t.y*cell+cell/2;
+    return cx>=x1&&cx<=x2&&cy>=y1&&cy<=y2;
+  }).map(t=>t.id);
+  if(ids.length===1){selectedToken=ids[0];multiSel=[];}
+  else{selectedToken=null;multiSel=ids;}
+  render();
 }
 
 /* ============================= COMBAT (MJ uniquement) ============================= */
@@ -756,7 +881,12 @@ function setupMapInteractions(){
         if(a&&t)resolveAbility(a,[t.x,t.y],id);
         return;
       }
-      selectedToken=id;
+      if(isMJ()&&!S.combat.active&&multiSel.length>1&&multiSel.includes(id)){
+        const cell=S.map.cell;
+        dragCandidate={id,group:multiSel.map(i=>{const t=inst(i);return {id:i,x:t.x,y:t.y,px:(S.freeMovement&&t.px!=null)?t.px:t.x*cell+cell/2,py:(S.freeMovement&&t.py!=null)?t.py:t.y*cell+cell/2};}),startX:e.clientX,startY:e.clientY,startCell:mapPoint(e.clientX,e.clientY),startPix:mapPixelPoint(e.clientX,e.clientY),moved:false};
+        return;
+      }
+      selectedToken=id; multiSel=[];
       if(!canControlInstance(id)){
         render(); return; // vue seule : ce token ne t'appartient pas
       }
@@ -773,10 +903,28 @@ function setupMapInteractions(){
       if(a)resolveAbility(a,pt);
       return;
     }
-    if(selectedToken){selectedToken=null;render();}
+    if(isMJ()&&!S.combat.active){
+      selBox={startX:e.clientX,startY:e.clientY,curX:e.clientX,curY:e.clientY,moved:false};
+      return;
+    }
+    if(selectedToken||multiSel.length){selectedToken=null;multiSel=[];render();}
   };
 
   window.onmousemove=e=>{
+    if(selBox){
+      selBox.curX=e.clientX; selBox.curY=e.clientY;
+      if(!selBox.moved&&Math.hypot(e.clientX-selBox.startX,e.clientY-selBox.startY)<4)return;
+      selBox.moved=true;
+      const w=document.getElementById('mapWrap'); if(!w)return;
+      const wr=w.getBoundingClientRect();
+      let el=document.getElementById('selRect');
+      if(!el){el=document.createElement('div');el.id='selRect';el.className='sel-rect';w.appendChild(el);}
+      el.style.left=(Math.min(selBox.startX,e.clientX)-wr.left)+'px';
+      el.style.top=(Math.min(selBox.startY,e.clientY)-wr.top)+'px';
+      el.style.width=Math.abs(e.clientX-selBox.startX)+'px';
+      el.style.height=Math.abs(e.clientY-selBox.startY)+'px';
+      return;
+    }
     if(panState){
       mapPan.x=panState.origX+(e.clientX-panState.startX);
       mapPan.y=panState.origY+(e.clientY-panState.startY);
@@ -786,6 +934,7 @@ function setupMapInteractions(){
       const dx=e.clientX-dragCandidate.startX, dy=e.clientY-dragCandidate.startY;
       if(!dragCandidate.moved&&Math.hypot(dx,dy)<4)return;
       dragCandidate.moved=true;
+      if(dragCandidate.group){moveGroupTo(e.clientX,e.clientY);return;}
       const t=inst(dragCandidate.id);
       if(t){
         const el=document.querySelector(`[data-token="${dragCandidate.id}"]`);
@@ -812,6 +961,8 @@ function setupMapInteractions(){
   };
 
   window.onmouseup=()=>{
+    if(selBox)finishSelBox();
+    if(dragCandidate&&dragCandidate.group)finishGroupDrag();
     if(panState){panState=null;wrap.classList.remove('panning');}
     if(dragCandidate){
       const {id,moved,origX,origY}=dragCandidate;
@@ -1644,8 +1795,19 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
     if(stageFullscreen){exitStageFullscreen();return;}
     if(activeAbility){activeAbility=null;hoverCell=null;render();return;}
+    if(multiSel.length){multiSel=[];render();return;}
   }
-  if(e.key==='Delete'&&selectedToken&&!activeAbility){
+  if(e.key==='Delete'&&(selectedToken||multiSel.length)&&!activeAbility){
+    if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))return;
+    if(multiSel.length){
+      if(!isMJ()||S.combat.active)return;
+      const n=multiSel.length;
+      multiSel.forEach(id=>removeInstance(id));
+      multiSel=[];
+      addLog(`🗑 Le MJ retire ${n} tokens de la carte.`);
+      saveState();render();toast(`🗑 ${n} tokens retirés`);
+      return;
+    }
     if(!isMJ()){toast('⛔ Seul le MJ peut retirer un token de la carte.');return;}
     const t=inst(selectedToken);
     if(t){removeInstance(selectedToken);saveState();render();toast('🗑 Token retiré de la carte');}
