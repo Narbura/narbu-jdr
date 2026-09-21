@@ -656,11 +656,26 @@ function charItemHtml(c){
 function charBreadcrumb(catId){
   const chain=[]; let cur=catId;
   while(cur){const c=(S.characterCategories||[]).find(x=>x.id===cur); if(!c)break; chain.unshift(c); cur=c.parent_id;}
-  const root=`<button class="btn ghost" style="padding:3px 8px" onclick="openCharCategory(null)">🏠 Racine</button>`;
-  const rest=chain.map(c=>`<span class="tiny muted">›</span> <button class="btn ghost" style="padding:3px 8px" onclick="openCharCategory('${c.id}')">${esc(c.name)}</button>`).join(' ');
+  const root=`<button class="btn ghost" style="padding:3px 8px" onclick="openCharCategory(null)" ondragover="event.preventDefault()" ondrop="handleCharCategoryDrop(event,null)">🏠 Racine</button>`;
+  const rest=chain.map(c=>`<span class="tiny muted">›</span> <button class="btn ghost" style="padding:3px 8px" onclick="openCharCategory('${c.id}')" ondragover="event.preventDefault()" ondrop="handleCharCategoryDrop(event,'${c.id}')">${esc(c.name)}</button>`).join(' ');
   return `<div class="row" style="flex-wrap:wrap;gap:4px;margin-bottom:8px">${root} ${rest}</div>`;
 }
 function openCharCategory(id){currentCharCategory=id;render();}
+function handleCharCategoryDrop(ev,categoryId){
+  ev.preventDefault(); ev.stopPropagation();
+  if(!isMJ())return;
+  const data=ev.dataTransfer.getData('text/plain');
+  if(!data||data.startsWith('map:'))return;
+  const c=char(data); if(!c)return;
+  moveCharToCategory(data,categoryId);
+}
+function moveCharToCategory(charId,categoryId){
+  if(!isMJ())return;
+  const c=char(charId); if(!c)return;
+  c.categoryId=categoryId;
+  saveState(); render();
+  toast('✅ Fiche déplacée.');
+}
 function charResultsHtml(){
   const mj=isMJ();
   const query=charSearchQuery.trim().toLowerCase();
@@ -674,7 +689,7 @@ function charResultsHtml(){
   const catsHtml=subCats.map(c=>{
     const subCount=(S.characterCategories||[]).filter(cc=>cc.parent_id===c.id).length;
     const charCount=S.characters.filter(ch=>ch.categoryId===c.id).length;
-    return `<div class="asset-item" onclick="openCharCategory('${c.id}')" style="cursor:pointer">
+    return `<div class="asset-item" onclick="openCharCategory('${c.id}')" ondragover="event.preventDefault()" ondrop="handleCharCategoryDrop(event,'${c.id}')" style="cursor:pointer">
       <div class="asset-icon">📁</div><div class="asset-info"><b>${esc(c.name)}</b><small>${subCount} sous-dossier(s) · ${charCount} fiche(s)</small></div>
       ${mj?`<button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();openRenameCharCategoryModal('${c.id}')" title="Renommer">✏️</button><button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();confirmDeleteCharCategory('${c.id}')" title="Supprimer le dossier">🗑️</button>`:''}
     </div>`;
