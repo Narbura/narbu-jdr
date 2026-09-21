@@ -43,7 +43,8 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .zone{position:absolute;pointer-events:none;background:#a44cff38;border:2px solid #c084fc;box-shadow:0 0 25px #a44cff55 inset,0 0 18px #a44cff33;z-index:20}
 .zone-effect{position:absolute;inset:0;display:grid;place-items:center;opacity:.42}
 .token-wrap{position:absolute;z-index:30;pointer-events:none}
-.token{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--cell-size,32px);height:var(--cell-size,32px);border-radius:50%;display:grid;place-items:center;font-size:calc(var(--cell-size,32px)*0.5);font-weight:800;color:#fff;border:2px solid #fff8;box-shadow:0 5px 12px #0009;cursor:pointer;pointer-events:auto;overflow:hidden;background:#20232a}
+.token{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--cell-size,32px);height:var(--cell-size,32px);border-radius:50%;display:grid;place-items:center;font-size:calc(var(--cell-size,32px)*0.5);font-weight:800;color:#fff;border:2px solid #fff8;box-shadow:0 5px 12px #0009;cursor:pointer;pointer-events:auto;overflow:hidden}
+.token.player{background:#3578d4}.token.enemy{background:#b74646}
 .token-wrap.selected .token{outline:3px solid #fff;outline-offset:3px}
 .token-wrap.current-turn .token{outline:2px dashed var(--gold);outline-offset:3px}
 .token-hud{position:absolute;left:50%;bottom:calc(var(--cell-size,32px)/2 + 10px);transform:translateX(-50%);width:74px;display:none;flex-direction:column;gap:2px;pointer-events:none;text-align:center}
@@ -386,11 +387,8 @@ function resetDemo(){
 }
 function toast(t){const e=document.getElementById('toast');e.textContent=t;e.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>e.classList.remove('show'),1800);}
 function esc(x){return String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
-function iconBoxHtml(entity,radius,zoom){
-  if(entity&&entity.iconImage){
-    const s=zoom?Math.round(100*zoom):100;
-    return `<img src="${esc(entity.iconImage)}" style="width:${s}%;height:${s}%;object-fit:cover;border-radius:${radius||'0'}">`;
-  }
+function iconBoxHtml(entity,radius){
+  if(entity&&entity.iconImage)return `<img src="${esc(entity.iconImage)}" style="width:100%;height:100%;object-fit:cover;border-radius:${radius||'0'}">`;
   return esc(entity?.icon||'❓');
 }
 function iconInlineHtml(entity,sizePx){
@@ -575,7 +573,7 @@ function tokensHtml(){
          ${t.shieldMax>0?`<div class="hud-row">🛡 ${t.shield}/${t.shieldMax}</div><div class="mini-bar mini-shield"><i style="width:${pct(t.shield,t.shieldMax)}%"></i></div>`:''}`;
     return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''}" data-token="${t.id}" style="left:${px}px;top:${py}px;--cell-size:${S.map.cell}px">
       <div class="token-hud">${hud}</div>
-      <div class="token ${tpl.type}" title="${esc(t.label)}">${iconBoxHtml(tpl,'50%',1.35)}</div>
+      <div class="token ${tpl.type}" title="${esc(t.label)}">${iconBoxHtml(tpl,'50%')}</div>
       <div class="token-label">${esc(t.label)}</div>
     </div>`;
   }).join('');
