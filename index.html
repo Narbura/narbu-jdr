@@ -140,6 +140,7 @@ body.stage-fullscreen .targeting-banner{top:64px}
   <button class="nav" data-page="characters">🧙 <span>Personnages</span></button>
   <button class="nav" data-page="abilities">✨ <span>Capacités</span></button>
   <button class="nav" data-page="equipment">🎒 <span>Équipement</span></button>
+  <button class="nav" data-page="library">📚 <span>Bibliothèque</span></button>
   <button class="nav" data-page="mysheet">🪪 <span>Ma fiche</span></button>
   <div class="spacer"></div>
   <div class="server" id="serverInfo">Connexion en cours…</div>
@@ -646,8 +647,9 @@ function syncSheetInputs(){
   document.querySelectorAll('#modal input[data-inst]').forEach(el=>{
     if(el===document.activeElement||el.dataset.dirty==='1')return;
     const t=inst(el.dataset.inst); if(!t)return;
-    const v=el.dataset.field==='hp'?t.hp:t.mana;
-    if(String(v)!==el.value)el.value=v;
+    const map={hp:t.hp,mana:t.mana,sizew:t.sizeW||1,sizeh:t.sizeH||1};
+    const v=map[el.dataset.field];
+    if(v!==undefined&&String(v)!==el.value)el.value=v;
   });
 }
 function char(id){return S.characters.find(c=>c.id===id);}
@@ -871,7 +873,7 @@ function tokensHtml(){
          <div class="mini-bar mini-hp"><i style="width:${pct(t.hp,t.hpMax)}%"></i></div>
          ${t.manaMax>0?`<div class="hud-row">💧 ${t.mana}/${t.manaMax}</div><div class="mini-bar mini-mana"><i style="width:${pct(t.mana,t.manaMax)}%"></i></div>`:''}
          ${t.shieldMax>0?`<div class="hud-row">🛡 ${t.shield}/${t.shieldMax}</div><div class="mini-bar mini-shield"><i style="width:${pct(t.shield,t.shieldMax)}%"></i></div>`:''}`;
-    return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''} ${multiSel.includes(t.id)?'multi':''}" data-token="${t.id}" style="left:${px}px;top:${py}px;--cell-size:${S.map.cell}px;--tok-w:${tokW}px;--tok-h:${tokH}px;--tok-min:${Math.min(tokW,tokH)}px" ${mj?`ondblclick="openTokenSizeModal('${t.id}')"`:''}>
+    return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''} ${multiSel.includes(t.id)?'multi':''}" data-token="${t.id}" style="left:${px}px;top:${py}px;--cell-size:${S.map.cell}px;--tok-w:${tokW}px;--tok-h:${tokH}px;--tok-min:${Math.min(tokW,tokH)}px">
       <div class="token-hud">${hud}</div>
       <div class="token ${tpl.type}" title="${esc(t.label)}">${iconBoxHtml(tpl,'0')}${mj?`<div class="token-resize-handle" onmousedown="startTokenResize(event,'${t.id}')" title="Glisser pour redimensionner"></div>`:''}</div>
       <div class="token-label">${esc(t.label)}</div>
@@ -1409,10 +1411,10 @@ function setupMapInteractions(){
         if(S.freeMovement){
           addLog(`↦ ${esc(t.label)} déplacé librement sur la carte.`);
         }else{
-          const occupant=S.instances.find(i=>i.id!==id&&i.x===t.x&&i.y===t.y);
-          if(occupant){
+          const sw=t.sizeW||1, sh=t.sizeH||1;
+          if(footprintOverlap(id,t.x,t.y,sw,sh)){
             t.x=origX; t.y=origY;
-            toast(`🚫 ${occupant.label} est déjà sur cette case — choisis un autre déplacement.`);
+            toast('🚫 Case(s) déjà occupée(s) — choisis un autre déplacement.');
           }else if(S.combat.active&&S.combat.order[S.combat.turn]===id){
             const tpl=instTemplate(t);
             const dist=Math.abs(t.x-origX)+Math.abs(t.y-origY);
@@ -1456,29 +1458,7 @@ function startTokenResize(ev,id){
   const sw=t.sizeW||1, sh=t.sizeH||1;
   tokenResizeState={id,startX:ev.clientX,startY:ev.clientY,startSize:Math.max(sw,sh),origSizeW:sw,origSizeH:sh};
 }
-function openTokenSizeModal(id){
-  if(!isMJ())return;
-  const t=inst(id); if(!t)return;
-  const sw=t.sizeW||1, sh=t.sizeH||1;
-  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>Taille du token — ${esc(t.label)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
-  <div class="form">
-  <div class="field"><label>Largeur (cases)</label><input id="tok_size_w" type="number" min="1" max="20" value="${sw}"></div>
-  <div class="field"><label>Hauteur (cases)</label><input id="tok_size_h" type="number" min="1" max="20" value="${sh}"></div>
-  </div>
-  <p class="tiny muted">Le token occupera ${sw}×${sh} → nouvelle taille depuis la case (${t.x+1}, ${t.y+1}). Annulé automatiquement si ça chevauche un autre token ou dépasse la carte.</p>
-  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="applyTokenSize('${id}')">Enregistrer</button></div>`;
-  document.getElementById('modalBg').classList.add('open');
-}
-function applyTokenSize(id){
-  if(!isMJ())return;
-  const t=inst(id); if(!t)return;
-  const w=Math.max(1,Math.min(20,parseInt(document.getElementById('tok_size_w').value,10)||1));
-  const h=Math.max(1,Math.min(20,parseInt(document.getElementById('tok_size_h').value,10)||1));
-  if(footprintOverlap(id,t.x,t.y,w,h)){toast('🚫 Cette taille chevauche un autre token ou dépasse la carte.');return;}
-  t.sizeW=w; t.sizeH=h;
-  addLog(`↔ ${esc(t.label)} redimensionné (${w}×${h} cases).`);
-  saveState(); closeModal(); render();
-}
+
 
 /* ============================= CAPACITÉS : RÉSOLUTION ============================= */
 function affected(a,start,explicitTargetInstId){
@@ -1674,7 +1654,7 @@ function openCharacter(id){
   const ownerOpts=`<option value="">— MJ / PNJ (aucun joueur) —</option>`+profiles.map(p=>`<option value="${esc(p.id)}" ${base.ownerId===p.id?'selected':''}>${esc(displayNameOf(p))}</option>`).join('');
   const known=id?characterAbilities(id):[];
   const insts=id?S.instances.filter(i=>i.charId===id):[];
-  const curResHtml=id?`<div class="field full"><label>Ressources actuelles (jetons sur la carte — synchronisées en direct)</label>${insts.length?insts.map(i=>`<div class="row" style="margin-bottom:6px"><span style="flex:1">${esc(i.label)}</span><span class="tiny muted">❤️ PV</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="hp" value="${i.hp}" oninput="this.dataset.dirty='1'"><span class="tiny muted">💧 Mana</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="mana" value="${i.mana}" oninput="this.dataset.dirty='1'"></div>`).join(''):'<p class="tiny muted">Aucun jeton de ce personnage sur la carte.</p>'}</div>`:'';
+  const curResHtml=id?`<div class="field full"><label>Ressources actuelles (jetons sur la carte — synchronisées en direct)</label>${insts.length?insts.map(i=>`<div class="row" style="margin-bottom:6px;flex-wrap:wrap"><span style="flex:1">${esc(i.label)}</span><span class="tiny muted">❤️ PV</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="hp" value="${i.hp}" oninput="this.dataset.dirty='1'"><span class="tiny muted">💧 Mana</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="mana" value="${i.mana}" oninput="this.dataset.dirty='1'"><span class="tiny muted">↔ Taille</span><input type="number" min="1" max="20" style="width:55px" data-inst="${i.id}" data-field="sizew" value="${i.sizeW||1}" oninput="this.dataset.dirty='1'" title="Largeur en cases"><span class="tiny muted">×</span><input type="number" min="1" max="20" style="width:55px" data-inst="${i.id}" data-field="sizeh" value="${i.sizeH||1}" oninput="this.dataset.dirty='1'" title="Hauteur en cases"></div>`).join(''):'<p class="tiny muted">Aucun jeton de ce personnage sur la carte.</p>'}<p class="tiny muted">La taille est annulée automatiquement si elle chevauche un autre jeton ou dépasse la carte.</p></div>`:'';
   const knownLine=id?(known.length?`<p class="tiny muted">Capacités liées : ${known.map(a=>`${iconInlineHtml(a)} ${esc(a.name)}`).join(', ')} <span style="opacity:.7">(à gérer depuis la page ✨ Capacités)</span></p>`:'<p class="tiny muted">Aucune capacité liée à ce personnage pour l’instant (page ✨ Capacités).</p>'):'';
   const transfoIds=base.transformationIds||[];
   const transfoListHtml=S.characters.filter(x=>x.id!==id).length?S.characters.filter(x=>x.id!==id).map(x=>`<label class="ability-char-item"><input type="checkbox" class="tf-check" value="${x.id}" ${transfoIds.includes(x.id)?'checked':''}> <span>${iconInlineHtml(x)} ${esc(x.name)}</span></label>`).join(''):'<p class="tiny muted">Aucune autre fiche disponible.</p>';
@@ -1782,11 +1762,21 @@ function saveCharacter(id){
   S.instances.filter(i=>i.charId===c.id).forEach(i=>{
     i.hpMax=c.resourcesMax.Vie; i.manaMax=c.resourcesMax.Mana; i.shieldMax=c.resourcesMax.Bouclier;
     i.hp=Math.min(i.hp,i.hpMax); i.mana=Math.min(i.mana,i.manaMax); i.shield=Math.min(i.shield,i.shieldMax);
+    let newW=i.sizeW||1, newH=i.sizeH||1, sizeDirty=false;
     document.querySelectorAll(`#modal input[data-inst="${i.id}"][data-dirty="1"]`).forEach(el=>{
       const v=Math.round(parseNum(el.value));
       if(el.dataset.field==='hp')i.hp=Math.max(0,Math.min(i.hpMax,v));
-      else i.mana=Math.max(0,Math.min(i.manaMax,v));
+      else if(el.dataset.field==='mana')i.mana=Math.max(0,Math.min(i.manaMax,v));
+      else if(el.dataset.field==='sizew'){newW=Math.max(1,Math.min(20,v));sizeDirty=true;}
+      else if(el.dataset.field==='sizeh'){newH=Math.max(1,Math.min(20,v));sizeDirty=true;}
     });
+    if(sizeDirty){
+      if(footprintOverlap(i.id,i.x,i.y,newW,newH)){
+        toast(`🚫 Taille de ${i.label} inchangée — chevauche un autre jeton ou dépasse la carte.`);
+      }else{
+        i.sizeW=newW; i.sizeH=newH;
+      }
+    }
     if(i.hp<=0){addLog(`💀 <b>${esc(i.label)}</b> tombe à 0 PV — retiré de la carte.`);removeInstance(i.id);}
   });
   saveState(); closeModal(); render();
@@ -2051,6 +2041,11 @@ function confirmDeleteEquipment(id){
   S.equipment=(S.equipment||[]).filter(x=>x.id!==id);
   saveState(); render();
   toast('🗑️ Équipement supprimé.');
+}
+
+/* ============================= BIBLIOTHÈQUE (page dédiée) ============================= */
+function libraryPage(){
+  return `<div class="grid3"><div class="card"><h2>🗺️ Cartes</h2><p class="muted">Import d'images de cartes prévu ici.</p><button class="btn">＋ Importer une carte</button></div><div class="card"><h2>🖼️ Effets</h2><p class="muted">Bibliothèque d'effets visuels : feu, glace, magie, explosions…</p><button class="btn">＋ Ajouter un effet</button></div><div class="card"><h2>🎲 Assets</h2><p class="muted">Tokens, portraits, objets et autres ressources.</p><button class="btn">＋ Ajouter un asset</button></div></div><div class="card" style="margin-top:16px"><h2>Prochaine étape</h2><p>Cette bibliothèque deviendra le stockage local de tes cartes et assets, sans abonnement externe. Les fiches et instances sont déjà gérées séparément (voir l'onglet 📚 Bibliothèque du panneau de droite sur la Table de jeu).</p></div>`;
 }
 
 /* ============================= MA FICHE (lecture seule, par joueur) ============================= */
@@ -2745,6 +2740,34 @@ document.addEventListener('keydown',e=>{
     const t=inst(selectedToken);
     if(t){removeInstance(selectedToken);saveState();render();toast('🗑 Token retiré de la carte');}
   }
+});
+const ARROW_DELTAS={ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0]};
+function moveSelectedTokenBy(dx,dy){
+  if(!selectedToken)return;
+  const id=selectedToken, t=inst(id); if(!t)return;
+  if(!canControlInstance(id)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
+  if(S.combat.active&&S.combat.order[S.combat.turn]!==id){toast('⏳ Ce n’est pas le tour de ce personnage.');return;}
+  const sw=t.sizeW||1, sh=t.sizeH||1;
+  const nx=t.x+dx, ny=t.y+dy;
+  if(nx<0||ny<0||nx+sw>S.map.cols||ny+sh>S.map.rows)return;
+  if(footprintOverlap(id,nx,ny,sw,sh)){toast('🚫 Case(s) déjà occupée(s).');return;}
+  if(S.combat.active){
+    const remaining=t.remainingMove??(instTemplate(t)?.move??6);
+    if(remaining<1){toast('🚫 Déplacement maximal atteint pour ce tour.');return;}
+    t.remainingMove=remaining-1;
+  }
+  t.x=nx; t.y=ny; t.px=null; t.py=null;
+  addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
+  saveState(); render();
+}
+document.addEventListener('keydown',e=>{
+  if(!ARROW_DELTAS[e.key])return;
+  if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)||e.target.isContentEditable)return;
+  if(document.getElementById('modalBg')?.classList.contains('open'))return;
+  if(currentPage!=='table'||activeAbility||!selectedToken)return;
+  e.preventDefault();
+  const [dx,dy]=ARROW_DELTAS[e.key];
+  moveSelectedTokenBy(dx,dy);
 });
 
 /* ============================= NAVIGATION / INIT ============================= */
