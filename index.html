@@ -305,6 +305,7 @@ function normalizeState(){
     if(e.itemType===undefined)e.itemType='armor';
     if(e.category===undefined)e.category=e.itemType==='weapon'?'arme':'torse';
     if(e.damageFormula===undefined)e.damageFormula='';
+    if(e.weaponStat===undefined)e.weaponStat='Force';
   });
   S.abilities.forEach(a=>{
     if(a.element==='Gel')a.element='Glace';
@@ -1465,7 +1466,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   let weaponFormula=null, weaponUsed=null;
   if(casterTpl?.type==='player'&&casterTpl.equipmentSlots){
     const w=equip(casterTpl.equipmentSlots['arme']);
-    if(w&&w.itemType==='weapon'&&w.damageFormula){weaponUsed=w;weaponFormula=w.damageFormula;}
+    if(w&&w.itemType==='weapon'&&w.damageFormula&&(w.weaponStat||'Force')===a.stat){weaponUsed=w;weaponFormula=w.damageFormula;}
   }
   const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
   const targets=affected(a,start,explicitTargetInstId);
@@ -1868,7 +1869,7 @@ function equipResultsHtml(){
   return items.map(e=>{
     const catLabel=(EQUIP_CATEGORIES.find(c=>c[0]===e.category)||['','?'])[1];
     const desc=e.itemType==='weapon'
-      ? `⚔ Arme · ${esc(catLabel)} · Dégâts : ${esc(e.damageFormula||'—')}`
+      ? `⚔ Arme · ${esc(catLabel)} · Dégâts : ${esc(e.damageFormula||'—')} · Stat : ${esc(e.weaponStat||'Force')}`
       : (()=>{const resTxt=ELEMENT_RES_KEYS.filter(k=>e.res[k]).map(k=>`${k} +${e.res[k]}%`).join(', ')||'Aucune résistance';return `🛡 Armure · ${esc(catLabel)} · CA +${e.ca||0} · DM +${e.dm||0} · ${resTxt}`;})();
     return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b><small>${desc}</small></div><button class="btn" onclick="openEquipment('${e.id}')">Modifier</button><button class="btn ghost" onclick="confirmDeleteEquipment('${e.id}')" title="Supprimer">🗑️</button></div>`;
   }).join('');
@@ -1907,8 +1908,13 @@ function openEquipment(id){
     <input type="hidden" id="eq_image" value="${esc(e.image||'')}">
   </div>
   <div class="field full" id="eq_weapon_fields" style="display:${isWeapon?'':'none'}">
-    <label>Dégâts de l'arme (ex : 2d20) — s'ajoutent automatiquement aux capacités du personnage équipé</label>
+    <label>Dégâts de l'arme (ex : 2d20) — s'ajoutent uniquement aux capacités utilisant la même statistique que l'arme</label>
     <input id="eq_damage" value="${esc(e.damageFormula||'')}" placeholder="2d20">
+  </div>
+  <div class="field" id="eq_weaponstat_field" style="display:${isWeapon?'':'none'}">
+    <label>Statistique liée à l'arme</label>
+    <select id="eq_weaponstat">${opt('Force','Force',e.weaponStat||'Force')}${opt('Magie','Magie',e.weaponStat||'Force')}</select>
+    <p class="tiny muted">Les dégâts de l'arme ne s'ajoutent que si la capacité lancée utilise cette même statistique.</p>
   </div>
   <div id="eq_armor_fields" style="display:${isWeapon?'none':'contents'}">
   <div class="field"><label>Bonus Classe d'armure</label><input id="eq_ca" type="number" value="${e.ca||0}"></div>
@@ -1929,6 +1935,7 @@ function openEquipment(id){
 function toggleEquipTypeFields(){
   const isWeapon=document.getElementById('eq_itemtype').value==='weapon';
   document.getElementById('eq_weapon_fields').style.display=isWeapon?'':'none';
+  document.getElementById('eq_weaponstat_field').style.display=isWeapon?'':'none';
   document.getElementById('eq_armor_fields').style.display=isWeapon?'none':'contents';
   document.getElementById('eq_category_field').style.display=isWeapon?'none':'';
 }
@@ -1944,6 +1951,7 @@ function saveEquipment(id){
   if(target.itemType==='weapon'){
     target.category='arme';
     target.damageFormula=document.getElementById('eq_damage').value.trim()||'1d20';
+    target.weaponStat=document.getElementById('eq_weaponstat').value||'Force';
     target.ca=0; target.dm=0;
     target.res={Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0};
   }else{
@@ -2001,7 +2009,7 @@ function myCharacterCard(c){
   const equippedHtml=(c.type==='player'&&c.equipmentSlots)?EQUIP_SLOTS.map(([k,label])=>{
     const item=equip(c.equipmentSlots[k]); if(!item)return '';
     const resTxt=ELEMENT_RES_KEYS.filter(rk=>item.res?.[rk]).map(rk=>`${rk} +${item.res[rk]}%`).join(', ');
-    const statsLine=item.itemType==='weapon'?`⚔ Dégâts : ${esc(item.damageFormula||'—')} (s'ajoutent aux capacités)`:`CA +${item.ca||0} · DM +${item.dm||0}${resTxt?` · ${resTxt}`:''}`;
+    const statsLine=item.itemType==='weapon'?`⚔ Dégâts : ${esc(item.damageFormula||'—')} (s'ajoutent aux capacités liées à ${esc(item.weaponStat||'Force')})`:`CA +${item.ca||0} · DM +${item.dm||0}${resTxt?` · ${resTxt}`:''}`;
     return `<div class="row" style="gap:10px;margin-bottom:8px;padding:6px;background:#20232a;border-radius:8px;align-items:center;flex-wrap:wrap">
       ${item.image?`<img src="${esc(item.image)}" style="max-width:100%;border-radius:8px;flex-shrink:0">`:`<div class="icon-preview" style="width:40px;height:40px;font-size:20px;flex-shrink:0">${iconInlineHtml(item,20)}</div>`}
       <div><b>${esc(label)} :</b> ${esc(item.name)}<br><span class="tiny muted">${statsLine}</span></div>
