@@ -58,19 +58,21 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .zone{position:absolute;pointer-events:none;background:#a44cff38;border:2px solid #c084fc;box-shadow:0 0 25px #a44cff55 inset,0 0 18px #a44cff33;z-index:20}
 .zone-effect{position:absolute;inset:0;display:grid;place-items:center;opacity:.42}
 .token-wrap{position:absolute;z-index:30;pointer-events:none}
-.token{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--cell-size,32px);height:var(--cell-size,32px);border-radius:50%;display:grid;place-items:center;font-size:calc(var(--cell-size,32px)*0.5);font-weight:800;color:#fff;cursor:pointer;pointer-events:auto}
+.token{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--tok-w,var(--cell-size,32px));height:var(--tok-h,var(--cell-size,32px));border-radius:50%;display:grid;place-items:center;font-size:calc(var(--tok-min,var(--cell-size,32px))*0.5);font-weight:800;color:#fff;cursor:pointer;pointer-events:auto}
+.token-resize-handle{position:absolute;right:-4px;bottom:-4px;width:12px;height:12px;background:var(--accent);border:2px solid #fff;border-radius:3px;cursor:nwse-resize;display:none;z-index:40}
+.token-wrap.selected .token-resize-handle{display:block}
 .token-wrap.selected .token{outline:3px solid #fff;outline-offset:3px}
 .token-wrap.current-turn .token{outline:2px dashed var(--gold);outline-offset:3px}
 .token-wrap.multi .token{outline:3px solid var(--accent2);outline-offset:3px}
 .sel-rect{position:absolute;z-index:80;border:1px dashed var(--accent2);background:#9b4dff22;pointer-events:none}
 .chat-form{display:flex;gap:6px;margin:8px 0 10px}.chat-form input{flex:1;min-width:0;background:#111318;color:#fff;border:1px solid #3a3e48;border-radius:8px;padding:8px;outline:none}.chat-form input:focus{border-color:var(--accent)}
-.token-hud{position:absolute;left:50%;bottom:calc(var(--cell-size,32px)/2 + 10px);transform:translateX(-50%);width:74px;display:none;flex-direction:column;gap:2px;pointer-events:none;text-align:center}
+.token-hud{position:absolute;left:50%;bottom:calc(var(--tok-h,var(--cell-size,32px))/2 + 10px);transform:translateX(-50%);width:74px;display:none;flex-direction:column;gap:2px;pointer-events:none;text-align:center}
 .token-wrap.selected .token-hud{display:flex}
 .hud-row{font-size:9px;line-height:1.2;color:#e7e9f0;text-shadow:0 1px 2px #000c}
 .mini-bar{height:4px;width:32px;margin:0 auto;background:#343740;border-radius:5px;overflow:hidden;border:1px solid #0008}
 .mini-bar i{display:block;height:100%}
 .mini-hp i{background:#58cf83}.mini-mana i{background:#5da5ff}.mini-shield i{background:#d4ad57}
-.token-label{position:absolute;left:50%;top:calc(var(--cell-size,32px)/2 + 10px);transform:translateX(-50%);width:90px;text-align:center;font-size:10px;color:#c8cdd6;text-shadow:0 1px 2px #000c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;display:none}
+.token-label{position:absolute;left:50%;top:calc(var(--tok-h,var(--cell-size,32px))/2 + 10px);transform:translateX(-50%);width:90px;text-align:center;font-size:10px;color:#c8cdd6;text-shadow:0 1px 2px #000c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;display:none}
 .token-wrap.selected .token-label{display:block}
 .ability-char-item{display:grid;grid-template-columns:18px 1fr;align-items:start;gap:8px;padding:5px 2px}
 .ability-char-item input[type="checkbox"]{margin:2px 0 0 0;width:16px;height:16px}
@@ -272,6 +274,8 @@ function normalizeState(){
   S.instances.forEach(t=>{
     if(t.px===undefined)t.px=null;
     if(t.py===undefined)t.py=null;
+    if(t.sizeW===undefined)t.sizeW=1;
+    if(t.sizeH===undefined)t.sizeH=1;
   });
   S.characters.forEach(c=>{
     if(!c.res)c.res={};
@@ -330,6 +334,7 @@ let gridOpacity=Math.max(0,Math.min(100,parseInt(localStorage.getItem('narbudr-g
 let gridVisible=localStorage.getItem('narbudr-grid-visible')!=='0';
 let gridPopoverOpen=false;
 let dragCandidate=null;
+let tokenResizeState=null;
 let panState=null;
 let multiSel=[];      // multisélection MJ (ids d'instances)
 let selBox=null;      // rectangle de sélection en cours
@@ -700,6 +705,15 @@ function pct(v,m){return m?Math.max(0,Math.min(100,v/m*100)):0;}
 
 /* ============================= INSTANCES (TOKENS) ============================= */
 function isOccupied(x,y,excludeId){return S.instances.some(i=>i.id!==excludeId&&i.x===x&&i.y===y);}
+function footprintOverlap(id,x,y,sw,sh){
+  const x2=x+sw, y2=y+sh;
+  if(x<0||y<0||x2>S.map.cols||y2>S.map.rows)return true;
+  return S.instances.some(o=>{
+    if(o.id===id)return false;
+    const osw=o.sizeW||1, osh=o.sizeH||1, ox2=o.x+osw, oy2=o.y+osh;
+    return x<ox2 && x2>o.x && y<oy2 && y2>o.y;
+  });
+}
 function nearestCellCoord(rawPos,maxIndex){
   // rawPos est exprimé en unités de case (ex: 4.3 = case 4, proche du centre 4.5)
   if(Number.isInteger(rawPos)){
@@ -847,8 +861,9 @@ function tokensHtml(){
   const mj=isMJ();
   return S.instances.map(t=>{
     const tpl=instTemplate(t); if(!tpl)return '';
-    const px=(S.freeMovement&&t.px!=null)?t.px:(t.x*S.map.cell+S.map.cell/2);
-    const py=(S.freeMovement&&t.py!=null)?t.py:(t.y*S.map.cell+S.map.cell/2);
+    const sw=t.sizeW||1, sh=t.sizeH||1, tokW=sw*S.map.cell, tokH=sh*S.map.cell;
+    const px=(S.freeMovement&&t.px!=null)?t.px:(t.x*S.map.cell+tokW/2);
+    const py=(S.freeMovement&&t.py!=null)?t.py:(t.y*S.map.cell+tokH/2);
     const isTurn=S.combat.active&&S.combat.order[S.combat.turn]===t.id;
     const hideStats=tpl.hidden&&!mj;
     const hud=hideStats
@@ -857,9 +872,9 @@ function tokensHtml(){
          <div class="mini-bar mini-hp"><i style="width:${pct(t.hp,t.hpMax)}%"></i></div>
          ${t.manaMax>0?`<div class="hud-row">💧 ${t.mana}/${t.manaMax}</div><div class="mini-bar mini-mana"><i style="width:${pct(t.mana,t.manaMax)}%"></i></div>`:''}
          ${t.shieldMax>0?`<div class="hud-row">🛡 ${t.shield}/${t.shieldMax}</div><div class="mini-bar mini-shield"><i style="width:${pct(t.shield,t.shieldMax)}%"></i></div>`:''}`;
-    return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''} ${multiSel.includes(t.id)?'multi':''}" data-token="${t.id}" style="left:${px}px;top:${py}px;--cell-size:${S.map.cell}px">
+    return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''} ${multiSel.includes(t.id)?'multi':''}" data-token="${t.id}" style="left:${px}px;top:${py}px;--cell-size:${S.map.cell}px;--tok-w:${tokW}px;--tok-h:${tokH}px;--tok-min:${Math.min(tokW,tokH)}px" ${mj?`ondblclick="openTokenSizeModal('${t.id}')"`:''}>
       <div class="token-hud">${hud}</div>
-      <div class="token ${tpl.type}" title="${esc(t.label)}">${iconBoxHtml(tpl,'0')}</div>
+      <div class="token ${tpl.type}" title="${esc(t.label)}">${iconBoxHtml(tpl,'0')}${mj?`<div class="token-resize-handle" onmousedown="startTokenResize(event,'${t.id}')" title="Glisser pour redimensionner"></div>`:''}</div>
       <div class="token-label">${esc(t.label)}</div>
     </div>`;
   }).join('');
@@ -1310,6 +1325,15 @@ function setupMapInteractions(){
   };
 
   window.onmousemove=e=>{
+    if(tokenResizeState){
+      const cell=S.map.cell;
+      const delta=Math.round(((e.clientX-tokenResizeState.startX)+(e.clientY-tokenResizeState.startY))/2/(cell*mapZoom));
+      const newSize=Math.max(1,tokenResizeState.startSize+delta);
+      tokenResizeState.previewSize=newSize;
+      const el=document.querySelector(`[data-token="${tokenResizeState.id}"] .token`);
+      if(el){el.style.width=(newSize*cell)+'px';el.style.height=(newSize*cell)+'px';}
+      return;
+    }
     if(selBox){
       selBox.curX=e.clientX; selBox.curY=e.clientY;
       if(!selBox.moved&&Math.hypot(e.clientX-selBox.startX,e.clientY-selBox.startY)<4)return;
@@ -1360,6 +1384,22 @@ function setupMapInteractions(){
   };
 
   window.onmouseup=()=>{
+    if(tokenResizeState){
+      const {id,previewSize,origSizeW}=tokenResizeState;
+      const t=inst(id);
+      if(t&&previewSize&&previewSize!==origSizeW){
+        if(footprintOverlap(id,t.x,t.y,previewSize,previewSize)){
+          toast('🚫 Redimensionnement annulé — chevauche un autre token ou dépasse la carte.');
+        }else{
+          t.sizeW=previewSize; t.sizeH=previewSize;
+          addLog(`↔ ${esc(t.label)} redimensionné (${previewSize}×${previewSize} cases).`);
+          saveState();
+        }
+      }
+      tokenResizeState=null;
+      render();
+      return;
+    }
     if(selBox)finishSelBox();
     if(dragCandidate&&dragCandidate.group)finishGroupDrag();
     if(panState){panState=null;wrap.classList.remove('panning');}
@@ -1407,6 +1447,38 @@ function setupMapInteractions(){
   };
 
   applyMapTransform();
+}
+
+/* ============================= REDIMENSIONNEMENT DES TOKENS (MJ uniquement) ============================= */
+function startTokenResize(ev,id){
+  if(!isMJ())return;
+  ev.preventDefault(); ev.stopPropagation();
+  const t=inst(id); if(!t)return;
+  const sw=t.sizeW||1, sh=t.sizeH||1;
+  tokenResizeState={id,startX:ev.clientX,startY:ev.clientY,startSize:Math.max(sw,sh),origSizeW:sw,origSizeH:sh};
+}
+function openTokenSizeModal(id){
+  if(!isMJ())return;
+  const t=inst(id); if(!t)return;
+  const sw=t.sizeW||1, sh=t.sizeH||1;
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>Taille du token — ${esc(t.label)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <div class="form">
+  <div class="field"><label>Largeur (cases)</label><input id="tok_size_w" type="number" min="1" max="20" value="${sw}"></div>
+  <div class="field"><label>Hauteur (cases)</label><input id="tok_size_h" type="number" min="1" max="20" value="${sh}"></div>
+  </div>
+  <p class="tiny muted">Le token occupera ${sw}×${sh} → nouvelle taille depuis la case (${t.x+1}, ${t.y+1}). Annulé automatiquement si ça chevauche un autre token ou dépasse la carte.</p>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="applyTokenSize('${id}')">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function applyTokenSize(id){
+  if(!isMJ())return;
+  const t=inst(id); if(!t)return;
+  const w=Math.max(1,Math.min(20,parseInt(document.getElementById('tok_size_w').value,10)||1));
+  const h=Math.max(1,Math.min(20,parseInt(document.getElementById('tok_size_h').value,10)||1));
+  if(footprintOverlap(id,t.x,t.y,w,h)){toast('🚫 Cette taille chevauche un autre token ou dépasse la carte.');return;}
+  t.sizeW=w; t.sizeH=h;
+  addLog(`↔ ${esc(t.label)} redimensionné (${w}×${h} cases).`);
+  saveState(); closeModal(); render();
 }
 
 /* ============================= CAPACITÉS : RÉSOLUTION ============================= */
@@ -1980,11 +2052,6 @@ function confirmDeleteEquipment(id){
   S.equipment=(S.equipment||[]).filter(x=>x.id!==id);
   saveState(); render();
   toast('🗑️ Équipement supprimé.');
-}
-
-/* ============================= BIBLIOTHÈQUE (page dédiée) ============================= */
-function libraryPage(){
-  return `<div class="grid3"><div class="card"><h2>🗺️ Cartes</h2><p class="muted">Import d'images de cartes prévu ici.</p><button class="btn">＋ Importer une carte</button></div><div class="card"><h2>🖼️ Effets</h2><p class="muted">Bibliothèque d'effets visuels : feu, glace, magie, explosions…</p><button class="btn">＋ Ajouter un effet</button></div><div class="card"><h2>🎲 Assets</h2><p class="muted">Tokens, portraits, objets et autres ressources.</p><button class="btn">＋ Ajouter un asset</button></div></div><div class="card" style="margin-top:16px"><h2>Prochaine étape</h2><p>Cette bibliothèque deviendra le stockage local de tes cartes et assets, sans abonnement externe. Les fiches et instances sont déjà gérées séparément (voir l'onglet 📚 Bibliothèque du panneau de droite sur la Table de jeu).</p></div>`;
 }
 
 /* ============================= MA FICHE (lecture seule, par joueur) ============================= */
