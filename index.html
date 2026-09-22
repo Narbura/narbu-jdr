@@ -32,13 +32,14 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .icon-preview img{width:100%;height:100%;object-fit:cover}
 .form{display:grid;grid-template-columns:1fr 1fr;gap:11px}.field{display:flex;flex-direction:column;gap:5px}.field.full{grid-column:1/-1}.field label{font-size:11px;color:var(--muted)}.field input,.field select,.field textarea{width:100%;background:#111318;color:white;border:1px solid #3a3e48;border-radius:8px;padding:9px;outline:none}.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}textarea{min-height:170px;resize:vertical}
 .rte-toolbar{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;padding:6px;background:#15161a;border:1px solid #3a3e48;border-radius:8px}
-.rte-toolbar button{padding:5px 9px;background:#252831;border:1px solid #3a3e48;border-radius:6px;color:#fff}.rte-toolbar button:hover{background:#2f333d}
+.rte-toolbar button{padding:5px 9px;background:#252831;border:1px solid #3a3e48;border-radius:6px;color:#fff}.rte-toolbar button:hover{background:#2f333d}.rte-toolbar button.active{background:var(--accent);border-color:var(--accent)}
 .rte-toolbar select{background:#111318;border:1px solid #3a3e48;border-radius:6px;color:#fff;padding:5px}
-.rte-swatch{width:26px;height:26px;padding:0;border-radius:6px}
+.rte-swatch{width:26px;height:26px;padding:0;border-radius:6px;border:1px solid #3a3e48}
+.rte-colorpick{width:30px;height:28px;padding:1px;border:1px solid #3a3e48;border-radius:6px;background:#111318}
 .rte-content{min-height:150px;max-height:420px;overflow:auto;background:#111318;border:1px solid #3a3e48;border-radius:8px;padding:10px;color:#fff}
 .rte-content:focus{outline:none;border-color:var(--accent)}
-.rte-content table,.rte-view table{border-collapse:collapse;width:100%;margin:8px 0}
-.rte-content td,.rte-content th,.rte-view td,.rte-view th{border:1px solid #3a3e48;padding:6px;text-align:center;vertical-align:middle}
+.rte-content table,.rte-view table{border-collapse:collapse;width:100%;margin:8px 0;table-layout:fixed}
+.rte-content td,.rte-content th,.rte-view td,.rte-view th{border:1px solid #3a3e48;padding:6px;text-align:center;vertical-align:middle;word-wrap:break-word;overflow-wrap:break-word;position:relative}
 .rte-view{white-space:pre-wrap}
 .map-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:10px;height:calc(100vh - 101px)}
 .map-card{min-width:0;display:flex;flex-direction:column;position:relative}
@@ -444,9 +445,10 @@ function richEditorHtml(id,initialHtml){
       <option value="5">Grand</option>
       <option value="7">Très grand</option>
     </select>
-    <button type="button" onclick="rteExec('${id}','bold')" title="Gras"><b>G</b></button>
-    <button type="button" onclick="rteExec('${id}','italic')" title="Italique"><i>I</i></button>
-    <button type="button" onclick="rteExec('${id}','underline')" title="Souligner"><u>S</u></button>
+    <button type="button" data-cmd="bold" onclick="rteExec('${id}','bold')" title="Gras"><b>G</b></button>
+    <button type="button" data-cmd="italic" onclick="rteExec('${id}','italic')" title="Italique"><i>I</i></button>
+    <button type="button" data-cmd="underline" onclick="rteExec('${id}','underline')" title="Souligner"><u>S</u></button>
+    <input type="color" class="rte-colorpick" onchange="rteExec('${id}','foreColor',this.value)" title="Couleur du texte" value="#ffffff">
     <button type="button" class="rte-swatch" style="background:#fff59d" onclick="rteHighlight('${id}','#fff59d')" title="Surligner jaune"></button>
     <button type="button" class="rte-swatch" style="background:#a5d6a7" onclick="rteHighlight('${id}','#a5d6a7')" title="Surligner vert"></button>
     <button type="button" class="rte-swatch" style="background:#90caf9" onclick="rteHighlight('${id}','#90caf9')" title="Surligner bleu"></button>
@@ -456,8 +458,43 @@ function richEditorHtml(id,initialHtml){
   </div>
   <div class="rte-content" id="${id}" contenteditable="true">${initialHtml||''}</div>`;
 }
-function rteExec(id,cmd,val){document.getElementById(id)?.focus();document.execCommand(cmd,false,val||null);}
+function rteExec(id,cmd,val){document.getElementById(id)?.focus();document.execCommand(cmd,false,val||null);rteUpdateToolbarState(id);}
 function rteHighlight(id,color){document.getElementById(id)?.focus();document.execCommand('hiliteColor',false,color);}
+function rteUpdateToolbarState(id){
+  const content=document.getElementById(id); if(!content)return;
+  const toolbar=content.previousElementSibling; if(!toolbar||!toolbar.classList.contains('rte-toolbar'))return;
+  ['bold','italic','underline'].forEach(cmd=>{
+    const btn=toolbar.querySelector(`[data-cmd="${cmd}"]`);
+    if(btn)btn.classList.toggle('active',document.queryCommandState(cmd));
+  });
+}
+document.addEventListener('selectionchange',()=>{
+  const sel=window.getSelection(); if(!sel||!sel.rangeCount)return;
+  let node=sel.anchorNode; if(!node)return;
+  const el=node.nodeType===1?node:node.parentElement;
+  const content=el?.closest?.('.rte-content'); if(!content)return;
+  rteUpdateToolbarState(content.id);
+});
+/* Redimensionnement des colonnes de tableau (glisser le bord droit d'une cellule) */
+let rteColResize=null;
+document.addEventListener('mousedown',e=>{
+  const td=e.target.closest('.rte-content td, .rte-content th'); if(!td)return;
+  const rect=td.getBoundingClientRect();
+  if(rect.right-e.clientX>8)return;
+  e.preventDefault();
+  const table=td.closest('table');
+  rteColResize={table,cellIndex:td.cellIndex,startX:e.clientX,startWidth:rect.width};
+});
+document.addEventListener('mousemove',e=>{
+  if(rteColResize){
+    const w=Math.max(30,rteColResize.startWidth+(e.clientX-rteColResize.startX));
+    rteColResize.table.querySelectorAll('tr').forEach(tr=>{const c=tr.children[rteColResize.cellIndex];if(c)c.style.width=w+'px';});
+    return;
+  }
+  const td=e.target.closest('.rte-content td, .rte-content th');
+  if(td){const rect=td.getBoundingClientRect();td.style.cursor=(rect.right-e.clientX<8)?'col-resize':'text';}
+});
+document.addEventListener('mouseup',()=>{rteColResize=null;});
 function rteInsertTable(id){
   const cols=parseInt(prompt('Nombre de colonnes ?','3'),10);
   if(!cols||cols<1)return;
