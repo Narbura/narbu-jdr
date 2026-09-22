@@ -264,6 +264,10 @@ function normalizeState(){
     if(!c.stats)c.stats={};
     if(c.stats.Constitution===undefined)c.stats.Constitution=Math.max(1,Math.ceil((c.resourcesMax?.Vie||1)/2.5));
     ['Endurance','Social','Artisanat'].forEach(k=>{if(c.stats[k]===undefined)c.stats[k]=0;});
+    if(c.profileImage===undefined)c.profileImage=null;
+    if(c.bio===undefined)c.bio='';
+    if(c.inventory===undefined)c.inventory='';
+    if(!Array.isArray(c.transformationIds))c.transformationIds=[];
   });
   S.abilities.forEach(a=>{
     if(a.element==='Gel')a.element='Glace';
@@ -1335,6 +1339,25 @@ function openCharacter(id){
   const insts=id?S.instances.filter(i=>i.charId===id):[];
   const curResHtml=id?`<div class="field full"><label>Ressources actuelles (jetons sur la carte — synchronisées en direct)</label>${insts.length?insts.map(i=>`<div class="row" style="margin-bottom:6px"><span style="flex:1">${esc(i.label)}</span><span class="tiny muted">❤️ PV</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="hp" value="${i.hp}" oninput="this.dataset.dirty='1'"><span class="tiny muted">💧 Mana</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="mana" value="${i.mana}" oninput="this.dataset.dirty='1'"></div>`).join(''):'<p class="tiny muted">Aucun jeton de ce personnage sur la carte.</p>'}</div>`:'';
   const knownLine=id?(known.length?`<p class="tiny muted">Capacités liées : ${known.map(a=>`${iconInlineHtml(a)} ${esc(a.name)}`).join(', ')} <span style="opacity:.7">(à gérer depuis la page ✨ Capacités)</span></p>`:'<p class="tiny muted">Aucune capacité liée à ce personnage pour l’instant (page ✨ Capacités).</p>'):'';
+  const transfoIds=base.transformationIds||[];
+  const transfoListHtml=S.characters.filter(x=>x.id!==id).length?S.characters.filter(x=>x.id!==id).map(x=>`<label class="ability-char-item"><input type="checkbox" class="tf-check" value="${x.id}" ${transfoIds.includes(x.id)?'checked':''}> <span>${iconInlineHtml(x)} ${esc(x.name)}</span></label>`).join(''):'<p class="tiny muted">Aucune autre fiche disponible.</p>';
+  const bioHtml=`
+  <div class="field full">
+    <label>Image de profil (Bio &amp; Info)</label>
+    <div class="icon-dropzone" onclick="document.getElementById('c_profile_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'c_profileimage','c_profile_preview')">
+      <div id="c_profile_preview" class="icon-preview" style="width:90px;height:90px;font-size:36px">${base.profileImage?`<img src="${esc(base.profileImage)}">`:'<span>🖼️</span>'}</div>
+      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir</p>
+      <input type="file" id="c_profile_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'c_profileimage','c_profile_preview')">
+    </div>
+    <input type="hidden" id="c_profileimage" value="${esc(base.profileImage||'')}">
+    ${base.profileImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('c_profileimage','c_profile_preview','🖼️')">↺ Retirer l'image</button>`:''}
+  </div>
+  <div class="field full"><label>Description</label><textarea id="c_bio">${esc(base.bio||'')}</textarea></div>
+  <div class="field full"><label>Inventaire</label><textarea id="c_inventory">${esc(base.inventory||'')}</textarea></div>
+  <div class="field full">
+    <label>Sous-fiches de Transformation associées</label>
+    <div style="max-height:150px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px">${transfoListHtml}</div>
+  </div>`;
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une fiche</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div><div class="form">
   <div class="field"><label>Nom</label><input id="c_name" value="${esc(base.name)}"></div>
   <div class="field"><label>Icône</label><input id="c_icon" value="${esc(base.icon)}"></div>
@@ -1378,6 +1401,7 @@ function openCharacter(id){
   <div class="field"><label>Résistance Foudre (%)</label><input id="r_foudre" type="number" value="${base.res.Foudre??0}"></div>
   <div class="field"><label>Résistance Lumière (%)</label><input id="r_lumiere" type="number" value="${base.res.Lumière??0}"></div>
   <div class="field"><label>Résistance Ténèbres (%)</label><input id="r_tenebres" type="number" value="${base.res.Ténèbres??0}"></div>
+  ${bioHtml}
   </div>
   ${knownLine}
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveCharacter('${id||''}')">Enregistrer</button></div>`;
@@ -1394,6 +1418,10 @@ function saveCharacter(id){
   c.ownerId=document.getElementById('c_owner').value||null;
   c.categoryId=document.getElementById('c_category').value||null;
   c.hidden=document.getElementById('c_hidden').value==='true';
+  c.profileImage=document.getElementById('c_profileimage').value.trim()||null;
+  c.bio=document.getElementById('c_bio').value;
+  c.inventory=document.getElementById('c_inventory').value;
+  c.transformationIds=[...document.querySelectorAll('.tf-check:checked')].map(el=>el.value);
   c.resourcesMax={Vie:maxHpFromCon(document.getElementById('s_con').value),Mana:parseNum(document.getElementById('c_manamax').value),Bouclier:parseNum(document.getElementById('c_shieldmax').value)};
   c.stats={...(c.stats||{}),Constitution:parseNum(document.getElementById('s_con').value),Endurance:parseNum(document.getElementById('s_end').value),Social:parseNum(document.getElementById('s_soc').value),Artisanat:parseNum(document.getElementById('s_craft').value),Force:parseNum(document.getElementById('s_force').value),Magie:parseNum(document.getElementById('s_magic').value),Agilité:parseNum(document.getElementById('s_agi').value),Vitesse:parseNum(document.getElementById('s_speed').value)};
   c.def={CA:parseNum(document.getElementById('d_ca').value),DM:parseNum(document.getElementById('d_dm').value),'CA naturelle':parseNum(document.getElementById('d_ca').value)};
@@ -1542,13 +1570,24 @@ function myCharacterCard(c){
   const instancesHtml=instances.length
     ? instances.map(i=>`<div class="row between" style="padding:8px;background:#20232a;border-radius:8px;margin-bottom:6px"><span>${esc(i.label)} — case (${i.x+1}, ${i.y+1})</span><span class="tiny">❤️ ${i.hp}/${i.hpMax} · 💧 ${i.mana}/${i.manaMax} · 🛡 ${i.shield}/${i.shieldMax}</span></div>`).join('')
     : `<p class="tiny muted">Ce personnage n'est pas actuellement sur la carte.</p>`;
+  const transfoHtml=(c.transformationIds||[]).length
+    ? (c.transformationIds||[]).map(tid=>char(tid)).filter(Boolean).map(t=>`<span class="pill">${iconInlineHtml(t)} ${esc(t.name)}</span>`).join(' ')
+    : '<p class="tiny muted">Aucune transformation associée.</p>';
+  const bioHtml=`<h3 style="font-size:13px;margin:14px 0 8px">Bio &amp; Info</h3>
+    <div class="row" style="align-items:flex-start;gap:14px;margin-bottom:10px">
+      <div class="icon-preview" style="width:90px;height:90px;font-size:36px;flex-shrink:0">${c.profileImage?`<img src="${esc(c.profileImage)}">`:'🖼️'}</div>
+      <div style="flex:1"><p class="tiny muted" style="white-space:pre-wrap;margin:0 0 8px">${esc(c.bio||'Aucune description.')}</p></div>
+    </div>
+    <div class="stat" style="margin-bottom:8px"><label>Inventaire</label><div class="tiny" style="white-space:pre-wrap">${esc(c.inventory||'Vide.')}</div></div>
+    <div class="stat"><label>Transformations</label><div style="margin-top:4px">${transfoHtml}</div></div>`;
   return `<div class="card">
     <div class="row between" style="margin-bottom:14px">
       <div class="row"><div class="icon" style="width:44px;height:44px;font-size:22px;border-radius:12px;background:#2b1d3b;display:grid;place-items:center;overflow:hidden">${iconBoxHtml(c,'12px')}</div>
       <div><h2 style="margin:0">${esc(c.name)}</h2><span class="tiny muted">${c.type==='player'?'Joueur':'Monstre'} · Déplacement ${c.move??6} case(s)/tour</span></div></div>
       <span class="pill">🔒 Lecture seule</span>
     </div>
-    <h3 style="font-size:13px;margin:0 0 8px">Sur la carte</h3>
+    ${bioHtml}
+    <h3 style="font-size:13px;margin:14px 0 8px">Sur la carte</h3>
     ${instancesHtml}
     <h3 style="font-size:13px;margin:14px 0 8px">Statistiques</h3>
     <div class="statgrid">${statsHtml}${defHtml}</div>
