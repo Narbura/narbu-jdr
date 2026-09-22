@@ -34,8 +34,13 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .rte-toolbar{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;padding:6px;background:#15161a;border:1px solid #3a3e48;border-radius:8px}
 .rte-toolbar button{padding:5px 9px;background:#252831;border:1px solid #3a3e48;border-radius:6px;color:#fff}.rte-toolbar button:hover{background:#2f333d}.rte-toolbar button.active{background:var(--accent);border-color:var(--accent)}
 .rte-toolbar select{background:#111318;border:1px solid #3a3e48;border-radius:6px;color:#fff;padding:5px}
-.rte-swatch{width:26px;height:26px;padding:0;border-radius:6px;border:1px solid #3a3e48}
+.rte-swatch{width:22px;height:22px;padding:0;border-radius:6px;border:1px solid #3a3e48}
 .rte-colorpick{width:30px;height:28px;padding:1px;border:1px solid #3a3e48;border-radius:6px;background:#111318}
+.rte-palette{display:inline-flex;gap:3px;align-items:center;padding:0 4px}
+.rte-content table.rte-table-selected{outline:2px solid var(--accent);outline-offset:2px}
+.modal.note-focus-mode{width:96vw!important;height:92vh!important;max-width:96vw!important;max-height:92vh!important}
+.modal.note-focus-mode #note_title_field,.modal.note-focus-mode #note_image_field{display:none}
+.modal.note-focus-mode .rte-content{min-height:66vh;max-height:74vh}
 .rte-content{min-height:150px;max-height:420px;overflow:auto;background:#111318;border:1px solid #3a3e48;border-radius:8px;padding:10px;color:#fff}
 .rte-content:focus{outline:none;border-color:var(--accent)}
 .rte-content table,.rte-view table{border-collapse:collapse;width:100%;margin:8px 0;table-layout:fixed}
@@ -141,7 +146,7 @@ body.stage-fullscreen .targeting-banner{top:64px}
   <button class="btn ghost" style="width:100%" onclick="logout()">↩ Se déconnecter</button>
 </aside>
 <main class="main">
-<header class="top"><h1 id="pageTitle">Table de jeu</h1><div class="actions"><button class="btn" id="resetBtn" onclick="resetDemo()">Réinitialiser la démo</button><button class="btn primary" onclick="saveState()">💾 Sauvegarder</button></div></header>
+<header class="top"><h1 id="pageTitle">Table de jeu</h1><div class="actions"><button class="btn" id="undoBtn" onclick="undoLast()" title="Annuler la dernière modification">↺ Annuler</button><button class="btn" id="resetBtn" onclick="resetDemo()">Réinitialiser la démo</button><button class="btn primary" onclick="saveState()">💾 Sauvegarder</button></div></header>
 <section class="content" id="content"></section>
 </main>
 </div>
@@ -352,7 +357,22 @@ async function loadGameState(){
   syncTurnSelection();
   lastShownNotesReveal=S.notesReveal?S.notesReveal.ts:null;
 }
+let undoStack=[];
+function pushUndoCheckpoint(){
+  try{ undoStack.push(JSON.stringify(S)); if(undoStack.length>20)undoStack.shift(); }catch(e){}
+}
+async function undoLast(){
+  if(!isMJ()){toast('⛔ Seul le MJ peut annuler.');return;}
+  if(undoStack.length<2){toast('⚠️ Rien à annuler.');return;}
+  undoStack.pop();
+  S=JSON.parse(undoStack[undoStack.length-1]);
+  normalizeState();
+  selectedToken=null; activeAbility=null; multiSel=[];
+  await persistState(); render();
+  toast('↺ Dernière modification annulée.');
+}
 async function persistState(){
+  pushUndoCheckpoint();
   try{
     const { error } = await supabaseClient.from('game_state').upsert({id:'main',data:S,updated_at:new Date().toISOString()});
     if(error) console.error('persistState', error);
@@ -426,6 +446,8 @@ function updateUserBadge(){
   el.innerHTML=`${isMJ()?'🎲 <b>Maître du Jeu</b>':'🧙 Joueur'}<br><span class="tiny">${esc(myDisplayName())}</span>`;
   const resetBtn=document.getElementById('resetBtn');
   if(resetBtn) resetBtn.style.display=isMJ()?'':'none';
+  const undoBtn=document.getElementById('undoBtn');
+  if(undoBtn) undoBtn.style.display=isMJ()?'':'none';
   const libNav=document.querySelector('.nav[data-page="library"]');
   if(libNav) libNav.style.display=isMJ()?'':'none';
   const eqNav=document.querySelector('.nav[data-page="equipment"]');
@@ -457,7 +479,55 @@ function iconInlineHtml(entity,sizePx){
   return esc(entity?.icon||'❓');
 }
 /* ============================= ÉDITEUR DE TEXTE ENRICHI (MJ) ============================= */
-function richEditorHtml(id,initialHtml){
+function seedPaletteDefaults(){
+  if(!localStorage.getItem('narbudr-hl-colors'))localStorage.setItem('narbudr-hl-colors',JSON.stringify(['#fff59d','#a5d6a7','#90caf9','#f48fb1']));
+  if(!localStorage.getItem('narbudr-font-colors'))localStorage.setItem('narbudr-font-colors',JSON.stringify(['#ffffff','#ef6262','#e7b85c']));
+}
+seedPaletteDefaults();
+function rteColorPaletteHtml(id,kind){
+  const key='narbudr-'+kind+'-colors';
+  const colors=JSON.parse(localStorage.getItem(key)||'[]');
+  return `<span id="${id}_${kind}pal" class="rte-palette">${colors.map(c=>`<button type="button" class="rte-swatch" style="background:${c}" onclick="rteApplyPaletteColor('${id}','${kind}','${c}')" oncontextmenu="event.preventDefault();rteRemovePaletteColor('${id}','${kind}','${c}')" title="Clic : appliquer · Clic droit : retirer des favoris"></button>`).join('')}</span>`;
+}
+function rteApplyPaletteColor(id,kind,color){ if(kind==='font')rteExec(id,'foreColor',color); else rteHighlight(id,color); }
+function rteRefreshPalette(id,kind){ const span=document.getElementById(id+'_'+kind+'pal'); if(span)span.outerHTML=rteColorPaletteHtml(id,kind); }
+function rteSavePaletteColor(id,kind,color){
+  const key='narbudr-'+kind+'-colors';
+  let colors=JSON.parse(localStorage.getItem(key)||'[]');
+  if(!colors.includes(color)){colors.push(color); if(colors.length>14)colors.shift(); localStorage.setItem(key,JSON.stringify(colors));}
+  rteRefreshPalette(id,kind);
+}
+function rteRemovePaletteColor(id,kind,color){
+  const key='narbudr-'+kind+'-colors';
+  localStorage.setItem(key,JSON.stringify(JSON.parse(localStorage.getItem(key)||'[]').filter(c=>c!==color)));
+  rteRefreshPalette(id,kind);
+}
+function rteFindTable(id){
+  const content=document.getElementById(id); if(!content)return null;
+  const sel=window.getSelection();
+  if(sel&&sel.anchorNode&&content.contains(sel.anchorNode)){
+    const el=sel.anchorNode.nodeType===1?sel.anchorNode:sel.anchorNode.parentElement;
+    const t=el?.closest?.('table');
+    if(t)return t;
+  }
+  return content.querySelector('table.rte-table-selected')||content.querySelector('table');
+}
+function rteAddRow(id){
+  const table=rteFindTable(id); if(!table){toast('⚠️ Clique dans un tableau d’abord.');return;}
+  const cols=table.rows[0]?table.rows[0].cells.length:1;
+  const tr=table.insertRow(-1);
+  for(let i=0;i<cols;i++){const td=tr.insertCell(-1);td.innerHTML='&nbsp;';}
+}
+function rteAddCol(id){
+  const table=rteFindTable(id); if(!table){toast('⚠️ Clique dans un tableau d’abord.');return;}
+  [...table.rows].forEach(tr=>{const td=tr.insertCell(-1);td.innerHTML='&nbsp;';});
+}
+function rteDeleteTable(id){
+  const table=rteFindTable(id); if(!table){toast('⚠️ Clique dans un tableau d’abord.');return;}
+  if(!confirm('Supprimer ce tableau ?'))return;
+  table.remove();
+}
+function richEditorHtml(id,initialHtml,minHeight){
   return `<div class="rte-toolbar">
     <select onchange="if(this.value)rteExec('${id}','fontSize',this.value);this.value=''">
       <option value="">Taille…</option>
@@ -469,16 +539,21 @@ function richEditorHtml(id,initialHtml){
     <button type="button" data-cmd="bold" onclick="rteExec('${id}','bold')" title="Gras"><b>G</b></button>
     <button type="button" data-cmd="italic" onclick="rteExec('${id}','italic')" title="Italique"><i>I</i></button>
     <button type="button" data-cmd="underline" onclick="rteExec('${id}','underline')" title="Souligner"><u>S</u></button>
-    <input type="color" class="rte-colorpick" id="${id}_colorpick" title="Choisir une couleur" value="#ffffff">
-    <button type="button" onclick="rteExec('${id}','foreColor',document.getElementById('${id}_colorpick').value)" title="Appliquer la couleur au texte sélectionné / à venir">✓ Appliquer</button>
-    <button type="button" class="rte-swatch" style="background:#fff59d" onclick="rteHighlight('${id}','#fff59d')" title="Surligner jaune"></button>
-    <button type="button" class="rte-swatch" style="background:#a5d6a7" onclick="rteHighlight('${id}','#a5d6a7')" title="Surligner vert"></button>
-    <button type="button" class="rte-swatch" style="background:#90caf9" onclick="rteHighlight('${id}','#90caf9')" title="Surligner bleu"></button>
-    <button type="button" class="rte-swatch" style="background:#f48fb1" onclick="rteHighlight('${id}','#f48fb1')" title="Surligner rose"></button>
+    <input type="color" class="rte-colorpick" id="${id}_fontcolor" title="Couleur de police" value="#ffffff">
+    <button type="button" onclick="rteExec('${id}','foreColor',document.getElementById('${id}_fontcolor').value)" title="Appliquer la couleur au texte">A</button>
+    <button type="button" onclick="rteSavePaletteColor('${id}','font',document.getElementById('${id}_fontcolor').value)" title="Ajouter cette couleur aux favoris">＋</button>
+    ${rteColorPaletteHtml(id,'font')}
+    <input type="color" class="rte-colorpick" id="${id}_hlcolor" title="Couleur de surlignage" value="#fff59d">
+    <button type="button" onclick="rteHighlight('${id}',document.getElementById('${id}_hlcolor').value)" title="Surligner">🖊</button>
+    <button type="button" onclick="rteSavePaletteColor('${id}','hl',document.getElementById('${id}_hlcolor').value)" title="Ajouter cette couleur aux favoris">＋</button>
+    ${rteColorPaletteHtml(id,'hl')}
     <button type="button" onclick="rteHighlight('${id}','transparent')" title="Retirer le surlignage">⌫</button>
     <button type="button" onclick="rteInsertTable('${id}')" title="Insérer un tableau">▦ Tableau</button>
+    <button type="button" onclick="rteAddRow('${id}')" title="Ajouter une ligne au tableau (clique d’abord dans le tableau)">➕Ligne</button>
+    <button type="button" onclick="rteAddCol('${id}')" title="Ajouter une colonne au tableau (clique d’abord dans le tableau)">➕Colonne</button>
+    <button type="button" onclick="rteDeleteTable('${id}')" title="Supprimer le tableau (clique d’abord dans le tableau)">🗑Tableau</button>
   </div>
-  <div class="rte-content" id="${id}" contenteditable="true">${initialHtml||''}</div>`;
+  <div class="rte-content" id="${id}" contenteditable="true" style="${minHeight?`min-height:${minHeight}`:''}">${initialHtml||''}</div>`;
 }
 function rteExec(id,cmd,val){document.getElementById(id)?.focus();document.execCommand(cmd,false,val||null);rteUpdateToolbarState(id);}
 function rteHighlight(id,color){document.getElementById(id)?.focus();document.execCommand('hiliteColor',false,color);}
@@ -497,26 +572,52 @@ document.addEventListener('selectionchange',()=>{
   const content=el?.closest?.('.rte-content'); if(!content)return;
   rteUpdateToolbarState(content.id);
 });
-/* Redimensionnement des colonnes de tableau (glisser le bord droit d'une cellule) */
-let rteColResize=null;
+/* Redimensionnement des colonnes (bord droit) et des lignes (bord bas) d'un tableau */
+let rteResize=null;
 document.addEventListener('mousedown',e=>{
   const td=e.target.closest('.rte-content td, .rte-content th'); if(!td)return;
   const rect=td.getBoundingClientRect();
-  if(rect.right-e.clientX>8)return;
+  const nearRight=rect.right-e.clientX<=8, nearBottom=rect.bottom-e.clientY<=8;
+  if(!nearRight&&!nearBottom)return;
   e.preventDefault();
   const table=td.closest('table');
-  rteColResize={table,cellIndex:td.cellIndex,startX:e.clientX,startWidth:rect.width};
+  if(nearRight){rteResize={type:'col',table,cellIndex:td.cellIndex,startX:e.clientX,startSize:rect.width};}
+  else{rteResize={type:'row',tr:td.closest('tr'),startY:e.clientY,startSize:rect.height};}
 });
 document.addEventListener('mousemove',e=>{
-  if(rteColResize){
-    const w=Math.max(30,rteColResize.startWidth+(e.clientX-rteColResize.startX));
-    rteColResize.table.querySelectorAll('tr').forEach(tr=>{const c=tr.children[rteColResize.cellIndex];if(c)c.style.width=w+'px';});
+  if(rteResize){
+    if(rteResize.type==='col'){
+      const w=Math.max(30,rteResize.startSize+(e.clientX-rteResize.startX));
+      rteResize.table.querySelectorAll('tr').forEach(tr=>{const c=tr.children[rteResize.cellIndex];if(c)c.style.width=w+'px';});
+    }else{
+      const h=Math.max(20,rteResize.startSize+(e.clientY-rteResize.startY));
+      [...rteResize.tr.children].forEach(c=>c.style.height=h+'px');
+    }
     return;
   }
   const td=e.target.closest('.rte-content td, .rte-content th');
-  if(td){const rect=td.getBoundingClientRect();td.style.cursor=(rect.right-e.clientX<8)?'col-resize':'text';}
+  if(td){
+    const rect=td.getBoundingClientRect();
+    const nearRight=rect.right-e.clientX<=8, nearBottom=rect.bottom-e.clientY<=8;
+    td.style.cursor=nearRight?'col-resize':(nearBottom?'row-resize':'text');
+  }
 });
-document.addEventListener('mouseup',()=>{rteColResize=null;});
+document.addEventListener('mouseup',()=>{rteResize=null;});
+/* Sélection d'un tableau (double-clic) puis suppression avec la touche Suppr/Delete */
+document.addEventListener('dblclick',e=>{
+  const table=e.target.closest('.rte-content table'); if(!table)return;
+  e.preventDefault();
+  document.querySelectorAll('.rte-table-selected').forEach(t=>t.classList.remove('rte-table-selected'));
+  table.classList.add('rte-table-selected');
+  const range=document.createRange(); range.selectNode(table);
+  const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+});
+document.addEventListener('keydown',e=>{
+  if((e.key==='Delete'||e.key==='Backspace')){
+    const sel=document.querySelector('.rte-table-selected');
+    if(sel){ e.preventDefault(); sel.remove(); }
+  }
+});
 function rteInsertTable(id){
   const cols=parseInt(prompt('Nombre de colonnes ?','3'),10);
   if(!cols||cols<1)return;
@@ -1488,8 +1589,8 @@ function openCharacter(id){
     <input type="hidden" id="c_profileimage" value="${esc(base.profileImage||'')}">
     ${base.profileImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('c_profileimage','c_profile_preview','🖼️')">↺ Retirer l'image</button>`:''}
   </div>
-  <div class="field full"><label>Description</label>${richEditorHtml('c_bio',base.bio||'')}</div>
-  <div class="field full"><label>Inventaire</label>${richEditorHtml('c_inventory',base.inventory||'')}</div>
+  <div class="field full"><label>Description</label>${richEditorHtml('c_bio',base.bio||'','280px')}</div>
+  <div class="field full"><label>Inventaire</label>${richEditorHtml('c_inventory',base.inventory||'','280px')}</div>
   <div class="field full">
     <label>Sous-fiches de Transformation associées</label>
     <div style="max-height:150px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px">${transfoListHtml}</div>
@@ -1590,7 +1691,7 @@ function saveCharacter(id){
   });
   saveState(); closeModal(); render();
 }
-function closeModal(){document.getElementById('modalBg').classList.remove('open');const m=document.getElementById('modal');m.classList.remove('modal-fullscreen');m.style.position='';m.style.left='';m.style.top='';m.style.margin='';}
+function closeModal(){document.getElementById('modalBg').classList.remove('open');const m=document.getElementById('modal');m.classList.remove('modal-fullscreen');m.classList.remove('note-focus-mode');noteFocusMode=false;m.style.position='';m.style.left='';m.style.top='';m.style.margin='';}
 /* Déplacer / agrandir la fenêtre modale à la souris */
 let modalDrag=null;
 document.addEventListener('mousedown',e=>{
@@ -2350,10 +2451,10 @@ function deleteNoteCategory(id){
 function openNoteEditModal(id){
   if(!isMJ())return;
   const n=id?(S.notes||[]).find(x=>x.id===id):{id:'n'+Date.now(),title:'',text:'',image:null,categoryId:currentNoteCategory};
-  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Nouvelle'} note</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
-  <div class="field full"><label>Titre</label><input id="note_title" value="${esc(n.title)}"></div>
-  <div class="field full"><label>Texte</label>${richEditorHtml('note_text',n.text||'')}</div>
-  <div class="field full">
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Nouvelle'} note</h2><div class="row" style="gap:6px"><button class="btn ghost" id="noteFocusBtn" onclick="toggleNoteFocusMode()" title="N'afficher que le texte, en grand">🔎 Mode focus</button><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div></div>
+  <div class="field full" id="note_title_field"><label>Titre</label><input id="note_title" value="${esc(n.title)}"></div>
+  <div class="field full" id="note_text_field"><label>Texte</label>${richEditorHtml('note_text',n.text||'')}</div>
+  <div class="field full" id="note_image_field">
     <label>Image (optionnelle)</label>
     <div class="icon-dropzone" onclick="document.getElementById('note_image_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'note_image','note_image_preview')">
       <div id="note_image_preview" class="icon-preview">${n.image?`<img src="${esc(n.image)}">`:'<span>🖼️</span>'}</div>
@@ -2365,6 +2466,14 @@ function openNoteEditModal(id){
   <input type="hidden" id="note_category" value="${esc(n.categoryId||'')}">
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveNote('${n.id}')">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
+}
+let noteFocusMode=false;
+function toggleNoteFocusMode(){
+  noteFocusMode=!noteFocusMode;
+  const modal=document.getElementById('modal');
+  modal.classList.toggle('note-focus-mode',noteFocusMode);
+  const btn=document.getElementById('noteFocusBtn');
+  if(btn)btn.textContent=noteFocusMode?'✕ Quitter le focus':'🔎 Mode focus';
 }
 function saveNote(id){
   if(!isMJ())return;
