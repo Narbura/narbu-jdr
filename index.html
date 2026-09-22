@@ -1711,6 +1711,7 @@ function openEquipment(id){
       <input type="file" id="eq_icon_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'eq_iconimage','eq_icon_preview')">
     </div>
     <input type="hidden" id="eq_iconimage" value="${esc(e.iconImage||'')}">
+    ${iconGalleryHtml('eq_iconimage','eq_icon_preview')}
   </div>
   <div class="field full">
     <label>Image d'illustration (affichée dans la fiche du joueur quand équipé)</label>
