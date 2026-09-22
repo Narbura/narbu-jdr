@@ -71,7 +71,9 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .ability-char-item input[type="checkbox"]{margin:2px 0 0 0;width:16px;height:16px}
 .log{max-height:320px;overflow:auto;font-size:12px}.log div{padding:8px 0;border-bottom:1px solid #2b2e35;line-height:1.6}
 .modal-bg{position:fixed;inset:0;background:#0009;display:none;align-items:center;justify-content:center;z-index:100}.modal-bg.open{display:flex}.modal{width:min(720px,92vw);max-height:88vh;overflow:auto;background:#191b20;border:1px solid #414550;border-radius:16px;padding:18px;box-shadow:0 25px 80px #000b}.modal h2{margin:0 0 15px}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
-.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px}.modal-header h2{margin:0}
+.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;cursor:move;user-select:none}.modal-header h2{margin:0}
+.modal{resize:both}
+.modal.modal-fullscreen{position:fixed!important;left:2vw!important;top:4vh!important;width:96vw!important;height:92vh!important;max-width:96vw!important;max-height:92vh!important;margin:0!important}
 .modal-close{background:none;border:0;color:var(--muted);font-size:20px;line-height:1;padding:4px 10px;border-radius:8px}.modal-close:hover{background:#2a2d35;color:#fff}
 .targeting-banner{position:fixed;left:50%;top:76px;transform:translateX(-50%);background:#2a1d38;border:1px solid #8e4be5;padding:10px 16px;border-radius:10px;z-index:95;box-shadow:0 10px 30px #0008;display:none}.targeting-banner.show{display:block}.targeting-banner b{color:#fff}
 .toast{position:fixed;right:20px;bottom:20px;background:#252831;border:1px solid #4a4e59;padding:11px 14px;border-radius:10px;display:none;z-index:200}.toast.show{display:block}
@@ -467,7 +469,8 @@ function richEditorHtml(id,initialHtml){
     <button type="button" data-cmd="bold" onclick="rteExec('${id}','bold')" title="Gras"><b>G</b></button>
     <button type="button" data-cmd="italic" onclick="rteExec('${id}','italic')" title="Italique"><i>I</i></button>
     <button type="button" data-cmd="underline" onclick="rteExec('${id}','underline')" title="Souligner"><u>S</u></button>
-    <input type="color" class="rte-colorpick" onchange="rteExec('${id}','foreColor',this.value)" title="Couleur du texte" value="#ffffff">
+    <input type="color" class="rte-colorpick" id="${id}_colorpick" title="Choisir une couleur" value="#ffffff">
+    <button type="button" onclick="rteExec('${id}','foreColor',document.getElementById('${id}_colorpick').value)" title="Appliquer la couleur au texte sélectionné / à venir">✓ Appliquer</button>
     <button type="button" class="rte-swatch" style="background:#fff59d" onclick="rteHighlight('${id}','#fff59d')" title="Surligner jaune"></button>
     <button type="button" class="rte-swatch" style="background:#a5d6a7" onclick="rteHighlight('${id}','#a5d6a7')" title="Surligner vert"></button>
     <button type="button" class="rte-swatch" style="background:#90caf9" onclick="rteHighlight('${id}','#90caf9')" title="Surligner bleu"></button>
@@ -1587,7 +1590,31 @@ function saveCharacter(id){
   });
   saveState(); closeModal(); render();
 }
-function closeModal(){document.getElementById('modalBg').classList.remove('open');}
+function closeModal(){document.getElementById('modalBg').classList.remove('open');const m=document.getElementById('modal');m.classList.remove('modal-fullscreen');m.style.position='';m.style.left='';m.style.top='';m.style.margin='';}
+/* Déplacer / agrandir la fenêtre modale à la souris */
+let modalDrag=null;
+document.addEventListener('mousedown',e=>{
+  const header=e.target.closest('#modal .modal-header');
+  if(!header||e.target.closest('button'))return;
+  const modal=document.getElementById('modal');
+  if(modal.classList.contains('modal-fullscreen'))return;
+  const rect=modal.getBoundingClientRect();
+  modal.style.position='fixed'; modal.style.left=rect.left+'px'; modal.style.top=rect.top+'px'; modal.style.margin='0';
+  modalDrag={startX:e.clientX,startY:e.clientY,origLeft:rect.left,origTop:rect.top};
+  e.preventDefault();
+});
+document.addEventListener('mousemove',e=>{
+  if(!modalDrag)return;
+  const modal=document.getElementById('modal');
+  modal.style.left=(modalDrag.origLeft+(e.clientX-modalDrag.startX))+'px';
+  modal.style.top=(modalDrag.origTop+(e.clientY-modalDrag.startY))+'px';
+});
+document.addEventListener('mouseup',()=>{modalDrag=null;});
+document.addEventListener('dblclick',e=>{
+  const header=e.target.closest('#modal .modal-header');
+  if(!header||e.target.closest('button'))return;
+  document.getElementById('modal').classList.toggle('modal-fullscreen');
+});
 
 /* ============================= CAPACITÉS : ÉDITION (MJ uniquement) ============================= */
 function abilitiesPage(){
