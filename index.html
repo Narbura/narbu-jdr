@@ -326,6 +326,7 @@ let charSearchQuery='';       // recherche texte dans la bibliothèque de person
 let lastShownNotesReveal=null; // évite de rouvrir la même note en boucle
 let currentNoteCategory=null;  // dossier courant dans les notes du MJ
 let noteSearchQuery='';        // recherche texte dans les notes du MJ
+let mySheetTabs={};            // onglet actif ('bio' ou 'stats') par personnage, page Ma fiche
 
 /* ============================= SYNCHRONISATION SUPABASE ============================= */
 async function loadProfiles(){
@@ -1778,7 +1779,9 @@ function mySheetPage(){
   }
   return `<div style="display:flex;flex-direction:column;gap:16px">${mine.map(myCharacterCard).join('')}</div>`;
 }
+function switchMySheetTab(charId,tab){mySheetTabs[charId]=tab;render();}
 function myCharacterCard(c){
+  const tab=mySheetTabs[c.id]||'bio';
   const abilities=characterAbilities(c.id);
   const instances=S.instances.filter(i=>i.charId===c.id);
   const statsHtml=Object.entries(c.stats||{}).map(([k,v])=>`<div class="stat"><label>${esc(k)}</label><strong>${v}</strong></div>`).join('');
@@ -1789,8 +1792,8 @@ function myCharacterCard(c){
   const equippedHtml=(c.type==='player'&&c.equipmentSlots)?EQUIP_SLOTS.map(([k,label])=>{
     const item=equip(c.equipmentSlots[k]); if(!item)return '';
     const resTxt=ELEMENT_RES_KEYS.filter(rk=>item.res?.[rk]).map(rk=>`${rk} +${item.res[rk]}%`).join(', ');
-    return `<div class="row" style="gap:10px;margin-bottom:6px;padding:6px;background:#20232a;border-radius:8px;align-items:center">
-      <div class="icon-preview" style="width:40px;height:40px;font-size:20px;flex-shrink:0">${item.image?`<img src="${esc(item.image)}">`:iconInlineHtml(item,20)}</div>
+    return `<div class="row" style="gap:10px;margin-bottom:8px;padding:6px;background:#20232a;border-radius:8px;align-items:center;flex-wrap:wrap">
+      ${item.image?`<img src="${esc(item.image)}" style="max-width:100%;border-radius:8px;flex-shrink:0">`:`<div class="icon-preview" style="width:40px;height:40px;font-size:20px;flex-shrink:0">${iconInlineHtml(item,20)}</div>`}
       <div><b>${esc(label)} :</b> ${esc(item.name)}<br><span class="tiny muted">CA +${item.ca||0} · DM +${item.dm||0}${resTxt?` · ${resTxt}`:''}</span></div>
     </div>`;
   }).join(''):'';
@@ -1803,29 +1806,32 @@ function myCharacterCard(c){
   const transfoHtml=(c.transformationIds||[]).length
     ? (c.transformationIds||[]).map(tid=>char(tid)).filter(Boolean).map(t=>`<span class="pill">${iconInlineHtml(t)} ${esc(t.name)}</span>`).join(' ')
     : '<p class="tiny muted">Aucune transformation associée.</p>';
-  const bioHtml=`<h3 style="font-size:13px;margin:14px 0 8px">Bio &amp; Info</h3>
-    <div class="row" style="align-items:flex-start;gap:14px;margin-bottom:10px">
-      <div class="icon-preview" style="width:90px;height:90px;font-size:36px;flex-shrink:0">${c.profileImage?`<img src="${esc(c.profileImage)}">`:'🖼️'}</div>
-      <div style="flex:1"><div class="tiny muted rte-view" style="margin:0 0 8px">${c.bio||'Aucune description.'}</div></div>
-    </div>
+  const bioTabHtml=`
+    <div style="margin-bottom:12px">${c.profileImage?`<img src="${esc(c.profileImage)}" style="max-width:100%;border-radius:10px;display:block">`:'<p class="tiny muted">Aucune image.</p>'}</div>
+    <div class="stat" style="margin-bottom:8px"><label>Description</label><div class="tiny rte-view" style="margin-top:4px">${c.bio||'Aucune description.'}</div></div>
     <div class="stat" style="margin-bottom:8px"><label>Inventaire</label><div class="tiny rte-view">${c.inventory||'Vide.'}</div></div>
-    <div class="stat"><label>Transformations</label><div style="margin-top:4px">${transfoHtml}</div></div>
-    ${c.type==='player'?`<div class="stat" style="margin-top:8px"><label>🎒 Équipement équipé</label><div style="margin-top:6px">${equippedHtml||'<p class="tiny muted">Aucun équipement.</p>'}</div><p class="tiny muted" style="margin-top:4px">🛡 Résistance naturelle (auto) : CA +${nat.ca} · DM +${nat.dm}</p></div>`:''}`;
-  return `<div class="card">
-    <div class="row between" style="margin-bottom:14px">
-      <div class="row"><div class="icon" style="width:44px;height:44px;font-size:22px;border-radius:12px;background:#2b1d3b;display:grid;place-items:center;overflow:hidden">${iconBoxHtml(c,'12px')}</div>
-      <div><h2 style="margin:0">${esc(c.name)}</h2><span class="tiny muted">${c.type==='player'?'Joueur':'Monstre'} · Déplacement ${c.move??6} case(s)/tour</span></div></div>
-      <span class="pill">🔒 Lecture seule</span>
-    </div>
-    ${bioHtml}
-    <h3 style="font-size:13px;margin:14px 0 8px">Sur la carte</h3>
+    <div class="stat" style="margin-bottom:8px"><label>Transformations</label><div style="margin-top:4px">${transfoHtml}</div></div>
+    ${c.type==='player'?`<div class="stat"><label>🎒 Équipement équipé</label><div style="margin-top:6px">${equippedHtml||'<p class="tiny muted">Aucun équipement.</p>'}</div><p class="tiny muted" style="margin-top:4px">🛡 Résistance naturelle (auto) : CA +${nat.ca} · DM +${nat.dm}</p></div>`:''}`;
+  const statsTabHtml=`
+    <h3 style="font-size:13px;margin:0 0 8px">Sur la carte</h3>
     ${instancesHtml}
     <h3 style="font-size:13px;margin:14px 0 8px">Statistiques</h3>
     <div class="statgrid">${statsHtml}${defHtml}</div>
     <h3 style="font-size:13px;margin:14px 0 8px">Résistances élémentaires</h3>
     <div class="statgrid">${resHtml}</div>
     <h3 style="font-size:13px;margin:14px 0 8px">Capacités connues</h3>
-    ${abilitiesHtml}
+    ${abilitiesHtml}`;
+  return `<div class="card">
+    <div class="row between" style="margin-bottom:14px">
+      <div class="row"><div class="icon" style="width:44px;height:44px;font-size:22px;border-radius:12px;background:#2b1d3b;display:grid;place-items:center;overflow:hidden">${iconBoxHtml(c,'12px')}</div>
+      <div><h2 style="margin:0">${esc(c.name)}</h2><span class="tiny muted">${c.type==='player'?'Joueur':'Monstre'} · Déplacement ${c.move??6} case(s)/tour</span></div></div>
+      <span class="pill">🔒 Lecture seule</span>
+    </div>
+    <div class="tabs">
+      <button class="tab ${tab==='bio'?'active':''}" onclick="switchMySheetTab('${c.id}','bio')">🪪 Bio &amp; Info</button>
+      <button class="tab ${tab==='stats'?'active':''}" onclick="switchMySheetTab('${c.id}','stats')">📊 Caractéristiques &amp; Capacités</button>
+    </div>
+    ${tab==='bio'?bioTabHtml:statsTabHtml}
   </div>`;
 }
 
