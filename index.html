@@ -130,6 +130,7 @@ body.stage-fullscreen .targeting-banner{top:64px}
   <button class="nav active" data-page="table">🗺️ <span>Table de jeu</span></button>
   <button class="nav" data-page="characters">🧙 <span>Personnages</span></button>
   <button class="nav" data-page="abilities">✨ <span>Capacités</span></button>
+  <button class="nav" data-page="equipment">🎒 <span>Équipement</span></button>
   <button class="nav" data-page="library">📚 <span>Bibliothèque</span></button>
   <button class="nav" data-page="mysheet">🪪 <span>Ma fiche</span></button>
   <div class="spacer"></div>
@@ -243,6 +244,7 @@ const DEFAULT={
   freeMovement:false
 };
 const ELEMENT_RES_KEYS=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres'];
+const EQUIP_SLOTS=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['amulette','Amulette'],['anneau1','Anneau 1'],['anneau2','Anneau 2']];
 
 function normalizeState(){
   if(!S.instances)S.instances=[];
@@ -278,6 +280,19 @@ function normalizeState(){
     if(c.bio===undefined)c.bio='';
     if(c.inventory===undefined)c.inventory='';
     if(!Array.isArray(c.transformationIds))c.transformationIds=[];
+    if(c.type==='player'){
+      if(!c.equipmentSlots)c.equipmentSlots={};
+      EQUIP_SLOTS.forEach(([k])=>{if(c.equipmentSlots[k]===undefined)c.equipmentSlots[k]=null;});
+    }
+  });
+  if(!S.equipment)S.equipment=[];
+  S.equipment.forEach(e=>{
+    if(!e.res)e.res={};
+    ELEMENT_RES_KEYS.forEach(k=>{if(e.res[k]===undefined)e.res[k]=0;});
+    if(e.iconImage===undefined)e.iconImage=null;
+    if(e.image===undefined)e.image=null;
+    if(e.ca===undefined)e.ca=0;
+    if(e.dm===undefined)e.dm=0;
   });
   S.abilities.forEach(a=>{
     if(a.element==='Gel')a.element='Glace';
@@ -288,7 +303,7 @@ function normalizeState(){
 let S=JSON.parse(localStorage.getItem('arcanum-vtt')||'null')||structuredClone(DEFAULT);
 normalizeState();
 
-const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',library:'Bibliothèque',mysheet:'Ma fiche'};
+const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',equipment:'Équipement',library:'Bibliothèque',mysheet:'Ma fiche'};
 
 let currentPage='table';
 let selectedToken=null;
@@ -410,7 +425,10 @@ function updateUserBadge(){
   if(resetBtn) resetBtn.style.display=isMJ()?'':'none';
   const libNav=document.querySelector('.nav[data-page="library"]');
   if(libNav) libNav.style.display=isMJ()?'':'none';
+  const eqNav=document.querySelector('.nav[data-page="equipment"]');
+  if(eqNav) eqNav.style.display=isMJ()?'':'none';
   if(!isMJ()&&currentPage==='library'){currentPage='table';}
+  if(!isMJ()&&currentPage==='equipment'){currentPage='table';}
   if(!isMJ()&&sidePanelTab==='library'){sidePanelTab='chat';}
 }
 
@@ -521,6 +539,25 @@ function char(id){return S.characters.find(c=>c.id===id);}
 function inst(id){return S.instances.find(i=>i.id===id);}
 function instTemplate(instance){return instance?char(instance.charId):null;}
 function characterAbilities(charId){if(!charId)return [];return S.abilities.filter(a=>(a.characterIds||[]).includes(charId));}
+function equip(id){return (S.equipment||[]).find(e=>e.id===id);}
+function naturalRes(c){return {ca:Math.ceil((c.stats?.Constitution||0)/10),dm:Math.ceil((c.stats?.Magie||0)/10)};}
+function effectiveDef(c){
+  if(!c)return {CA:0,DM:0,'CA naturelle':0};
+  if(c.type!=='player')return {CA:c.def?.CA||0,DM:c.def?.DM||0,'CA naturelle':c.def?.['CA naturelle']||0};
+  const nat=naturalRes(c);
+  let ca=(c.def?.CA||0)+nat.ca, dm=(c.def?.DM||0)+nat.dm;
+  if(c.equipmentSlots){EQUIP_SLOTS.forEach(([k])=>{const e=equip(c.equipmentSlots[k]);if(e){ca+=e.ca||0;dm+=e.dm||0;}});}
+  return {CA:ca,DM:dm,'CA naturelle':c.def?.['CA naturelle']||0};
+}
+function effectiveRes(c){
+  if(!c)return {};
+  const out={...(c.res||{})};
+  ELEMENT_RES_KEYS.forEach(k=>{if(out[k]===undefined)out[k]=0;});
+  if(c.type==='player'&&c.equipmentSlots){
+    EQUIP_SLOTS.forEach(([k])=>{const e=equip(c.equipmentSlots[k]);if(e&&e.res){ELEMENT_RES_KEYS.forEach(rk=>{out[rk]=(out[rk]||0)+(e.res[rk]||0);});}});
+  }
+  return out;
+}
 
 function roll(expr){
   expr=String(expr).replace(/\s+/g,''); let bonus=0;
@@ -618,6 +655,7 @@ function render(){
   if(currentPage==='table')c.innerHTML=tablePage();
   else if(currentPage==='characters')c.innerHTML=charactersPage();
   else if(currentPage==='abilities')c.innerHTML=abilitiesPage();
+  else if(currentPage==='equipment')c.innerHTML=equipmentPage();
   else if(currentPage==='library')c.innerHTML=libraryPage();
   else if(currentPage==='mysheet')c.innerHTML=mySheetPage();
   updateTargetingBanner();
@@ -1352,9 +1390,9 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);continue;}
     const r=roll(a.formula); const raw=r.total;
     let damage=Math.ceil(raw*mult*(casterTpl.stats[a.stat]||0)/100);
-    const def=(a.defense!=='none')?(tTpl.def[a.defense]||0):0;
+    const def=(a.defense!=='none')?(effectiveDef(tTpl)[a.defense]||0):0;
     damage=Math.max(0,damage-def);
-    const resist=(tTpl.res?.[a.element]||0)/100;
+    const resist=(effectiveRes(tTpl)[a.element]||0)/100;
     damage=Math.max(0,Math.ceil(damage*(1-resist)));
     const beforeShield=t.shield||0; const absorbed=Math.min(beforeShield,damage);
     t.shield-=absorbed; const hpDamage=damage-absorbed;
@@ -1408,6 +1446,19 @@ function toggleHidden(id){
   const c=char(id); if(!c)return;
   c.hidden=!c.hidden;
   saveState(); render();
+}
+function equipmentSlotsHtml(base){
+  if(base.type!=='player')return '';
+  const slots=base.equipmentSlots||{};
+  const eqOpts=cur=>`<option value="">— Aucun —</option>`+(S.equipment||[]).map(e=>`<option value="${esc(e.id)}" ${cur===e.id?'selected':''}>${esc(e.icon)} ${esc(e.name)}</option>`).join('');
+  const nat=naturalRes(base);
+  return `<div class="field full"><label>🎒 Équipement (seul le MJ peut équiper)</label>
+  <div class="statgrid" style="grid-template-columns:repeat(3,1fr)">
+  ${EQUIP_SLOTS.map(([k,label])=>`<div class="field"><label>${esc(label)}</label><select id="eqslot_${k}">${eqOpts(slots[k])}</select></div>`).join('')}
+  <div class="field"><label>Résistance Naturelle (auto)</label><input value="CA +${nat.ca} · DM +${nat.dm}" readonly style="opacity:.6"></div>
+  </div>
+  <p class="tiny muted">La Résistance Naturelle n'est pas un équipement : elle se recalcule automatiquement (Constitution/10 et Magie/10, arrondis au supérieur).</p>
+  </div>`;
 }
 function openCharacter(id){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les fiches.');return;}
@@ -1483,6 +1534,7 @@ function openCharacter(id){
   <div class="field"><label>Résistance Lumière (%)</label><input id="r_lumiere" type="number" value="${base.res.Lumière??0}"></div>
   <div class="field"><label>Résistance Ténèbres (%)</label><input id="r_tenebres" type="number" value="${base.res.Ténèbres??0}"></div>
   ${bioHtml}
+  ${equipmentSlotsHtml(base)}
   </div>
   ${knownLine}
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveCharacter('${id||''}')">Enregistrer</button></div>`;
@@ -1516,6 +1568,10 @@ function saveCharacter(id){
     Lumière:parseNum(document.getElementById('r_lumiere').value),
     Ténèbres:parseNum(document.getElementById('r_tenebres').value)
   };
+  if(c.type==='player'){
+    c.equipmentSlots=c.equipmentSlots||{};
+    EQUIP_SLOTS.forEach(([k])=>{const el=document.getElementById('eqslot_'+k);if(el)c.equipmentSlots[k]=el.value||null;});
+  }
   if(!id)S.characters.push(c);
   S.instances.filter(i=>i.charId===c.id).forEach(i=>{
     i.hpMax=c.resourcesMax.Vie; i.manaMax=c.resourcesMax.Mana; i.shieldMax=c.resourcesMax.Bouclier;
@@ -1625,6 +1681,89 @@ function openAdvancedAbility(id){
   document.getElementById('modalBg').classList.add('open');
 }
 
+/* ============================= ÉQUIPEMENT (MJ uniquement) ============================= */
+function equipmentPage(){
+  if(!isMJ())return `<div class="card"><p class="muted">Réservé au Maître du Jeu.</p></div>`;
+  const list=(S.equipment||[]).map(e=>{
+    const resTxt=ELEMENT_RES_KEYS.filter(k=>e.res[k]).map(k=>`${k} +${e.res[k]}%`).join(', ')||'Aucune résistance';
+    return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b><small>CA +${e.ca||0} · DM +${e.dm||0} · ${esc(resTxt)}</small></div><button class="btn" onclick="openEquipment('${e.id}')">Modifier</button><button class="btn ghost" onclick="confirmDeleteEquipment('${e.id}')" title="Supprimer">🗑️</button></div>`;
+  }).join('');
+  return `<div class="grid2"><div class="card"><div class="row between"><h2>Équipements</h2><button class="btn primary" onclick="openEquipment()">＋ Nouvel équipement</button></div>
+  ${list||'<p class="tiny muted">Aucun équipement créé pour l’instant.</p>'}
+  </div>
+  <div class="card"><h2>Principe</h2><p class="muted">Ces fiches sont assignables aux personnages joueurs (onglet Équipement de leur fiche). Les bonus (Classe d'armure, Défense magique, résistances élémentaires) se cumulent automatiquement avec les stats de base et la Résistance Naturelle (calculée depuis Constitution et Magie). Les monstres ne sont pas concernés.</p></div></div>`;
+}
+function openEquipment(id){
+  if(!isMJ())return;
+  const e=id?(S.equipment||[]).find(x=>x.id===id):{id:'eq'+Date.now(),name:'Nouvel équipement',icon:'🎽',iconImage:null,image:null,ca:0,dm:0,res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}};
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} un équipement</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <div class="form">
+  <div class="field"><label>Nom</label><input id="eq_name" value="${esc(e.name)}"></div>
+  <div class="field"><label>Icône (emoji)</label><input id="eq_icon" value="${esc(e.icon)}"></div>
+  <div class="field full">
+    <label>Icône personnalisée (petite, listes)</label>
+    <div class="icon-dropzone" onclick="document.getElementById('eq_icon_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'eq_iconimage','eq_icon_preview')">
+      <div id="eq_icon_preview" class="icon-preview">${e.iconImage?`<img src="${esc(e.iconImage)}">`:`<span>${esc(e.icon)}</span>`}</div>
+      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir</p>
+      <input type="file" id="eq_icon_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'eq_iconimage','eq_icon_preview')">
+    </div>
+    <input type="hidden" id="eq_iconimage" value="${esc(e.iconImage||'')}">
+  </div>
+  <div class="field full">
+    <label>Image d'illustration (affichée dans la fiche du joueur quand équipé)</label>
+    <div class="icon-dropzone" onclick="document.getElementById('eq_image_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'eq_image','eq_image_preview')">
+      <div id="eq_image_preview" class="icon-preview" style="width:90px;height:90px;font-size:36px">${e.image?`<img src="${esc(e.image)}">`:'<span>🖼️</span>'}</div>
+      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir</p>
+      <input type="file" id="eq_image_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'eq_image','eq_image_preview')">
+    </div>
+    <input type="hidden" id="eq_image" value="${esc(e.image||'')}">
+  </div>
+  <div class="field"><label>Bonus Classe d'armure</label><input id="eq_ca" type="number" value="${e.ca||0}"></div>
+  <div class="field"><label>Bonus Défense magique</label><input id="eq_dm" type="number" value="${e.dm||0}"></div>
+  <div class="field"><label>Résistance Feu (%)</label><input id="eq_r_fire" type="number" value="${e.res.Feu||0}"></div>
+  <div class="field"><label>Résistance Eau (%)</label><input id="eq_r_eau" type="number" value="${e.res.Eau||0}"></div>
+  <div class="field"><label>Résistance Terre (%)</label><input id="eq_r_terre" type="number" value="${e.res.Terre||0}"></div>
+  <div class="field"><label>Résistance Air (%)</label><input id="eq_r_air" type="number" value="${e.res.Air||0}"></div>
+  <div class="field"><label>Résistance Glace (%)</label><input id="eq_r_glace" type="number" value="${e.res.Glace||0}"></div>
+  <div class="field"><label>Résistance Foudre (%)</label><input id="eq_r_foudre" type="number" value="${e.res.Foudre||0}"></div>
+  <div class="field"><label>Résistance Lumière (%)</label><input id="eq_r_lumiere" type="number" value="${e.res.Lumière||0}"></div>
+  <div class="field"><label>Résistance Ténèbres (%)</label><input id="eq_r_tenebres" type="number" value="${e.res.Ténèbres||0}"></div>
+  </div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveEquipment('${id||''}')">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function saveEquipment(id){
+  if(!isMJ())return;
+  if(!S.equipment)S.equipment=[];
+  const target=id?S.equipment.find(x=>x.id===id):{id:'eq'+Date.now()};
+  target.name=document.getElementById('eq_name').value||'Équipement';
+  target.icon=document.getElementById('eq_icon').value||'🎽';
+  target.iconImage=document.getElementById('eq_iconimage').value.trim()||null;
+  target.image=document.getElementById('eq_image').value.trim()||null;
+  target.ca=parseNum(document.getElementById('eq_ca').value);
+  target.dm=parseNum(document.getElementById('eq_dm').value);
+  target.res={
+    Feu:parseNum(document.getElementById('eq_r_fire').value),
+    Eau:parseNum(document.getElementById('eq_r_eau').value),
+    Terre:parseNum(document.getElementById('eq_r_terre').value),
+    Air:parseNum(document.getElementById('eq_r_air').value),
+    Glace:parseNum(document.getElementById('eq_r_glace').value),
+    Foudre:parseNum(document.getElementById('eq_r_foudre').value),
+    Lumière:parseNum(document.getElementById('eq_r_lumiere').value),
+    Ténèbres:parseNum(document.getElementById('eq_r_tenebres').value)
+  };
+  if(!id)S.equipment.push(target);
+  saveState(); closeModal(); render();
+}
+function confirmDeleteEquipment(id){
+  if(!isMJ())return;
+  if(!confirm('Supprimer cet équipement ? Il sera automatiquement déséquipé de tous les personnages.'))return;
+  S.characters.forEach(c=>{if(c.equipmentSlots){EQUIP_SLOTS.forEach(([k])=>{if(c.equipmentSlots[k]===id)c.equipmentSlots[k]=null;});}});
+  S.equipment=(S.equipment||[]).filter(x=>x.id!==id);
+  saveState(); render();
+  toast('🗑️ Équipement supprimé.');
+}
+
 /* ============================= BIBLIOTHÈQUE (page dédiée) ============================= */
 function libraryPage(){
   return `<div class="grid3"><div class="card"><h2>🗺️ Cartes</h2><p class="muted">Import d'images de cartes prévu ici.</p><button class="btn">＋ Importer une carte</button></div><div class="card"><h2>🖼️ Effets</h2><p class="muted">Bibliothèque d'effets visuels : feu, glace, magie, explosions…</p><button class="btn">＋ Ajouter un effet</button></div><div class="card"><h2>🎲 Assets</h2><p class="muted">Tokens, portraits, objets et autres ressources.</p><button class="btn">＋ Ajouter un asset</button></div></div><div class="card" style="margin-top:16px"><h2>Prochaine étape</h2><p>Cette bibliothèque deviendra le stockage local de tes cartes et assets, sans abonnement externe. Les fiches et instances sont déjà gérées séparément (voir l'onglet 📚 Bibliothèque du panneau de droite sur la Table de jeu).</p></div>`;
@@ -1643,8 +1782,18 @@ function myCharacterCard(c){
   const abilities=characterAbilities(c.id);
   const instances=S.instances.filter(i=>i.charId===c.id);
   const statsHtml=Object.entries(c.stats||{}).map(([k,v])=>`<div class="stat"><label>${esc(k)}</label><strong>${v}</strong></div>`).join('');
-  const defHtml=`<div class="stat"><label>Classe d'armure</label><strong>${c.def.CA??0}</strong></div><div class="stat"><label>Défense magique</label><strong>${c.def.DM??0}</strong></div>`;
-  const resHtml=ELEMENT_RES_KEYS.map(k=>`<div class="stat"><label>${esc(k)}</label><strong>${c.res?.[k]??0}%</strong></div>`).join('');
+  const eDef=effectiveDef(c), eRes=effectiveRes(c);
+  const defHtml=`<div class="stat"><label>Classe d'armure</label><strong>${eDef.CA??0}</strong></div><div class="stat"><label>Défense magique</label><strong>${eDef.DM??0}</strong></div>`;
+  const resHtml=ELEMENT_RES_KEYS.map(k=>`<div class="stat"><label>${esc(k)}</label><strong>${eRes[k]??0}%</strong></div>`).join('');
+  const nat=naturalRes(c);
+  const equippedHtml=(c.type==='player'&&c.equipmentSlots)?EQUIP_SLOTS.map(([k,label])=>{
+    const item=equip(c.equipmentSlots[k]); if(!item)return '';
+    const resTxt=ELEMENT_RES_KEYS.filter(rk=>item.res?.[rk]).map(rk=>`${rk} +${item.res[rk]}%`).join(', ');
+    return `<div class="row" style="gap:10px;margin-bottom:6px;padding:6px;background:#20232a;border-radius:8px;align-items:center">
+      <div class="icon-preview" style="width:40px;height:40px;font-size:20px;flex-shrink:0">${item.image?`<img src="${esc(item.image)}">`:iconInlineHtml(item,20)}</div>
+      <div><b>${esc(label)} :</b> ${esc(item.name)}<br><span class="tiny muted">CA +${item.ca||0} · DM +${item.dm||0}${resTxt?` · ${resTxt}`:''}</span></div>
+    </div>`;
+  }).join(''):'';
   const abilitiesHtml=abilities.length
     ? abilities.map(a=>`<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${esc(a.type)} · ${esc(a.formula)} · ${esc(a.element)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}</small></div></div>`).join('')
     : `<p class="tiny muted">Aucune capacité connue.</p>`;
@@ -1660,7 +1809,8 @@ function myCharacterCard(c){
       <div style="flex:1"><div class="tiny muted rte-view" style="margin:0 0 8px">${c.bio||'Aucune description.'}</div></div>
     </div>
     <div class="stat" style="margin-bottom:8px"><label>Inventaire</label><div class="tiny rte-view">${c.inventory||'Vide.'}</div></div>
-    <div class="stat"><label>Transformations</label><div style="margin-top:4px">${transfoHtml}</div></div>`;
+    <div class="stat"><label>Transformations</label><div style="margin-top:4px">${transfoHtml}</div></div>
+    ${c.type==='player'?`<div class="stat" style="margin-top:8px"><label>🎒 Équipement équipé</label><div style="margin-top:6px">${equippedHtml||'<p class="tiny muted">Aucun équipement.</p>'}</div><p class="tiny muted" style="margin-top:4px">🛡 Résistance naturelle (auto) : CA +${nat.ca} · DM +${nat.dm}</p></div>`:''}`;
   return `<div class="card">
     <div class="row between" style="margin-bottom:14px">
       <div class="row"><div class="icon" style="width:44px;height:44px;font-size:22px;border-radius:12px;background:#2b1d3b;display:grid;place-items:center;overflow:hidden">${iconBoxHtml(c,'12px')}</div>
