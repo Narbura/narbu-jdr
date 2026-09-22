@@ -1492,6 +1492,11 @@ function affected(a,start,explicitTargetInstId){
   // Sorts de dégâts en zone : touchent tout le monde, alliés comme ennemis (y compris le lanceur).
   return S.instances.filter(inZone);
 }
+function footprintDistance(x1,y1,w1,h1,x2,y2,w2,h2){
+  const gapX=Math.max(0, x2-(x1+w1-1), x1-(x2+w2-1));
+  const gapY=Math.max(0, y2-(y1+h1-1), y1-(y2+h2-1));
+  return Math.max(gapX,gapY);
+}
 function resolveAbility(a,start,explicitTargetInstId){
   const casterInst=selectedToken?inst(selectedToken):null;
   if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
@@ -1504,7 +1509,10 @@ function resolveAbility(a,start,explicitTargetInstId){
     activeAbility=null; hoverCell=null; render(); return;
   }
   if(a.range&&a.range>0){
-    const dist=Math.max(Math.abs(start[0]-casterInst.x),Math.abs(start[1]-casterInst.y));
+    const casterSW=casterInst.sizeW||1, casterSH=casterInst.sizeH||1;
+    const targetInst=explicitTargetInstId?inst(explicitTargetInstId):null;
+    const tW=targetInst?(targetInst.sizeW||1):1, tH=targetInst?(targetInst.sizeH||1):1;
+    const dist=footprintDistance(casterInst.x,casterInst.y,casterSW,casterSH,start[0],start[1],tW,tH);
     if(dist>a.range){
       toast(`🚫 Trop loin (portée max ${a.range} case${a.range>1?'s':''}) — sélectionne un ennemi plus proche.`);
       return;
