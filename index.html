@@ -31,6 +31,15 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .icon-preview{width:56px;height:56px;margin:0 auto 8px;border-radius:12px;background:#2b1d3b;display:grid;place-items:center;font-size:28px;overflow:hidden}
 .icon-preview img{width:100%;height:100%;object-fit:cover}
 .form{display:grid;grid-template-columns:1fr 1fr;gap:11px}.field{display:flex;flex-direction:column;gap:5px}.field.full{grid-column:1/-1}.field label{font-size:11px;color:var(--muted)}.field input,.field select,.field textarea{width:100%;background:#111318;color:white;border:1px solid #3a3e48;border-radius:8px;padding:9px;outline:none}.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}textarea{min-height:170px;resize:vertical}
+.rte-toolbar{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;padding:6px;background:#15161a;border:1px solid #3a3e48;border-radius:8px}
+.rte-toolbar button{padding:5px 9px;background:#252831;border:1px solid #3a3e48;border-radius:6px;color:#fff}.rte-toolbar button:hover{background:#2f333d}
+.rte-toolbar select{background:#111318;border:1px solid #3a3e48;border-radius:6px;color:#fff;padding:5px}
+.rte-swatch{width:26px;height:26px;padding:0;border-radius:6px}
+.rte-content{min-height:150px;max-height:420px;overflow:auto;background:#111318;border:1px solid #3a3e48;border-radius:8px;padding:10px;color:#fff}
+.rte-content:focus{outline:none;border-color:var(--accent)}
+.rte-content table,.rte-view table{border-collapse:collapse;width:100%;margin:8px 0}
+.rte-content td,.rte-content th,.rte-view td,.rte-view th{border:1px solid #3a3e48;padding:6px;text-align:center;vertical-align:middle}
+.rte-view{white-space:pre-wrap}
 .map-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:10px;height:calc(100vh - 101px)}
 .map-card{min-width:0;display:flex;flex-direction:column;position:relative}
 .map-toolbar{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
@@ -301,8 +310,6 @@ let charSearchQuery='';       // recherche texte dans la bibliothèque de person
 let lastShownNotesReveal=null; // évite de rouvrir la même note en boucle
 let currentNoteCategory=null;  // dossier courant dans les notes du MJ
 let noteSearchQuery='';        // recherche texte dans les notes du MJ
-let mySheetTabs={};            // onglet actif ('bio' ou 'stats') par personnage, dans Ma fiche
-function switchMySheetTab(charId,tab){mySheetTabs[charId]=tab;render();}
 
 /* ============================= SYNCHRONISATION SUPABASE ============================= */
 async function loadProfiles(){
@@ -427,6 +434,41 @@ function iconInlineHtml(entity,sizePx){
   if(entity&&entity.iconImage)return `<img src="${esc(entity.iconImage)}" style="width:${s}px;height:${s}px;object-fit:cover;border-radius:4px;vertical-align:middle">`;
   return esc(entity?.icon||'❓');
 }
+/* ============================= ÉDITEUR DE TEXTE ENRICHI (MJ) ============================= */
+function richEditorHtml(id,initialHtml){
+  return `<div class="rte-toolbar">
+    <select onchange="if(this.value)rteExec('${id}','fontSize',this.value);this.value=''">
+      <option value="">Taille…</option>
+      <option value="2">Petit</option>
+      <option value="3">Normal</option>
+      <option value="5">Grand</option>
+      <option value="7">Très grand</option>
+    </select>
+    <button type="button" onclick="rteExec('${id}','bold')" title="Gras"><b>G</b></button>
+    <button type="button" onclick="rteExec('${id}','italic')" title="Italique"><i>I</i></button>
+    <button type="button" onclick="rteExec('${id}','underline')" title="Souligner"><u>S</u></button>
+    <button type="button" class="rte-swatch" style="background:#fff59d" onclick="rteHighlight('${id}','#fff59d')" title="Surligner jaune"></button>
+    <button type="button" class="rte-swatch" style="background:#a5d6a7" onclick="rteHighlight('${id}','#a5d6a7')" title="Surligner vert"></button>
+    <button type="button" class="rte-swatch" style="background:#90caf9" onclick="rteHighlight('${id}','#90caf9')" title="Surligner bleu"></button>
+    <button type="button" class="rte-swatch" style="background:#f48fb1" onclick="rteHighlight('${id}','#f48fb1')" title="Surligner rose"></button>
+    <button type="button" onclick="rteHighlight('${id}','transparent')" title="Retirer le surlignage">⌫</button>
+    <button type="button" onclick="rteInsertTable('${id}')" title="Insérer un tableau">▦ Tableau</button>
+  </div>
+  <div class="rte-content" id="${id}" contenteditable="true">${initialHtml||''}</div>`;
+}
+function rteExec(id,cmd,val){document.getElementById(id)?.focus();document.execCommand(cmd,false,val||null);}
+function rteHighlight(id,color){document.getElementById(id)?.focus();document.execCommand('hiliteColor',false,color);}
+function rteInsertTable(id){
+  const cols=parseInt(prompt('Nombre de colonnes ?','3'),10);
+  if(!cols||cols<1)return;
+  const rows=parseInt(prompt('Nombre de lignes ?','2'),10)||2;
+  let html='<table>';
+  for(let r=0;r<rows;r++){html+='<tr>';for(let c=0;c<cols;c++)html+='<td>&nbsp;</td>';html+='</tr>';}
+  html+='</table><p><br></p>';
+  document.getElementById(id)?.focus();
+  document.execCommand('insertHTML',false,html);
+}
+function rteHtml(id){return document.getElementById(id)?.innerHTML||'';}
 function opt(value,label,current){return `<option value="${esc(value)}" ${value===current?'selected':''}>${esc(label)}</option>`;}
 function parseNum(v){const n=+v;return Number.isFinite(n)?n:0;}
 function maxHpFromCon(con){return Math.max(1,Math.ceil(parseNum(con)*2.5));}
@@ -1354,8 +1396,8 @@ function openCharacter(id){
     <input type="hidden" id="c_profileimage" value="${esc(base.profileImage||'')}">
     ${base.profileImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('c_profileimage','c_profile_preview','🖼️')">↺ Retirer l'image</button>`:''}
   </div>
-  <div class="field full"><label>Description</label><textarea id="c_bio">${esc(base.bio||'')}</textarea></div>
-  <div class="field full"><label>Inventaire</label><textarea id="c_inventory">${esc(base.inventory||'')}</textarea></div>
+  <div class="field full"><label>Description</label>${richEditorHtml('c_bio',base.bio||'')}</div>
+  <div class="field full"><label>Inventaire</label>${richEditorHtml('c_inventory',base.inventory||'')}</div>
   <div class="field full">
     <label>Sous-fiches de Transformation associées</label>
     <div style="max-height:150px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px">${transfoListHtml}</div>
@@ -1421,8 +1463,8 @@ function saveCharacter(id){
   c.categoryId=document.getElementById('c_category').value||null;
   c.hidden=document.getElementById('c_hidden').value==='true';
   c.profileImage=document.getElementById('c_profileimage').value.trim()||null;
-  c.bio=document.getElementById('c_bio').value;
-  c.inventory=document.getElementById('c_inventory').value;
+  c.bio=rteHtml('c_bio');
+  c.inventory=rteHtml('c_inventory');
   c.transformationIds=[...document.querySelectorAll('.tf-check:checked')].map(el=>el.value);
   c.resourcesMax={Vie:maxHpFromCon(document.getElementById('s_con').value),Mana:parseNum(document.getElementById('c_manamax').value),Bouclier:parseNum(document.getElementById('c_shieldmax').value)};
   c.stats={...(c.stats||{}),Constitution:parseNum(document.getElementById('s_con').value),Endurance:parseNum(document.getElementById('s_end').value),Social:parseNum(document.getElementById('s_soc').value),Artisanat:parseNum(document.getElementById('s_craft').value),Force:parseNum(document.getElementById('s_force').value),Magie:parseNum(document.getElementById('s_magic').value),Agilité:parseNum(document.getElementById('s_agi').value),Vitesse:parseNum(document.getElementById('s_speed').value)};
@@ -1498,7 +1540,7 @@ function openAbility(id){
   <div class="field"><label>Portée maximale (cases, 0 = illimitée)</label><input id="a_range" type="number" min="0" value="${a.range??0}"></div>
   <div class="field"><label>Coût en mana (0 = aucun)</label><input id="a_manacost" type="number" min="0" value="${a.manaCost??0}"></div>
   <div class="field"><label>Ressource restaurée (type Potion uniquement)</label><select id="a_resource">${opt('Vie','❤️ Vie (PV)',a.resource||'Vie')}${opt('Mana','💧 Mana',a.resource||'Vie')}</select></div>
-  <div class="field full"><label>Description</label><textarea id="a_desc">${esc(a.desc||'')}</textarea></div>
+  <div class="field full"><label>Description</label>${richEditorHtml('a_desc',a.desc||'')}</div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
   <div class="field full">
     <label>Personnages liés (peuvent lancer cette capacité)</label>
@@ -1532,7 +1574,7 @@ function saveAbility(id){
   target.range=Math.max(0,+document.getElementById('a_range').value||0);
   target.manaCost=Math.max(0,+document.getElementById('a_manacost').value||0);
   target.resource=document.getElementById('a_resource').value;
-  target.desc=document.getElementById('a_desc').value;
+  target.desc=rteHtml('a_desc');
   target.effect=document.getElementById('a_effect').value||'✨';
   target.characterIds=[...document.querySelectorAll('.ac-check:checked')].map(el=>el.value);
   if(!id)S.abilities.push(target);
@@ -1575,32 +1617,28 @@ function myCharacterCard(c){
   const transfoHtml=(c.transformationIds||[]).length
     ? (c.transformationIds||[]).map(tid=>char(tid)).filter(Boolean).map(t=>`<span class="pill">${iconInlineHtml(t)} ${esc(t.name)}</span>`).join(' ')
     : '<p class="tiny muted">Aucune transformation associée.</p>';
-  const activeTab=mySheetTabs[c.id]||'bio';
-  const bioTabHtml=`
-    <div style="margin-bottom:12px">${c.profileImage?`<img src="${esc(c.profileImage)}" style="max-width:100%;height:auto;border-radius:10px;display:block">`:'<div class="icon-preview" style="width:90px;height:90px;font-size:36px">🖼️</div>'}</div>
-    <p class="tiny muted" style="white-space:pre-wrap;margin:0 0 12px">${esc(c.bio||'Aucune description.')}</p>
-    <div class="stat" style="margin-bottom:8px"><label>Inventaire</label><div class="tiny" style="white-space:pre-wrap">${esc(c.inventory||'Vide.')}</div></div>
+  const bioHtml=`<h3 style="font-size:13px;margin:14px 0 8px">Bio &amp; Info</h3>
+    <div class="row" style="align-items:flex-start;gap:14px;margin-bottom:10px">
+      <div class="icon-preview" style="width:90px;height:90px;font-size:36px;flex-shrink:0">${c.profileImage?`<img src="${esc(c.profileImage)}">`:'🖼️'}</div>
+      <div style="flex:1"><div class="tiny muted rte-view" style="margin:0 0 8px">${c.bio||'Aucune description.'}</div></div>
+    </div>
+    <div class="stat" style="margin-bottom:8px"><label>Inventaire</label><div class="tiny rte-view">${c.inventory||'Vide.'}</div></div>
     <div class="stat"><label>Transformations</label><div style="margin-top:4px">${transfoHtml}</div></div>`;
-  const statsTabHtml=`
-    <h3 style="font-size:13px;margin:0 0 8px">Statistiques</h3>
-    <div class="statgrid">${statsHtml}${defHtml}</div>
-    <h3 style="font-size:13px;margin:14px 0 8px">Résistances élémentaires</h3>
-    <div class="statgrid">${resHtml}</div>
-    <h3 style="font-size:13px;margin:14px 0 8px">Capacités connues</h3>
-    ${abilitiesHtml}`;
   return `<div class="card">
     <div class="row between" style="margin-bottom:14px">
       <div class="row"><div class="icon" style="width:44px;height:44px;font-size:22px;border-radius:12px;background:#2b1d3b;display:grid;place-items:center;overflow:hidden">${iconBoxHtml(c,'12px')}</div>
       <div><h2 style="margin:0">${esc(c.name)}</h2><span class="tiny muted">${c.type==='player'?'Joueur':'Monstre'} · Déplacement ${c.move??6} case(s)/tour</span></div></div>
       <span class="pill">🔒 Lecture seule</span>
     </div>
-    <h3 style="font-size:13px;margin:0 0 8px">Sur la carte</h3>
+    ${bioHtml}
+    <h3 style="font-size:13px;margin:14px 0 8px">Sur la carte</h3>
     ${instancesHtml}
-    <div class="side-tabs" style="margin-top:14px">
-      <button class="tab ${activeTab==='bio'?'active':''}" onclick="switchMySheetTab('${c.id}','bio')">🪪 Bio &amp; Info</button>
-      <button class="tab ${activeTab==='stats'?'active':''}" onclick="switchMySheetTab('${c.id}','stats')">📊 Statistiques &amp; Capacités</button>
-    </div>
-    <div style="margin-top:14px">${activeTab==='bio'?bioTabHtml:statsTabHtml}</div>
+    <h3 style="font-size:13px;margin:14px 0 8px">Statistiques</h3>
+    <div class="statgrid">${statsHtml}${defHtml}</div>
+    <h3 style="font-size:13px;margin:14px 0 8px">Résistances élémentaires</h3>
+    <div class="statgrid">${resHtml}</div>
+    <h3 style="font-size:13px;margin:14px 0 8px">Capacités connues</h3>
+    ${abilitiesHtml}
   </div>`;
 }
 
@@ -2074,7 +2112,7 @@ function openNoteEditModal(id){
   const n=id?(S.notes||[]).find(x=>x.id===id):{id:'n'+Date.now(),title:'',text:'',image:null,categoryId:currentNoteCategory};
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Nouvelle'} note</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
   <div class="field full"><label>Titre</label><input id="note_title" value="${esc(n.title)}"></div>
-  <div class="field full"><label>Texte</label><textarea id="note_text">${esc(n.text||'')}</textarea></div>
+  <div class="field full"><label>Texte</label>${richEditorHtml('note_text',n.text||'')}</div>
   <div class="field full">
     <label>Image (optionnelle)</label>
     <div class="icon-dropzone" onclick="document.getElementById('note_image_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'note_image','note_image_preview')">
@@ -2091,7 +2129,7 @@ function openNoteEditModal(id){
 function saveNote(id){
   if(!isMJ())return;
   const title=(document.getElementById('note_title').value||'').trim()||'Sans titre';
-  const text=document.getElementById('note_text').value;
+  const text=rteHtml('note_text');
   const image=document.getElementById('note_image').value.trim()||null;
   const categoryId=document.getElementById('note_category').value||null;
   if(!S.notes)S.notes=[];
@@ -2125,7 +2163,7 @@ function checkNotesReveal(){
 function openNoteViewModal(n){
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>📝 ${esc(n.title)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
   ${n.image?`<img src="${esc(n.image)}" style="width:100%;border-radius:10px;margin-bottom:12px">`:''}
-  <p style="white-space:pre-wrap">${esc(n.text||'')}</p>
+  <div class="rte-view">${n.text||''}</div>
   <div class="modal-actions"><button class="btn primary" onclick="closeModal()">Fermer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
 }
