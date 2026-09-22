@@ -251,7 +251,9 @@ const DEFAULT={
   freeMovement:false
 };
 const ELEMENT_RES_KEYS=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres'];
-const EQUIP_SLOTS=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['amulette','Amulette'],['anneau1','Anneau 1'],['anneau2','Anneau 2']];
+const EQUIP_SLOTS=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['amulette','Amulette'],['anneau1','Anneau 1'],['anneau2','Anneau 2'],['arme','Arme']];
+const EQUIP_CATEGORIES=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['amulette','Amulette'],['anneau','Anneau'],['arme','Arme']];
+function equipSlotCategory(slotKey){return (slotKey==='anneau1'||slotKey==='anneau2')?'anneau':slotKey;}
 
 function normalizeState(){
   if(!S.instances)S.instances=[];
@@ -300,6 +302,9 @@ function normalizeState(){
     if(e.image===undefined)e.image=null;
     if(e.ca===undefined)e.ca=0;
     if(e.dm===undefined)e.dm=0;
+    if(e.itemType===undefined)e.itemType='armor';
+    if(e.category===undefined)e.category=e.itemType==='weapon'?'arme':'torse';
+    if(e.damageFormula===undefined)e.damageFormula='';
   });
   S.abilities.forEach(a=>{
     if(a.element==='Gel')a.element='Glace';
@@ -670,6 +675,19 @@ function roll(expr){
   const m=expr.match(/(\d*)d(\d+)/i); if(!m)return {total:(+expr||0)+bonus,rolls:[],bonus};
   const n=+(m[1]||1), sides=+m[2], rolls=[]; for(let i=0;i<n;i++)rolls.push(1+Math.floor(Math.random()*sides));
   return {total:rolls.reduce((a,x)=>a+x,0)+bonus,rolls,bonus};
+}
+function combineFormula(abilityFormula,weaponFormula){
+  const parse=(expr)=>{
+    expr=String(expr||'').replace(/\s+/g,'');
+    let bonus=0; const b=expr.match(/([+-]\d+)$/); if(b){bonus=+b[1];expr=expr.slice(0,b.index);}
+    const m=expr.match(/^(\d*)d(\d+)/i);
+    if(!m)return {n:0,sides:20,bonus:bonus+(+expr||0)};
+    return {n:+(m[1]||1),sides:+m[2],bonus};
+  };
+  const a=parse(abilityFormula), w=parse(weaponFormula);
+  const n=a.n+w.n, sides=a.sides||w.sides||20, bonus=a.bonus+w.bonus;
+  if(n<=0)return abilityFormula;
+  return `${n}d${sides}${bonus?(bonus>0?'+':'')+bonus:''}`;
 }
 function outcome(d){
   if(d===100)return ['Échec ultime',0]; if(d>=95)return ['Échec critique',0]; if(d>=90)return ['Échec',0];
@@ -1444,6 +1462,11 @@ function resolveAbility(a,start,explicitTargetInstId){
   if(a.manaCost>0){
     casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   }
+  let weaponFormula=null, weaponUsed=null;
+  if(casterTpl?.type==='player'&&casterTpl.equipmentSlots){
+    const w=equip(casterTpl.equipmentSlots['arme']);
+    if(w&&w.itemType==='weapon'&&w.damageFormula){weaponUsed=w;weaponFormula=w.damageFormula;}
+  }
   const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
   const targets=affected(a,start,explicitTargetInstId);
   const lines=[`⚔ <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b>`];
@@ -1493,7 +1516,8 @@ function resolveAbility(a,start,explicitTargetInstId){
       continue;
     }
     if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);continue;}
-    const r=roll(a.formula); const raw=r.total;
+    const usedFormula=weaponFormula?combineFormula(a.formula,weaponFormula):a.formula;
+    const r=roll(usedFormula); const raw=r.total;
     let damage=Math.ceil(raw*mult*(casterTpl.stats[a.stat]||0)/100);
     const def=(a.defense!=='none')?(effectiveDef(tTpl)[a.defense]||0):0;
     damage=Math.max(0,damage-def);
@@ -1502,7 +1526,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     const beforeShield=t.shield||0; const absorbed=Math.min(beforeShield,damage);
     t.shield-=absorbed; const hpDamage=damage-absorbed;
     t.hp=Math.max(0,t.hp-hpDamage);
-    lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${raw}`);
+    lines.push(`🎲 ${esc(usedFormula)}${weaponUsed?` (${esc(a.formula)} + arme « ${esc(weaponUsed.name)} » ${esc(weaponFormula)})`:''} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${raw}`);
     lines.push(`✨ Dégâts (${esc(a.element)}) : ${damage}${def?` (−${def} défense)`:''}${resist?` (résistance ${Math.round(resist*100)}%)`:''}`);
     if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
     lines.push(`❤️ ${esc(t.label)} : -${hpDamage} PV (${t.hp}/${t.hpMax})`);
@@ -1555,11 +1579,15 @@ function toggleHidden(id){
 function equipmentSlotsHtml(base){
   if(base.type!=='player')return '';
   const slots=base.equipmentSlots||{};
-  const eqOpts=cur=>`<option value="">— Aucun —</option>`+(S.equipment||[]).map(e=>`<option value="${esc(e.id)}" ${cur===e.id?'selected':''}>${esc(e.icon)} ${esc(e.name)}</option>`).join('');
+  const eqOpts=(cur,slotKey)=>{
+    const cat=equipSlotCategory(slotKey);
+    const items=(S.equipment||[]).filter(e=>e.category===cat);
+    return `<option value="">— Aucun —</option>`+items.map(e=>`<option value="${esc(e.id)}" ${cur===e.id?'selected':''}>${esc(e.icon)} ${esc(e.name)}</option>`).join('');
+  };
   const nat=naturalRes(base);
   return `<div class="field full"><label>🎒 Équipement (seul le MJ peut équiper)</label>
   <div class="statgrid" style="grid-template-columns:repeat(3,1fr)">
-  ${EQUIP_SLOTS.map(([k,label])=>`<div class="field"><label>${esc(label)}</label><select id="eqslot_${k}">${eqOpts(slots[k])}</select></div>`).join('')}
+  ${EQUIP_SLOTS.map(([k,label])=>`<div class="field"><label>${esc(label)}</label><select id="eqslot_${k}">${eqOpts(slots[k],k)}</select></div>`).join('')}
   <div class="field"><label>Résistance Naturelle (auto)</label><input value="CA +${nat.ca} · DM +${nat.dm}" readonly style="opacity:.6"></div>
   </div>
   <p class="tiny muted">La Résistance Naturelle n'est pas un équipement : elle se recalcule automatiquement (Constitution/10 et Magie/10, arrondis au supérieur).</p>
@@ -1813,24 +1841,52 @@ function openAdvancedAbility(id){
 }
 
 /* ============================= ÉQUIPEMENT (MJ uniquement) ============================= */
+let equipSearchQuery='';
+let equipCategoryFilter='';
 function equipmentPage(){
   if(!isMJ())return `<div class="card"><p class="muted">Réservé au Maître du Jeu.</p></div>`;
-  const list=(S.equipment||[]).map(e=>{
-    const resTxt=ELEMENT_RES_KEYS.filter(k=>e.res[k]).map(k=>`${k} +${e.res[k]}%`).join(', ')||'Aucune résistance';
-    return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b><small>CA +${e.ca||0} · DM +${e.dm||0} · ${esc(resTxt)}</small></div><button class="btn" onclick="openEquipment('${e.id}')">Modifier</button><button class="btn ghost" onclick="confirmDeleteEquipment('${e.id}')" title="Supprimer">🗑️</button></div>`;
-  }).join('');
   return `<div class="grid2"><div class="card"><div class="row between"><h2>Équipements</h2><button class="btn primary" onclick="openEquipment()">＋ Nouvel équipement</button></div>
-  ${list||'<p class="tiny muted">Aucun équipement créé pour l’instant.</p>'}
+  <div class="row" style="gap:8px;margin-bottom:10px">
+    <input id="equip_search_input" placeholder="🔎 Rechercher par nom…" value="${esc(equipSearchQuery)}" oninput="onEquipSearchInput(this.value)" style="flex:1">
+    <select id="equip_cat_filter" onchange="onEquipCatFilter(this.value)">
+      <option value="">Toutes catégories</option>
+      ${EQUIP_CATEGORIES.map(([k,l])=>opt(k,l,equipCategoryFilter)).join('')}
+    </select>
   </div>
-  <div class="card"><h2>Principe</h2><p class="muted">Ces fiches sont assignables aux personnages joueurs (onglet Équipement de leur fiche). Les bonus (Classe d'armure, Défense magique, résistances élémentaires) se cumulent automatiquement avec les stats de base et la Résistance Naturelle (calculée depuis Constitution et Magie). Les monstres ne sont pas concernés.</p></div></div>`;
+  <div id="equipResultsContainer">${equipResultsHtml()}</div>
+  </div>
+  <div class="card"><h2>Principe</h2><p class="muted">Chaque équipement appartient à une catégorie (tête, torse, jambes, pieds, main, amulette, anneau ou arme) : seuls les équipements de la bonne catégorie sont proposés pour chaque emplacement d'une fiche joueur. Les armures apportent Classe d'armure / Défense magique / résistances, cumulées avec la Résistance Naturelle. Les armes apportent des dégâts (ex : 2d20) qui s'ajoutent automatiquement à la formule des capacités lancées par le personnage qui les porte. Les monstres ne sont pas concernés.</p></div></div>`;
+}
+function onEquipSearchInput(v){equipSearchQuery=v;const c=document.getElementById('equipResultsContainer');if(c)c.innerHTML=equipResultsHtml();}
+function onEquipCatFilter(v){equipCategoryFilter=v;const c=document.getElementById('equipResultsContainer');if(c)c.innerHTML=equipResultsHtml();}
+function equipResultsHtml(){
+  const q=equipSearchQuery.trim().toLowerCase();
+  let items=(S.equipment||[]);
+  if(q)items=items.filter(e=>e.name.toLowerCase().includes(q));
+  if(equipCategoryFilter)items=items.filter(e=>e.category===equipCategoryFilter);
+  if(!items.length)return '<p class="tiny muted">Aucun équipement ne correspond.</p>';
+  return items.map(e=>{
+    const catLabel=(EQUIP_CATEGORIES.find(c=>c[0]===e.category)||['','?'])[1];
+    const desc=e.itemType==='weapon'
+      ? `⚔ Arme · ${esc(catLabel)} · Dégâts : ${esc(e.damageFormula||'—')}`
+      : (()=>{const resTxt=ELEMENT_RES_KEYS.filter(k=>e.res[k]).map(k=>`${k} +${e.res[k]}%`).join(', ')||'Aucune résistance';return `🛡 Armure · ${esc(catLabel)} · CA +${e.ca||0} · DM +${e.dm||0} · ${resTxt}`;})();
+    return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b><small>${desc}</small></div><button class="btn" onclick="openEquipment('${e.id}')">Modifier</button><button class="btn ghost" onclick="confirmDeleteEquipment('${e.id}')" title="Supprimer">🗑️</button></div>`;
+  }).join('');
 }
 function openEquipment(id){
   if(!isMJ())return;
-  const e=id?(S.equipment||[]).find(x=>x.id===id):{id:'eq'+Date.now(),name:'Nouvel équipement',icon:'🎽',iconImage:null,image:null,ca:0,dm:0,res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}};
+  const e=id?(S.equipment||[]).find(x=>x.id===id):{id:'eq'+Date.now(),name:'Nouvel équipement',icon:'🎽',iconImage:null,image:null,itemType:'armor',category:'torse',damageFormula:'',ca:0,dm:0,res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}};
+  const isWeapon=e.itemType==='weapon';
+  const catOpts=EQUIP_CATEGORIES.filter(([k])=>k!=='arme').map(([k,l])=>opt(k,l,e.category)).join('');
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} un équipement</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
   <div class="form">
   <div class="field"><label>Nom</label><input id="eq_name" value="${esc(e.name)}"></div>
   <div class="field"><label>Icône (emoji)</label><input id="eq_icon" value="${esc(e.icon)}"></div>
+  <div class="field"><label>Type d'équipement</label><select id="eq_itemtype" onchange="toggleEquipTypeFields()">
+    <option value="armor" ${!isWeapon?'selected':''}>🛡 Armure</option>
+    <option value="weapon" ${isWeapon?'selected':''}>⚔ Arme</option>
+  </select></div>
+  <div class="field" id="eq_category_field" style="display:${isWeapon?'none':''}"><label>Catégorie (emplacement)</label><select id="eq_category">${catOpts}</select></div>
   <div class="field full">
     <label>Icône personnalisée (petite, listes)</label>
     <div class="icon-dropzone" onclick="document.getElementById('eq_icon_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'eq_iconimage','eq_icon_preview')">
@@ -1850,6 +1906,11 @@ function openEquipment(id){
     </div>
     <input type="hidden" id="eq_image" value="${esc(e.image||'')}">
   </div>
+  <div class="field full" id="eq_weapon_fields" style="display:${isWeapon?'':'none'}">
+    <label>Dégâts de l'arme (ex : 2d20) — s'ajoutent automatiquement aux capacités du personnage équipé</label>
+    <input id="eq_damage" value="${esc(e.damageFormula||'')}" placeholder="2d20">
+  </div>
+  <div id="eq_armor_fields" style="display:${isWeapon?'none':'contents'}">
   <div class="field"><label>Bonus Classe d'armure</label><input id="eq_ca" type="number" value="${e.ca||0}"></div>
   <div class="field"><label>Bonus Défense magique</label><input id="eq_dm" type="number" value="${e.dm||0}"></div>
   <div class="field"><label>Résistance Feu (%)</label><input id="eq_r_fire" type="number" value="${e.res.Feu||0}"></div>
@@ -1861,8 +1922,15 @@ function openEquipment(id){
   <div class="field"><label>Résistance Lumière (%)</label><input id="eq_r_lumiere" type="number" value="${e.res.Lumière||0}"></div>
   <div class="field"><label>Résistance Ténèbres (%)</label><input id="eq_r_tenebres" type="number" value="${e.res.Ténèbres||0}"></div>
   </div>
+  </div>
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveEquipment('${id||''}')">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
+}
+function toggleEquipTypeFields(){
+  const isWeapon=document.getElementById('eq_itemtype').value==='weapon';
+  document.getElementById('eq_weapon_fields').style.display=isWeapon?'':'none';
+  document.getElementById('eq_armor_fields').style.display=isWeapon?'none':'contents';
+  document.getElementById('eq_category_field').style.display=isWeapon?'none':'';
 }
 function saveEquipment(id){
   if(!isMJ())return;
@@ -1872,18 +1940,28 @@ function saveEquipment(id){
   target.icon=document.getElementById('eq_icon').value||'🎽';
   target.iconImage=document.getElementById('eq_iconimage').value.trim()||null;
   target.image=document.getElementById('eq_image').value.trim()||null;
-  target.ca=parseNum(document.getElementById('eq_ca').value);
-  target.dm=parseNum(document.getElementById('eq_dm').value);
-  target.res={
-    Feu:parseNum(document.getElementById('eq_r_fire').value),
-    Eau:parseNum(document.getElementById('eq_r_eau').value),
-    Terre:parseNum(document.getElementById('eq_r_terre').value),
-    Air:parseNum(document.getElementById('eq_r_air').value),
-    Glace:parseNum(document.getElementById('eq_r_glace').value),
-    Foudre:parseNum(document.getElementById('eq_r_foudre').value),
-    Lumière:parseNum(document.getElementById('eq_r_lumiere').value),
-    Ténèbres:parseNum(document.getElementById('eq_r_tenebres').value)
-  };
+  target.itemType=document.getElementById('eq_itemtype').value;
+  if(target.itemType==='weapon'){
+    target.category='arme';
+    target.damageFormula=document.getElementById('eq_damage').value.trim()||'1d20';
+    target.ca=0; target.dm=0;
+    target.res={Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0};
+  }else{
+    target.category=document.getElementById('eq_category').value||'torse';
+    target.damageFormula='';
+    target.ca=parseNum(document.getElementById('eq_ca').value);
+    target.dm=parseNum(document.getElementById('eq_dm').value);
+    target.res={
+      Feu:parseNum(document.getElementById('eq_r_fire').value),
+      Eau:parseNum(document.getElementById('eq_r_eau').value),
+      Terre:parseNum(document.getElementById('eq_r_terre').value),
+      Air:parseNum(document.getElementById('eq_r_air').value),
+      Glace:parseNum(document.getElementById('eq_r_glace').value),
+      Foudre:parseNum(document.getElementById('eq_r_foudre').value),
+      Lumière:parseNum(document.getElementById('eq_r_lumiere').value),
+      Ténèbres:parseNum(document.getElementById('eq_r_tenebres').value)
+    };
+  }
   if(!id)S.equipment.push(target);
   saveState(); closeModal(); render();
 }
@@ -1923,9 +2001,10 @@ function myCharacterCard(c){
   const equippedHtml=(c.type==='player'&&c.equipmentSlots)?EQUIP_SLOTS.map(([k,label])=>{
     const item=equip(c.equipmentSlots[k]); if(!item)return '';
     const resTxt=ELEMENT_RES_KEYS.filter(rk=>item.res?.[rk]).map(rk=>`${rk} +${item.res[rk]}%`).join(', ');
+    const statsLine=item.itemType==='weapon'?`⚔ Dégâts : ${esc(item.damageFormula||'—')} (s'ajoutent aux capacités)`:`CA +${item.ca||0} · DM +${item.dm||0}${resTxt?` · ${resTxt}`:''}`;
     return `<div class="row" style="gap:10px;margin-bottom:8px;padding:6px;background:#20232a;border-radius:8px;align-items:center;flex-wrap:wrap">
       ${item.image?`<img src="${esc(item.image)}" style="max-width:100%;border-radius:8px;flex-shrink:0">`:`<div class="icon-preview" style="width:40px;height:40px;font-size:20px;flex-shrink:0">${iconInlineHtml(item,20)}</div>`}
-      <div><b>${esc(label)} :</b> ${esc(item.name)}<br><span class="tiny muted">CA +${item.ca||0} · DM +${item.dm||0}${resTxt?` · ${resTxt}`:''}</span></div>
+      <div><b>${esc(label)} :</b> ${esc(item.name)}<br><span class="tiny muted">${statsLine}</span></div>
     </div>`;
   }).join(''):'';
   const abilitiesHtml=abilities.length
