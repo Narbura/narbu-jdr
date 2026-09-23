@@ -328,6 +328,8 @@ function normalizeState(){
     if(a.transformCharId===undefined)a.transformCharId=null;
     if(a.triggerOnDeath===undefined)a.triggerOnDeath=false;
     if(a.hotkey===undefined)a.hotkey=null;
+    if(a.coneStart===undefined)a.coneStart=1;
+    if(a.coneEnd===undefined)a.coneEnd=3;
   });
 }
 
@@ -901,7 +903,36 @@ function tokensHtml(){
     </div>`;
   }).join('');
 }
+function zoneAxis(a,targetCell){
+  const casterInst=selectedToken?inst(selectedToken):null;
+  if(!casterInst)return null;
+  const c=S.map.cell;
+  const cx=(S.freeMovement&&casterInst.px!=null)?casterInst.px:casterInst.x*c+c/2;
+  const cy=(S.freeMovement&&casterInst.py!=null)?casterInst.py:casterInst.y*c+c/2;
+  const tx=targetCell[0]*c+c/2, ty=targetCell[1]*c+c/2;
+  let angle=Math.atan2(ty-cy,tx-cx);
+  if(a.area==='line')angle=Math.round(angle/(Math.PI/4))*(Math.PI/4);
+  return {cx,cy,angle,range:(a.range||1)*c};
+}
+function lineConeMarkup(a,targetCell){
+  const axis=zoneAxis(a,targetCell); if(!axis)return '';
+  const {cx,cy,angle,range}=axis, c=S.map.cell;
+  const dx=Math.cos(angle), dy=Math.sin(angle), px=-dy, py=dx;
+  let poly;
+  if(a.area==='line'){
+    const hw=c/2;
+    poly=[[cx+px*hw,cy+py*hw],[cx-px*hw,cy-py*hw],[cx-px*hw+dx*range,cy-py*hw+dy*range],[cx+px*hw+dx*range,cy+py*hw+dy*range]];
+  }else{
+    const sw=(a.coneStart||1)*c/2, ew=(a.coneEnd||3)*c/2;
+    poly=[[cx+px*sw,cy+py*sw],[cx-px*sw,cy-py*sw],[cx+dx*range-px*ew,cy+dy*range-py*ew],[cx+dx*range+px*ew,cy+dy*range+py*ew]];
+  }
+  const pts=poly.map(p=>p.map(n=>n.toFixed(1)).join(',')).join(' ');
+  const mapW=S.map.cols*c, mapH=S.map.rows*c;
+  const effect=a.effect?`<text x="${cx+dx*range/2}" y="${cy+dy*range/2}" font-size="${Math.max(24,c*0.8)}" text-anchor="middle" dominant-baseline="middle" opacity=".42">${esc(a.effect)}</text>`:'';
+  return `<svg id="zonePreview" style="position:absolute;left:0;top:0;pointer-events:none;z-index:20" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="#a44cff38" stroke="#c084fc" stroke-width="2"/>${effect}</svg>`;
+}
 function zoneMarkup(a,cell){
+  if(a.area==='line'||a.area==='cone')return lineConeMarkup(a,cell);
   let size=a.areaSize||3, x=cell[0], y=cell[1];
   x=Math.max(0,Math.min(S.map.cols-size,x)); y=Math.max(0,Math.min(S.map.rows-size,y));
   const px=x*S.map.cell, py=y*S.map.cell, d=size*S.map.cell;
@@ -1503,6 +1534,24 @@ function affected(a,start,explicitTargetInstId){
     return best?[best]:[];
   }
 
+  if(a.area==='line'||a.area==='cone'){
+    const axis=zoneAxis(a,start); if(!axis)return [];
+    const {cx,cy,angle,range}=axis, c=S.map.cell;
+    const dx=Math.cos(angle), dy=Math.sin(angle);
+    return S.instances.filter(t=>{
+      if(!instTemplate(t))return false;
+      const px=(S.freeMovement&&t.px!=null)?t.px:t.x*c+c/2;
+      const py=(S.freeMovement&&t.py!=null)?t.py:t.y*c+c/2;
+      const rx=px-cx, ry=py-cy;
+      const proj=rx*dx+ry*dy;
+      const perp=Math.abs(rx*(-dy)+ry*dx);
+      if(proj<0||proj>range)return false;
+      if(a.area==='line')return perp<=c/2;
+      const sw=(a.coneStart||1)*c/2, ew=(a.coneEnd||3)*c/2;
+      return perp<=sw+(ew-sw)*(proj/range);
+    });
+  }
+
   // Zone (carré / cercle)
   const size=a.areaSize||3;
   const inZone=t=>t.x>=start[0]&&t.x<start[0]+size&&t.y>=start[1]&&t.y<start[1]+size;
@@ -1932,7 +1981,7 @@ function abilityResultsHtml(){
     const isTransfo=a.type==='Transformation';
     const infoLine=isTransfo
       ? `Transformation → ${esc(char(a.transformCharId)?.name||'—')} · Mana ${a.manaCost||0} · Auto à la mort : ${a.triggerOnDeath?'Oui':'Non'}`
-      : `${esc(a.type)}${a.hotkey?` [${esc(a.hotkey)}]`:''} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`;
+      : `${esc(a.type)}${a.hotkey?` [${esc(a.hotkey)}]`:''} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`;
     return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
   }).join('');
 }
@@ -1945,7 +1994,7 @@ function openAbility(id){
   const elementOpts=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres','Neutre','Soin'].map(v=>opt(v,v,a.element)).join('');
   const statOpts=['Magie','Force','Agilité','Vitesse'].map(v=>opt(v,v,a.stat)).join('');
   const defOpts=[['DM',"Défense magique"],['CA',"Classe d'armure"],['none','Aucune']].map(([v,l])=>opt(v,l,a.defense)).join('');
-  const areaOpts=[['single','Cible unique'],['square','Carré'],['circle','Cercle (aperçu)']].map(([v,l])=>opt(v,l,a.area)).join('');
+  const areaOpts=[['single','Cible unique'],['square','Carré'],['circle','Cercle (aperçu)'],['line','Ligne droite'],['cone','Cône']].map(([v,l])=>opt(v,l,a.area)).join('');
   const linkedIds=a.characterIds||[];
   const charListHtml=S.characters.length?S.characters.map(c=>`<label class="ability-char-item" data-name="${esc(c.name.toLowerCase())}"><input type="checkbox" class="ac-check" value="${c.id}" ${linkedIds.includes(c.id)?'checked':''}> <span>${iconInlineHtml(c)} ${esc(c.name)} <small class="muted">(${c.type==='player'?'Joueur':'Monstre'})</small></span></label>`).join(''):'<p class="tiny muted">Aucun personnage créé pour l’instant (page 🧙 Personnages).</p>';
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une capacité</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
@@ -1974,9 +2023,12 @@ function openAbility(id){
   <div class="field"><label>Statistique</label><select id="a_stat">${statOpts}</select></div>
   <div class="field"><label>Défense ciblée</label><select id="a_def">${defOpts}</select></div>
   <div class="field"><label>Élément</label><select id="a_element">${elementOpts}</select></div>
-  <div class="field"><label>Zone</label><select id="a_area">${areaOpts}</select></div>
-  <div class="field"><label>Taille de zone (cases)</label><input id="a_size" type="number" min="1" value="${a.areaSize||1}"></div>
+  <div class="field"><label>Zone</label><select id="a_area" onchange="toggleAreaFields()">${areaOpts}</select></div>
+  <div class="field" id="a_size_field" style="display:${(a.area==='line'||a.area==='cone')?'none':''}"><label>Taille de zone (cases)</label><input id="a_size" type="number" min="1" value="${a.areaSize||1}"></div>
+  <div class="field" id="a_conestart_field" style="display:${a.area==='cone'?'':'none'}"><label>Largeur au départ (cases)</label><input id="a_conestart" type="number" min="1" value="${a.coneStart||1}"></div>
+  <div class="field" id="a_coneend_field" style="display:${a.area==='cone'?'':'none'}"><label>Largeur à l'arrivée (cases)</label><input id="a_coneend" type="number" min="1" value="${a.coneEnd||3}"></div>
   <div class="field"><label>Portée maximale (cases, 0 = illimitée)</label><input id="a_range" type="number" min="0" value="${a.range??0}"></div>
+  <p class="tiny muted full" style="grid-column:1/-1">Ligne droite : rayon d'1 case de large, dans l'axe (8 directions) de la souris. Cône : s'évase du lanceur (largeur « départ ») jusqu'à la portée max (largeur « arrivée »), dans la direction de la souris.</p>
   <div class="field full"><label>Description</label>${richEditorHtml('a_desc',a.desc||'')}</div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
   </div>
@@ -1995,6 +2047,12 @@ function filterTransformCharSelect(){
   document.querySelectorAll('#a_transformchar option').forEach(o=>{
     o.style.display=o.text.toLowerCase().includes(q)?'':'none';
   });
+}
+function toggleAreaFields(){
+  const v=document.getElementById('a_area').value;
+  document.getElementById('a_size_field').style.display=(v==='line'||v==='cone')?'none':'';
+  document.getElementById('a_conestart_field').style.display=v==='cone'?'':'none';
+  document.getElementById('a_coneend_field').style.display=v==='cone'?'':'none';
 }
 function toggleAbilityTypeFields(){
   const isTransfo=document.getElementById('a_type').value==='Transformation';
@@ -2027,6 +2085,8 @@ function saveAbility(id){
     target.element=document.getElementById('a_element').value;
     target.area=document.getElementById('a_area').value;
     target.areaSize=+document.getElementById('a_size').value||1;
+    target.coneStart=Math.max(1,+document.getElementById('a_conestart').value||1);
+    target.coneEnd=Math.max(1,+document.getElementById('a_coneend').value||3);
     target.range=Math.max(0,+document.getElementById('a_range').value||0);
     target.desc=rteHtml('a_desc');
     target.effect=document.getElementById('a_effect').value||'✨';
