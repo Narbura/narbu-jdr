@@ -234,11 +234,13 @@ const DEFAULT={
     {id:'m3',name:'Slime rouge',type:'enemy',icon:'🟠',move:4,ownerId:null,hidden:true,stats:{Force:25,Magie:10,Vitesse:8},resourcesMax:{Vie:40,Mana:0,Bouclier:0},def:{CA:8,DM:1,'CA naturelle':8},res:{Feu:50,Eau:-25,Terre:0,Air:0,Glace:-25,Foudre:0,Lumière:0,Ténèbres:0}}
   ],
   abilities:[
-    {id:'a1',name:"Balle d'air",icon:'💨',type:'Sort',formula:'3d20',stat:'Magie',defense:'DM',element:'Air',area:'single',areaSize:1,range:8,manaCost:10,characterIds:['p1'],desc:"Projectile perforant.",effect:'💨'},
-    {id:'a2',name:'Explosion de feu',icon:'🔥',type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'square',areaSize:4,range:6,manaCost:30,characterIds:['p1'],desc:"Explosion de feu touchant toutes les créatures dans une zone 4×4.",effect:'🔥'},
-    {id:'a3',name:'Soin de groupe',icon:'💚',type:'Soin',formula:'1d20 + 8',stat:'Magie',defense:'none',element:'Neutre',area:'circle',areaSize:3,range:5,manaCost:25,characterIds:['p1'],desc:"Soigne les alliés dans la zone.",effect:'✨'},
-    {id:'a4',name:'Bouclier arcanique',icon:'🛡',type:'Bouclier',formula:'1d20 + 10',stat:'Magie',defense:'none',element:'Neutre',area:'single',areaSize:1,range:5,manaCost:15,characterIds:['p1'],desc:"Confère un bouclier magique à un allié.",effect:'🛡'},
-    {id:'a5',name:'Potion de mana',icon:'🧪',type:'Potion',resource:'Mana',formula:'2d20 + 20',stat:'Force',defense:'none',element:'Neutre',area:'single',areaSize:1,range:1,manaCost:0,characterIds:['p1'],desc:"Restaure du mana à celui qui la boit.",effect:'🧪'}
+    {id:'a1',name:"Balle d'air",icon:'💨',type:'Sort',formula:'3d20',stat:'Magie',defense:'DM',element:'Air',area:'single',areaSize:1,range:8,manaCost:10,characterIds:['p1'],desc:"Projectile perforant.",effect:'💨',hotkey:'1'},
+    {id:'a2',name:'Explosion de feu',icon:'🔥',type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'square',areaSize:4,range:6,manaCost:30,characterIds:['p1'],desc:"Explosion de feu touchant toutes les créatures dans une zone 4×4.",effect:'🔥',hotkey:'2'},
+    {id:'a3',name:'Soin de groupe',icon:'💚',type:'Soin',formula:'1d20 + 8',stat:'Magie',defense:'none',element:'Neutre',area:'circle',areaSize:3,range:5,manaCost:25,characterIds:['p1'],desc:"Soigne les alliés dans la zone.",effect:'✨',hotkey:'3'},
+    {id:'a4',name:'Bouclier arcanique',icon:'🛡',type:'Bouclier',formula:'1d20 + 10',stat:'Magie',defense:'none',element:'Neutre',area:'single',areaSize:1,range:5,manaCost:15,characterIds:['p1'],desc:"Confère un bouclier magique à un allié.",effect:'🛡',hotkey:'4'}
+  ],
+  consumables:[
+    {id:'cs_default_mana',name:'Potion de mana',icon:'🧪',iconImage:null,resource:'Mana',amount:40}
   ],
   instances:[
     {id:'i_p1',charId:'p1',label:'Zephyr',x:4,y:7,hp:290,hpMax:290,mana:215,manaMax:215,shield:0,shieldMax:100,remainingMove:6},
@@ -265,6 +267,15 @@ function normalizeState(){
   if(S.freeMovement===undefined)S.freeMovement=false;
   if(!S.characters)S.characters=[];
   if(!S.abilities)S.abilities=[];
+  if(!S.consumables)S.consumables=[];
+  // Migration : les anciennes capacités de type "Potion" deviennent des définitions de consommables
+  (S.abilities||[]).filter(a=>a.type==='Potion').forEach(a=>{
+    if(!S.consumables.some(cn=>cn.migratedFrom===a.id)){
+      S.consumables.push({id:'cs'+a.id,name:a.name,icon:a.icon||'🧪',iconImage:a.iconImage||null,resource:a.resource==='Mana'?'Mana':'Vie',amount:20,migratedFrom:a.id});
+    }
+  });
+  S.abilities=(S.abilities||[]).filter(a=>a.type!=='Potion');
+  S.consumables.forEach(cn=>{ if(cn.iconImage===undefined)cn.iconImage=null; });
   if(!S.characterCategories)S.characterCategories=[];
   if(!S.notes)S.notes=[];
   if(!S.noteCategories)S.noteCategories=[];
@@ -292,6 +303,7 @@ function normalizeState(){
     if(c.bio===undefined)c.bio='';
     if(c.inventory===undefined)c.inventory='';
     if(!Array.isArray(c.transformationIds))c.transformationIds=[];
+    if(!Array.isArray(c.consumablesOwned))c.consumablesOwned=[];
     if(c.type==='player'){
       if(!c.equipmentSlots)c.equipmentSlots={};
       EQUIP_SLOTS.forEach(([k])=>{if(c.equipmentSlots[k]===undefined)c.equipmentSlots[k]=null;});
@@ -315,6 +327,7 @@ function normalizeState(){
     if(a.iconImage===undefined)a.iconImage=null;
     if(a.transformCharId===undefined)a.transformCharId=null;
     if(a.triggerOnDeath===undefined)a.triggerOnDeath=false;
+    if(a.hotkey===undefined)a.hotkey=null;
   });
 }
 
@@ -852,7 +865,7 @@ function tablePage(){
       if(!canControlInstance(selInst.id))return '<span class="tiny muted">Vous ne contrôlez pas ce personnage.</span>';
       const known=characterAbilities(selInst.charId);
       if(!known.length)return '<span class="tiny muted">Ce personnage ne connaît aucune capacité (à assigner dans sa fiche).</span>';
-      return known.map(a=>`<button class="btn ${activeAbility===a.id?'primary':''}" onclick="startAbility('${a.id}')" title="${a.type==='Transformation'?`Transformation immédiate · Mana : ${a.manaCost||0}`:`Portée : ${a.range?a.range+' cases':'illimitée'} · Mana : ${a.manaCost||0}`}">${iconInlineHtml(a)} ${esc(a.name)}</button>`).join('');
+      return known.map(a=>`<button class="btn ${activeAbility===a.id?'primary':''}" onclick="startAbility('${a.id}')" title="${a.type==='Transformation'?`Transformation immédiate · Mana : ${a.manaCost||0}`:`Portée : ${a.range?a.range+' cases':'illimitée'} · Mana : ${a.manaCost||0}`}${a.hotkey?` · Raccourci : ${a.hotkey}`:''}">${a.hotkey?`<b>[${esc(a.hotkey)}]</b> `:''}${iconInlineHtml(a)} ${esc(a.name)}</button>`).join('');
     })()}</div>
   </div>
   <div class="card side-panel">${sidePanelHtml()}</div>
@@ -1470,7 +1483,7 @@ function affected(a,start,explicitTargetInstId){
   const casterInst=selectedToken?inst(selectedToken):null;
   const casterTpl=casterInst?instTemplate(casterInst):null;
   const casterType=casterTpl?.type||'player';
-  const isSupport=(a.type==='Soin'||a.type==='Bouclier'||a.type==='Potion');
+  const isSupport=(a.type==='Soin'||a.type==='Bouclier');
 
   if(a.area==='single'){
     const targetType=isSupport?casterType:(casterType==='enemy'?'player':'enemy');
@@ -1544,45 +1557,44 @@ function resolveAbility(a,start,explicitTargetInstId){
     activeAbility=null; hoverCell=null; saveState(); render(); return;
   }
 
+  // Pour les sorts de zone (AoE) : un seul jet de dés partagé, appliqué à toutes les cibles.
+  const isAoE=a.area!=='single';
+  let sharedRoll=null, sharedUsedFormula=null;
+  if(isAoE){
+    if(a.type==='Soin'||a.type==='Bouclier'){
+      sharedUsedFormula=a.formula;
+      sharedRoll=roll(a.formula);
+    }else{
+      sharedUsedFormula=weaponFormula?combineFormula(a.formula,weaponFormula):a.formula;
+      sharedRoll=roll(sharedUsedFormula);
+    }
+    lines.push(`🎲 ${esc(sharedUsedFormula)}${weaponUsed?` (${esc(a.formula)} + arme « ${esc(weaponUsed.name)} » ${esc(weaponFormula)})`:''} : ${sharedRoll.rolls.join(' + ')}${sharedRoll.bonus?` + ${sharedRoll.bonus}`:''} = ${sharedRoll.total} <span class="tiny muted">(zone, jet unique)</span>`);
+  }
+
   for(const t of targets){
     const tTpl=instTemplate(t);
     if(a.type==='Soin'){
-      const r=roll(a.formula);
+      const r=isAoE?sharedRoll:roll(a.formula);
       const amount=Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100);
       t.hp=Math.min(t.hpMax,t.hp+amount);
-      lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
+      if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
       lines.push(`💚 Soin : ${amount}`);
       lines.push(`❤️ ${esc(t.label)} : +${amount} PV (${t.hp}/${t.hpMax})`);
       continue;
     }
     if(a.type==='Bouclier'){
-      const r=roll(a.formula);
+      const r=isAoE?sharedRoll:roll(a.formula);
       const amount=Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100);
       t.shield=(t.shield||0)+amount;
       if(t.shield>t.shieldMax)t.shieldMax=t.shield;
-      lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
+      if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
       lines.push(`🛡 Bouclier accordé : ${amount}`);
       lines.push(`🛡 ${esc(t.label)} : ${t.shield}/${t.shieldMax}`);
       continue;
     }
-    if(a.type==='Potion'){
-      const r=roll(a.formula);
-      const amount=Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100);
-      lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
-      if(a.resource==='Mana'){
-        t.mana=Math.min(t.manaMax,t.mana+amount);
-        lines.push(`🧪 Mana restauré : ${amount}`);
-        lines.push(`💧 ${esc(t.label)} : +${amount} Mana (${t.mana}/${t.manaMax})`);
-      }else{
-        t.hp=Math.min(t.hpMax,t.hp+amount);
-        lines.push(`🧪 PV restaurés : ${amount}`);
-        lines.push(`❤️ ${esc(t.label)} : +${amount} PV (${t.hp}/${t.hpMax})`);
-      }
-      continue;
-    }
     if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);continue;}
-    const usedFormula=weaponFormula?combineFormula(a.formula,weaponFormula):a.formula;
-    const r=roll(usedFormula); const raw=r.total;
+    const usedFormula=isAoE?sharedUsedFormula:(weaponFormula?combineFormula(a.formula,weaponFormula):a.formula);
+    const r=isAoE?sharedRoll:roll(usedFormula); const raw=r.total;
     let damage=Math.ceil(raw*mult*(casterTpl.stats[a.stat]||0)/100);
     const def=(a.defense!=='none')?(effectiveDef(tTpl)[a.defense]||0):0;
     damage=Math.max(0,damage-def);
@@ -1591,7 +1603,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     const beforeShield=t.shield||0; const absorbed=Math.min(beforeShield,damage);
     t.shield-=absorbed; const hpDamage=damage-absorbed;
     t.hp=Math.max(0,t.hp-hpDamage);
-    lines.push(`🎲 ${esc(usedFormula)}${weaponUsed?` (${esc(a.formula)} + arme « ${esc(weaponUsed.name)} » ${esc(weaponFormula)})`:''} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${raw}`);
+    if(!isAoE)lines.push(`🎲 ${esc(usedFormula)}${weaponUsed?` (${esc(a.formula)} + arme « ${esc(weaponUsed.name)} » ${esc(weaponFormula)})`:''} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${raw}`);
     lines.push(`✨ Dégâts (${esc(a.element)}) : ${damage}${def?` (−${def} défense)`:''}${resist?` (résistance ${Math.round(resist*100)}%)`:''}`);
     if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
     lines.push(`❤️ ${esc(t.label)} : -${hpDamage} PV (${t.hp}/${t.hpMax})`);
@@ -1703,6 +1715,14 @@ function openCharacter(id){
   const known=id?characterAbilities(id):[];
   const insts=id?S.instances.filter(i=>i.charId===id):[];
   const curResHtml=id?`<div class="field full"><label>Ressources actuelles (jetons sur la carte — synchronisées en direct)</label>${insts.length?insts.map(i=>`<div class="row" style="margin-bottom:6px;flex-wrap:wrap"><span style="flex:1">${esc(i.label)}</span><span class="tiny muted">❤️ PV</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="hp" value="${i.hp}" oninput="this.dataset.dirty='1'"><span class="tiny muted">💧 Mana</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="mana" value="${i.mana}" oninput="this.dataset.dirty='1'"><span class="tiny muted">↔ Taille</span><input type="number" min="1" max="20" style="width:55px" data-inst="${i.id}" data-field="sizew" value="${i.sizeW||1}" oninput="this.dataset.dirty='1'" title="Largeur en cases"><span class="tiny muted">×</span><input type="number" min="1" max="20" style="width:55px" data-inst="${i.id}" data-field="sizeh" value="${i.sizeH||1}" oninput="this.dataset.dirty='1'" title="Hauteur en cases"></div>`).join(''):'<p class="tiny muted">Aucun jeton de ce personnage sur la carte.</p>'}<p class="tiny muted">La taille est annulée automatiquement si elle chevauche un autre jeton ou dépasse la carte.</p></div>`:'';
+  const consumablesMgmtHtml=id?`<div class="field full"><label>🧪 Consommables possédés</label>
+  <div style="margin-bottom:8px">${(base.consumablesOwned&&base.consumablesOwned.length)?base.consumablesOwned.map(o=>{const def=(S.consumables||[]).find(x=>x.id===o.id);if(!def)return '';return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px"><span>${iconInlineHtml(def)} ${esc(def.name)} × ${o.qty}</span><button class="btn ghost" style="padding:4px 8px" onclick="removeCharConsumable('${id}','${o.id}')" title="Retirer tout">🗑️</button></div>`;}).join(''):'<p class="tiny muted">Aucun consommable.</p>'}</div>
+  <div class="row" style="gap:6px">
+    <select id="c_addconsumable_select"><option value="">— Choisir un consommable —</option>${(S.consumables||[]).map(cn=>`<option value="${esc(cn.id)}">${esc(cn.name)}</option>`).join('')}</select>
+    <button class="btn" type="button" onclick="addCharConsumablePrompt('${id}')">＋ Ajouter</button>
+  </div>
+  ${!(S.consumables||[]).length?'<p class="tiny muted">Aucun consommable défini (page 🎒 Équipement).</p>':''}
+  </div>`:'';
   const knownLine=id?(known.length?`<p class="tiny muted">Capacités liées : ${known.map(a=>`${iconInlineHtml(a)} ${esc(a.name)}`).join(', ')} <span style="opacity:.7">(à gérer depuis la page ✨ Capacités)</span></p>`:'<p class="tiny muted">Aucune capacité liée à ce personnage pour l’instant (page ✨ Capacités).</p>'):'';
   const bioHtml=`
   <div class="field full">
@@ -1751,6 +1771,7 @@ function openCharacter(id){
   <div class="field"><label>Social</label><input id="s_soc" type="number" value="${base.stats.Social??0}"></div>
   <div class="field"><label>Artisanat</label><input id="s_craft" type="number" value="${base.stats.Artisanat??0}"></div>
   ${curResHtml}
+  ${consumablesMgmtHtml}
   <div class="field"><label>Classe d'armure</label><input id="d_ca" type="number" value="${base.def.CA??0}"></div>
   <div class="field"><label>Défense magique</label><input id="d_dm" type="number" value="${base.def.DM??0}"></div>
   <div class="field"><label>Résistance Feu (%)</label><input id="r_fire" type="number" value="${base.res.Feu??0}"></div>
@@ -1849,7 +1870,7 @@ document.addEventListener('dblclick',e=>{
 });
 
 /* ============================= CAPACITÉS : ÉDITION (MJ uniquement) ============================= */
-const ABILITY_TYPES=['Sort','Attaque','Compétence','Soin','Bouclier','Potion','Transformation'];
+const ABILITY_TYPES=['Sort','Attaque','Compétence','Soin','Bouclier','Transformation'];
 function abilitiesPage(){
   const mj=isMJ();
   const typeOpts=`<option value="">Tous types</option>`+ABILITY_TYPES.map(t=>opt(t,t,abilityTypeFilter)).join('');
@@ -1881,13 +1902,13 @@ function abilityResultsHtml(){
     const isTransfo=a.type==='Transformation';
     const infoLine=isTransfo
       ? `Transformation → ${esc(char(a.transformCharId)?.name||'—')} · Mana ${a.manaCost||0} · Auto à la mort : ${a.triggerOnDeath?'Oui':'Non'}`
-      : `${esc(a.type)} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}${a.type==='Potion'?` · Restaure ${a.resource==='Mana'?'💧 Mana':'❤️ Vie'}`:''}`;
+      : `${esc(a.type)}${a.hotkey?` [${esc(a.hotkey)}]`:''} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`;
     return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
   }).join('');
 }
 function openAbility(id){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les capacités.');return;}
-  const a=id?S.abilities.find(x=>x.id===id):{id:'a'+Date.now(),name:'Nouvelle capacité',icon:'✨',iconImage:null,type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'single',areaSize:1,range:6,manaCost:0,resource:'Vie',desc:'',effect:'✨',transformCharId:null,triggerOnDeath:false};
+  const a=id?S.abilities.find(x=>x.id===id):{id:'a'+Date.now(),name:'Nouvelle capacité',icon:'✨',iconImage:null,type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'single',areaSize:1,range:6,manaCost:0,desc:'',effect:'✨',transformCharId:null,triggerOnDeath:false,hotkey:null};
   const isTransfo=a.type==='Transformation';
   const typeOpts=ABILITY_TYPES.map(v=>opt(v,v,a.type)).join('');
   const transformCharOpts=`<option value="">— Choisir un personnage —</option>`+S.characters.map(c=>`<option value="${esc(c.id)}" ${a.transformCharId===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
@@ -1914,6 +1935,7 @@ function openAbility(id){
   </div>
   <div class="field"><label>Type</label><select id="a_type" onchange="toggleAbilityTypeFields()">${typeOpts}</select></div>
   <div class="field" id="a_manacost_field"><label>Coût en mana (0 = aucun)</label><input id="a_manacost" type="number" min="0" value="${a.manaCost??0}"></div>
+  <div class="field"><label>Raccourci clavier (1-9, optionnel)</label><input id="a_hotkey" maxlength="1" value="${esc(a.hotkey||'')}" placeholder="ex: 1"></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
     <div class="field full"><label>Se transforme en</label><input id="a_transformchar_search" placeholder="Rechercher un personnage par nom…" oninput="filterTransformCharSelect()"><select id="a_transformchar" size="6" style="margin-top:6px">${transformCharOpts}</select></div>
     <div class="field full"><label><input type="checkbox" id="a_triggerondeath" ${a.triggerOnDeath?'checked':''}> Activer automatiquement cette transformation à la mort du personnage (si assez de mana)</label></div>
@@ -1926,7 +1948,6 @@ function openAbility(id){
   <div class="field"><label>Zone</label><select id="a_area">${areaOpts}</select></div>
   <div class="field"><label>Taille de zone (cases)</label><input id="a_size" type="number" min="1" value="${a.areaSize||1}"></div>
   <div class="field"><label>Portée maximale (cases, 0 = illimitée)</label><input id="a_range" type="number" min="0" value="${a.range??0}"></div>
-  <div class="field"><label>Ressource restaurée (type Potion uniquement)</label><select id="a_resource">${opt('Vie','❤️ Vie (PV)',a.resource||'Vie')}${opt('Mana','💧 Mana',a.resource||'Vie')}</select></div>
   <div class="field full"><label>Description</label>${richEditorHtml('a_desc',a.desc||'')}</div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
   </div>
@@ -1965,11 +1986,12 @@ function saveAbility(id){
   target.iconImage=document.getElementById('a_iconimage').value.trim()||null;
   target.type=document.getElementById('a_type').value;
   target.manaCost=Math.max(0,+document.getElementById('a_manacost').value||0);
+  target.hotkey=(document.getElementById('a_hotkey').value||'').trim().slice(0,1)||null;
   if(target.type==='Transformation'){
     target.transformCharId=document.getElementById('a_transformchar').value||null;
     target.triggerOnDeath=document.getElementById('a_triggerondeath').checked;
     target.formula='0'; target.stat='Force'; target.defense='none'; target.element='Neutre';
-    target.area='single'; target.areaSize=1; target.range=0; target.resource='Vie'; target.desc=''; target.effect='';
+    target.area='single'; target.areaSize=1; target.range=0; target.desc=''; target.effect='';
   }else{
     target.formula=document.getElementById('a_formula').value||'1d20';
     target.stat=document.getElementById('a_stat').value;
@@ -1978,7 +2000,6 @@ function saveAbility(id){
     target.area=document.getElementById('a_area').value;
     target.areaSize=+document.getElementById('a_size').value||1;
     target.range=Math.max(0,+document.getElementById('a_range').value||0);
-    target.resource=document.getElementById('a_resource').value;
     target.desc=rteHtml('a_desc');
     target.effect=document.getElementById('a_effect').value||'✨';
     target.transformCharId=null; target.triggerOnDeath=false;
@@ -1991,7 +2012,7 @@ function saveAbility(id){
 function openAdvancedAbility(id){
   if(!isMJ()){toast('⛔ Seul le MJ peut accéder au mode avancé.');return;}
   const a=S.abilities.find(x=>x.id===id); if(!a)return;
-  const macro=`ABILITY "${a.name}"\n\nTYPE = ${a.type}\nELEMENT = ${a.element}\nRANGE = ${a.range?a.range+' cases (Chebyshev)':'illimitée'}\nMANA_COST = ${a.manaCost||0}\n\nATTACK = d100\nRESULT = SUCCESS_BAND(ATTACK)\n\nEFFECT\n    FORMULA = ${a.formula}\n    STAT = ${a.stat}\n    DEFENSE = ${a.defense}\n\nAREA\n    SHAPE = ${a.area.toUpperCase()}\n    SIZE = ${a.areaSize}\n\nON_TARGET\n    ${a.type==='Soin'?'APPLY_HEAL()':a.type==='Bouclier'?'APPLY_SHIELD()':a.type==='Potion'?`APPLY_RESTORE(${a.resource||'Vie'})`:'APPLY_DAMAGE()'}`;
+  const macro=`ABILITY "${a.name}"\n\nTYPE = ${a.type}\nELEMENT = ${a.element}\nRANGE = ${a.range?a.range+' cases (Chebyshev)':'illimitée'}\nMANA_COST = ${a.manaCost||0}\n\nATTACK = d100\nRESULT = SUCCESS_BAND(ATTACK)\n\nEFFECT\n    FORMULA = ${a.formula}\n    STAT = ${a.stat}\n    DEFENSE = ${a.defense}\n\nAREA\n    SHAPE = ${a.area.toUpperCase()}\n    SIZE = ${a.areaSize}\n\nON_TARGET\n    ${a.type==='Soin'?'APPLY_HEAL()':a.type==='Bouclier'?'APPLY_SHIELD()':'APPLY_DAMAGE()'}`;
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>🔴 Aperçu macro — ${esc(a.name)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div><p class="muted">Lecture seule pour ce prototype : le mode simple reste la configuration principale.</p><div class="field"><label>Macro</label><textarea readonly style="min-height:340px;font-family:ui-monospace,monospace">${esc(macro)}</textarea></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
 }
@@ -2011,7 +2032,83 @@ function equipmentPage(){
   </div>
   <div id="equipResultsContainer">${equipResultsHtml()}</div>
   </div>
-  <div class="card"><h2>Principe</h2><p class="muted">Chaque équipement appartient à une catégorie (tête, torse, jambes, pieds, main, amulette, anneau ou arme) : seuls les équipements de la bonne catégorie sont proposés pour chaque emplacement d'une fiche joueur. Les armures apportent Classe d'armure / Défense magique / résistances, cumulées avec la Résistance Naturelle. Les armes apportent des dégâts (ex : 2d20) qui s'ajoutent automatiquement à la formule des capacités lancées par le personnage qui les porte. Les monstres ne sont pas concernés.</p></div></div>`;
+  <div class="card"><h2>Principe</h2><p class="muted">Chaque équipement appartient à une catégorie (tête, torse, jambes, pieds, main, amulette, anneau ou arme) : seuls les équipements de la bonne catégorie sont proposés pour chaque emplacement d'une fiche joueur. Les armures apportent Classe d'armure / Défense magique / résistances, cumulées avec la Résistance Naturelle. Les armes apportent des dégâts (ex : 2d20) qui s'ajoutent automatiquement à la formule des capacités lancées par le personnage qui les porte. Les monstres ne sont pas concernés.</p></div></div>
+  <div class="card" style="margin-top:16px"><div class="row between"><h2>🧪 Consommables</h2><button class="btn primary" onclick="openConsumableDef()">＋ Nouveau consommable</button></div>
+  <p class="tiny muted">Définis ici les modèles de consommables (ex : Potion de mana). Assigne-les ensuite à un personnage depuis sa fiche (page 🧙 Personnages).</p>
+  <div id="consumableResultsContainer">${consumableDefResultsHtml()}</div>
+  </div>`;
+}
+function consumableDefResultsHtml(){
+  const items=S.consumables||[];
+  if(!items.length)return '<p class="tiny muted">Aucun consommable défini.</p>';
+  return items.map(cn=>`<div class="ability"><div class="icon">${iconBoxHtml(cn,'9px')}</div><div class="ability-info"><b>${esc(cn.name)}</b><small>Restaure ${cn.amount} ${cn.resource==='Mana'?'💧 Mana':'❤️ PV'}</small></div><button class="btn" onclick="openConsumableDef('${cn.id}')">Modifier</button><button class="btn ghost" onclick="deleteConsumableDef('${cn.id}')" title="Supprimer">🗑️</button></div>`).join('');
+}
+function openConsumableDef(id){
+  if(!isMJ())return;
+  const cn=id?(S.consumables||[]).find(x=>x.id===id):{id:'cs'+Date.now(),name:'Nouveau consommable',icon:'🧪',iconImage:null,resource:'Vie',amount:10};
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} un consommable</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <div class="form">
+  <div class="field"><label>Nom</label><input id="cn_name" value="${esc(cn.name)}"></div>
+  <div class="field"><label>Icône (emoji)</label><input id="cn_icon" value="${esc(cn.icon)}"></div>
+  <div class="field"><label>Ressource restaurée</label><select id="cn_resource">${opt('Vie','❤️ PV',cn.resource)}${opt('Mana','💧 Mana',cn.resource)}</select></div>
+  <div class="field"><label>Valeur fixe restaurée</label><input id="cn_amount" type="number" min="1" value="${cn.amount}"></div>
+  </div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveConsumableDef('${id||''}')">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function saveConsumableDef(id){
+  if(!isMJ())return;
+  if(!S.consumables)S.consumables=[];
+  const target=id?S.consumables.find(x=>x.id===id):{id:'cs'+Date.now()};
+  target.name=document.getElementById('cn_name').value||'Consommable';
+  target.icon=document.getElementById('cn_icon').value||'🧪';
+  target.resource=document.getElementById('cn_resource').value;
+  target.amount=Math.max(1,parseNum(document.getElementById('cn_amount').value)||10);
+  if(!id)S.consumables.push(target);
+  saveState(); closeModal(); render();
+}
+function deleteConsumableDef(id){
+  if(!isMJ())return;
+  if(!confirm('Supprimer ce consommable ? Il sera retiré des fiches des personnages.'))return;
+  S.characters.forEach(c=>{c.consumablesOwned=(c.consumablesOwned||[]).filter(x=>x.id!==id);});
+  S.consumables=(S.consumables||[]).filter(x=>x.id!==id);
+  saveState(); render();
+}
+function addCharConsumablePrompt(charId){
+  const sel=document.getElementById('c_addconsumable_select'); const defId=sel?sel.value:'';
+  if(!defId){toast('⚠️ Choisis un consommable.');return;}
+  const qty=parseInt(prompt('Combien en ajouter ?','1'),10);
+  if(!qty||qty<1)return;
+  const c=char(charId); if(!c)return;
+  c.consumablesOwned=c.consumablesOwned||[];
+  let entry=c.consumablesOwned.find(x=>x.id===defId);
+  if(entry)entry.qty+=qty; else c.consumablesOwned.push({id:defId,qty});
+  saveState();
+  openCharacter(charId);
+}
+function removeCharConsumable(charId,defId){
+  if(!isMJ())return;
+  const c=char(charId); if(!c)return;
+  c.consumablesOwned=(c.consumablesOwned||[]).filter(x=>x.id!==defId);
+  saveState();
+  openCharacter(charId);
+}
+function useConsumable(charId,defId){
+  if(!canControlChar(charId))return;
+  const c=char(charId); if(!c)return;
+  const entry=(c.consumablesOwned||[]).find(x=>x.id===defId);
+  if(!entry||entry.qty<=0){toast('⚠️ Aucune charge restante.');return;}
+  const def=(S.consumables||[]).find(x=>x.id===defId); if(!def){toast('⚠️ Consommable introuvable.');return;}
+  const targets=S.instances.filter(i=>i.charId===charId);
+  if(!targets.length){toast('⚠️ Ce personnage n’a pas de jeton sur la carte.');return;}
+  targets.forEach(t=>{
+    if(def.resource==='Mana')t.mana=Math.min(t.manaMax,t.mana+def.amount);
+    else t.hp=Math.min(t.hpMax,t.hp+def.amount);
+  });
+  entry.qty-=1;
+  if(entry.qty<=0)c.consumablesOwned=c.consumablesOwned.filter(x=>x.id!==defId);
+  addLog(`🧪 <b>${esc(c.name)}</b> utilise <b>${esc(def.name)}</b> (+${def.amount} ${def.resource==='Mana'?'💧 Mana':'❤️ PV'}).`);
+  saveState(); render();
 }
 function onEquipSearchInput(v){equipSearchQuery=v;const c=document.getElementById('equipResultsContainer');if(c)c.innerHTML=equipResultsHtml();}
 function onEquipCatFilter(v){equipCategoryFilter=v;const c=document.getElementById('equipResultsContainer');if(c)c.innerHTML=equipResultsHtml();}
@@ -2171,10 +2268,15 @@ function myCharacterCard(c){
   const instancesHtml=instances.length
     ? instances.map(i=>`<div class="row between" style="padding:8px;background:#20232a;border-radius:8px;margin-bottom:6px"><span>${esc(i.label)} — case (${i.x+1}, ${i.y+1})</span><span class="tiny">❤️ ${i.hp}/${i.hpMax} · 💧 ${i.mana}/${i.manaMax} · 🛡 ${i.shield}/${i.shieldMax}</span></div>`).join('')
     : `<p class="tiny muted">Ce personnage n'est pas actuellement sur la carte.</p>`;
+  const consumablesHtml=(c.consumablesOwned&&c.consumablesOwned.length)?c.consumablesOwned.map(o=>{
+    const def=(S.consumables||[]).find(x=>x.id===o.id); if(!def)return '';
+    return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px"><span>${iconInlineHtml(def)} ${esc(def.name)} × ${o.qty} <small class="muted">(+${def.amount} ${def.resource==='Mana'?'💧 Mana':'❤️ PV'})</small></span><button class="btn" style="padding:4px 8px" onclick="useConsumable('${c.id}','${o.id}')">Utiliser</button></div>`;
+  }).join(''):'<p class="tiny muted">Aucun consommable.</p>';
   const bioTabHtml=`
     <div style="margin-bottom:12px">${c.profileImage?`<img src="${esc(c.profileImage)}" style="max-width:100%;border-radius:10px;display:block">`:'<p class="tiny muted">Aucune image.</p>'}</div>
     <div class="stat" style="margin-bottom:8px"><label>Description</label><div class="tiny rte-view" style="margin-top:4px">${c.bio||'Aucune description.'}</div></div>
     <div class="stat" style="margin-bottom:8px"><label>Inventaire</label><div class="tiny rte-view">${c.inventory||'Vide.'}</div></div>
+    <div class="stat" style="margin-bottom:8px"><label>🧪 Consommables</label><div style="margin-top:6px">${consumablesHtml}</div></div>
     ${c.type==='player'?`<div class="stat"><label>🎒 Équipement équipé</label><div style="margin-top:6px">${equippedHtml||'<p class="tiny muted">Aucun équipement.</p>'}</div><p class="tiny muted" style="margin-top:4px">🛡 Résistance naturelle (auto) : CA +${nat.ca} · DM +${nat.dm}</p></div>`:''}`;
   const statsTabHtml=`
     <h3 style="font-size:13px;margin:0 0 8px">Sur la carte</h3>
@@ -2845,6 +2947,18 @@ function moveSelectedTokenBy(dx,dy){
   addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
   saveState(); render();
 }
+document.addEventListener('keydown',e=>{
+  if(!/^[1-9]$/.test(e.key))return;
+  if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)||e.target.isContentEditable)return;
+  if(document.getElementById('modalBg')?.classList.contains('open'))return;
+  if(currentPage!=='table'||!selectedToken)return;
+  const selInst=inst(selectedToken); if(!selInst||!canControlInstance(selInst.id))return;
+  const a=characterAbilities(selInst.charId).find(x=>x.hotkey===e.key);
+  if(!a)return;
+  e.preventDefault();
+  if(activeAbility){activeAbility=null;hoverCell=null;}
+  startAbility(a.id);
+});
 document.addEventListener('keydown',e=>{
   if(!ARROW_DELTAS[e.key])return;
   if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)||e.target.isContentEditable)return;
