@@ -864,8 +864,11 @@ function tablePage(){
       if(!selInst)return '<span class="tiny muted">Sélectionne un personnage sur la carte pour voir ses capacités.</span>';
       if(!canControlInstance(selInst.id))return '<span class="tiny muted">Vous ne contrôlez pas ce personnage.</span>';
       const known=characterAbilities(selInst.charId);
-      if(!known.length)return '<span class="tiny muted">Ce personnage ne connaît aucune capacité (à assigner dans sa fiche).</span>';
-      return known.map(a=>`<button class="btn ${activeAbility===a.id?'primary':''}" onclick="startAbility('${a.id}')" title="${a.type==='Transformation'?`Transformation immédiate · Mana : ${a.manaCost||0}`:`Portée : ${a.range?a.range+' cases':'illimitée'} · Mana : ${a.manaCost||0}`}${a.hotkey?` · Raccourci : ${a.hotkey}`:''}">${a.hotkey?`<b>[${esc(a.hotkey)}]</b> `:''}${iconInlineHtml(a)} ${esc(a.name)}</button>`).join('');
+      const abilitiesHtml=known.length?known.map(a=>{
+        const hk=myHotkeyFor(selInst.charId,a.id);
+        return `<button class="btn ${activeAbility===a.id?'primary':''}" onclick="startAbility('${a.id}')" oncontextmenu="event.preventDefault();promptSetHotkey('${selInst.charId}','${a.id}')" title="${a.type==='Transformation'?`Transformation immédiate · Mana : ${a.manaCost||0}`:`Portée : ${a.range?a.range+' cases':'illimitée'} · Mana : ${a.manaCost||0}`}${hk?` · Raccourci : ${hk}`:''} · Clic droit : assigner un raccourci">${hk?`<b>[${esc(hk)}]</b> `:''}${iconInlineHtml(a)} ${esc(a.name)}</button>`;
+      }).join(''):'<span class="tiny muted">Ce personnage ne connaît aucune capacité (à assigner dans sa fiche).</span>';
+      return abilitiesHtml+consumablesButtonsHtml(selInst);
     })()}</div>
   </div>
   <div class="card side-panel">${sidePanelHtml()}</div>
@@ -1618,6 +1621,33 @@ function resolveAbility(a,start,explicitTargetInstId){
   if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
   saveState(); render();
 }
+/* ============================= RACCOURCIS PERSONNELS (par joueur, stockés en local) ============================= */
+function getHotkeyMap(){try{return JSON.parse(localStorage.getItem('narbudr-my-hotkeys')||'{}');}catch(e){return {};}}
+function setHotkeyMap(m){localStorage.setItem('narbudr-my-hotkeys',JSON.stringify(m));}
+function myHotkeyFor(charId,abilityId){return (getHotkeyMap()[charId]||{})[abilityId]||null;}
+function promptSetHotkey(charId,abilityId){
+  const key=prompt('Touche (1-9) pour ce sort — laisse vide pour retirer :','');
+  if(key===null)return;
+  const m=getHotkeyMap();
+  if(!m[charId])m[charId]={};
+  const trimmed=key.trim();
+  if(!trimmed){delete m[charId][abilityId];}
+  else if(/^[1-9]$/.test(trimmed)){
+    Object.keys(m[charId]).forEach(aid=>{if(m[charId][aid]===trimmed)delete m[charId][aid];});
+    m[charId][abilityId]=trimmed;
+  }else{toast('⚠️ Touche invalide (1 à 9 uniquement).');return;}
+  setHotkeyMap(m);
+  render();
+}
+function consumablesButtonsHtml(selInst){
+  const tpl=instTemplate(selInst); if(!tpl)return '';
+  const owned=(tpl.consumablesOwned||[]).filter(o=>o.qty>0);
+  if(!owned.length)return '';
+  return owned.map(o=>{
+    const def=(S.consumables||[]).find(x=>x.id===o.id); if(!def)return '';
+    return `<button class="btn" onclick="useConsumable('${tpl.id}','${o.id}')" title="Utiliser (${o.qty} restant(s))">${iconInlineHtml(def)} ${esc(def.name)} ×${o.qty}</button>`;
+  }).join('');
+}
 function startAbility(id){
   if(!selectedToken){toast('Sélectionne d’abord un personnage sur la carte.');return;}
   if(!canControlInstance(selectedToken)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
@@ -1935,7 +1965,6 @@ function openAbility(id){
   </div>
   <div class="field"><label>Type</label><select id="a_type" onchange="toggleAbilityTypeFields()">${typeOpts}</select></div>
   <div class="field" id="a_manacost_field"><label>Coût en mana (0 = aucun)</label><input id="a_manacost" type="number" min="0" value="${a.manaCost??0}"></div>
-  <div class="field"><label>Raccourci clavier (1-9, optionnel)</label><input id="a_hotkey" maxlength="1" value="${esc(a.hotkey||'')}" placeholder="ex: 1"></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
     <div class="field full"><label>Se transforme en</label><input id="a_transformchar_search" placeholder="Rechercher un personnage par nom…" oninput="filterTransformCharSelect()"><select id="a_transformchar" size="6" style="margin-top:6px">${transformCharOpts}</select></div>
     <div class="field full"><label><input type="checkbox" id="a_triggerondeath" ${a.triggerOnDeath?'checked':''}> Activer automatiquement cette transformation à la mort du personnage (si assez de mana)</label></div>
@@ -1986,7 +2015,6 @@ function saveAbility(id){
   target.iconImage=document.getElementById('a_iconimage').value.trim()||null;
   target.type=document.getElementById('a_type').value;
   target.manaCost=Math.max(0,+document.getElementById('a_manacost').value||0);
-  target.hotkey=(document.getElementById('a_hotkey').value||'').trim().slice(0,1)||null;
   if(target.type==='Transformation'){
     target.transformCharId=document.getElementById('a_transformchar').value||null;
     target.triggerOnDeath=document.getElementById('a_triggerondeath').checked;
@@ -2953,7 +2981,9 @@ document.addEventListener('keydown',e=>{
   if(document.getElementById('modalBg')?.classList.contains('open'))return;
   if(currentPage!=='table'||!selectedToken)return;
   const selInst=inst(selectedToken); if(!selInst||!canControlInstance(selInst.id))return;
-  const a=characterAbilities(selInst.charId).find(x=>x.hotkey===e.key);
+  const hkMap=getHotkeyMap()[selInst.charId]||{};
+  const abilityId=Object.keys(hkMap).find(aid=>hkMap[aid]===e.key);
+  const a=abilityId?S.abilities.find(x=>x.id===abilityId):null;
   if(!a)return;
   e.preventDefault();
   if(activeAbility){activeAbility=null;hoverCell=null;}
