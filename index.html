@@ -1704,8 +1704,6 @@ function openCharacter(id){
   const insts=id?S.instances.filter(i=>i.charId===id):[];
   const curResHtml=id?`<div class="field full"><label>Ressources actuelles (jetons sur la carte — synchronisées en direct)</label>${insts.length?insts.map(i=>`<div class="row" style="margin-bottom:6px;flex-wrap:wrap"><span style="flex:1">${esc(i.label)}</span><span class="tiny muted">❤️ PV</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="hp" value="${i.hp}" oninput="this.dataset.dirty='1'"><span class="tiny muted">💧 Mana</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="mana" value="${i.mana}" oninput="this.dataset.dirty='1'"><span class="tiny muted">↔ Taille</span><input type="number" min="1" max="20" style="width:55px" data-inst="${i.id}" data-field="sizew" value="${i.sizeW||1}" oninput="this.dataset.dirty='1'" title="Largeur en cases"><span class="tiny muted">×</span><input type="number" min="1" max="20" style="width:55px" data-inst="${i.id}" data-field="sizeh" value="${i.sizeH||1}" oninput="this.dataset.dirty='1'" title="Hauteur en cases"></div>`).join(''):'<p class="tiny muted">Aucun jeton de ce personnage sur la carte.</p>'}<p class="tiny muted">La taille est annulée automatiquement si elle chevauche un autre jeton ou dépasse la carte.</p></div>`:'';
   const knownLine=id?(known.length?`<p class="tiny muted">Capacités liées : ${known.map(a=>`${iconInlineHtml(a)} ${esc(a.name)}`).join(', ')} <span style="opacity:.7">(à gérer depuis la page ✨ Capacités)</span></p>`:'<p class="tiny muted">Aucune capacité liée à ce personnage pour l’instant (page ✨ Capacités).</p>'):'';
-  const transfoIds=base.transformationIds||[];
-  const transfoListHtml=S.characters.filter(x=>x.id!==id).length?S.characters.filter(x=>x.id!==id).map(x=>`<label class="ability-char-item" data-name="${esc(x.name.toLowerCase())}"><input type="checkbox" class="tf-check" value="${x.id}" ${transfoIds.includes(x.id)?'checked':''}> <span>${iconInlineHtml(x)} ${esc(x.name)}</span></label>`).join(''):'<p class="tiny muted">Aucune autre fiche disponible.</p>';
   const bioHtml=`
   <div class="field full">
     <label>Image de profil (Bio &amp; Info)</label>
@@ -1718,12 +1716,7 @@ function openCharacter(id){
     ${base.profileImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('c_profileimage','c_profile_preview','🖼️')">↺ Retirer l'image</button>`:''}
   </div>
   <div class="field full"><label>Description</label>${richEditorHtml('c_bio',base.bio||'','280px')}</div>
-  <div class="field full"><label>Inventaire</label>${richEditorHtml('c_inventory',base.inventory||'','280px')}</div>
-  <div class="field full">
-    <label>Sous-fiches de Transformation associées</label>
-    <input id="c_transfo_search" placeholder="Rechercher un personnage par nom…" oninput="filterTransfoCharList()">
-    <div style="max-height:150px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px;margin-top:6px">${transfoListHtml}</div>
-  </div>`;
+  <div class="field full"><label>Inventaire</label>${richEditorHtml('c_inventory',base.inventory||'','280px')}</div>`;
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une fiche</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div><div class="form">
   <div class="field"><label>Nom</label><input id="c_name" value="${esc(base.name)}"></div>
   <div class="field"><label>Icône</label><input id="c_icon" value="${esc(base.icon)}"></div>
@@ -1789,7 +1782,6 @@ function saveCharacter(id){
   c.profileImage=document.getElementById('c_profileimage').value.trim()||null;
   c.bio=rteHtml('c_bio');
   c.inventory=rteHtml('c_inventory');
-  c.transformationIds=[...document.querySelectorAll('.tf-check:checked')].map(el=>el.value);
   c.resourcesMax={Vie:maxHpFromCon(document.getElementById('s_con').value),Mana:parseNum(document.getElementById('c_manamax').value),Bouclier:parseNum(document.getElementById('c_shieldmax').value)};
   c.stats={...(c.stats||{}),Constitution:parseNum(document.getElementById('s_con').value),Endurance:parseNum(document.getElementById('s_end').value),Social:parseNum(document.getElementById('s_soc').value),Artisanat:parseNum(document.getElementById('s_craft').value),Force:parseNum(document.getElementById('s_force').value),Magie:parseNum(document.getElementById('s_magic').value),Agilité:parseNum(document.getElementById('s_agi').value),Vitesse:parseNum(document.getElementById('s_speed').value)};
   c.def={CA:parseNum(document.getElementById('d_ca').value),DM:parseNum(document.getElementById('d_dm').value),'CA naturelle':parseNum(document.getElementById('d_ca').value)};
@@ -1923,7 +1915,7 @@ function openAbility(id){
   <div class="field"><label>Type</label><select id="a_type" onchange="toggleAbilityTypeFields()">${typeOpts}</select></div>
   <div class="field" id="a_manacost_field"><label>Coût en mana (0 = aucun)</label><input id="a_manacost" type="number" min="0" value="${a.manaCost??0}"></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
-    <div class="field full"><label>Se transforme en</label><select id="a_transformchar">${transformCharOpts}</select></div>
+    <div class="field full"><label>Se transforme en</label><input id="a_transformchar_search" placeholder="Rechercher un personnage par nom…" oninput="filterTransformCharSelect()"><select id="a_transformchar" size="6" style="margin-top:6px">${transformCharOpts}</select></div>
     <div class="field full"><label><input type="checkbox" id="a_triggerondeath" ${a.triggerOnDeath?'checked':''}> Activer automatiquement cette transformation à la mort du personnage (si assez de mana)</label></div>
   </div>
   <div id="ability_normal_fields" style="display:${isTransfo?'none':'contents'}">
@@ -1948,11 +1940,10 @@ function openAbility(id){
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveAbility('${id||''}')">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
 }
-function filterTransfoCharList(){
-  const q=(document.getElementById('c_transfo_search')?.value||'').trim().toLowerCase();
-  document.querySelectorAll('.tf-check').forEach(el=>{
-    const item=el.closest('.ability-char-item');
-    if(item)item.style.display=item.dataset.name.includes(q)?'grid':'none';
+function filterTransformCharSelect(){
+  const q=(document.getElementById('a_transformchar_search')?.value||'').trim().toLowerCase();
+  document.querySelectorAll('#a_transformchar option').forEach(o=>{
+    o.style.display=o.text.toLowerCase().includes(q)?'':'none';
   });
 }
 function toggleAbilityTypeFields(){
@@ -2180,14 +2171,10 @@ function myCharacterCard(c){
   const instancesHtml=instances.length
     ? instances.map(i=>`<div class="row between" style="padding:8px;background:#20232a;border-radius:8px;margin-bottom:6px"><span>${esc(i.label)} — case (${i.x+1}, ${i.y+1})</span><span class="tiny">❤️ ${i.hp}/${i.hpMax} · 💧 ${i.mana}/${i.manaMax} · 🛡 ${i.shield}/${i.shieldMax}</span></div>`).join('')
     : `<p class="tiny muted">Ce personnage n'est pas actuellement sur la carte.</p>`;
-  const transfoHtml=(c.transformationIds||[]).length
-    ? (c.transformationIds||[]).map(tid=>char(tid)).filter(Boolean).map(t=>`<span class="pill">${iconInlineHtml(t)} ${esc(t.name)}</span>`).join(' ')
-    : '<p class="tiny muted">Aucune transformation associée.</p>';
   const bioTabHtml=`
     <div style="margin-bottom:12px">${c.profileImage?`<img src="${esc(c.profileImage)}" style="max-width:100%;border-radius:10px;display:block">`:'<p class="tiny muted">Aucune image.</p>'}</div>
     <div class="stat" style="margin-bottom:8px"><label>Description</label><div class="tiny rte-view" style="margin-top:4px">${c.bio||'Aucune description.'}</div></div>
     <div class="stat" style="margin-bottom:8px"><label>Inventaire</label><div class="tiny rte-view">${c.inventory||'Vide.'}</div></div>
-    <div class="stat" style="margin-bottom:8px"><label>Transformations</label><div style="margin-top:4px">${transfoHtml}</div></div>
     ${c.type==='player'?`<div class="stat"><label>🎒 Équipement équipé</label><div style="margin-top:6px">${equippedHtml||'<p class="tiny muted">Aucun équipement.</p>'}</div><p class="tiny muted" style="margin-top:4px">🛡 Résistance naturelle (auto) : CA +${nat.ca} · DM +${nat.dm}</p></div>`:''}`;
   const statsTabHtml=`
     <h3 style="font-size:13px;margin:0 0 8px">Sur la carte</h3>
