@@ -140,7 +140,6 @@ body.stage-fullscreen .targeting-banner{top:64px}
   <button class="nav" data-page="characters">🧙 <span>Personnages</span></button>
   <button class="nav" data-page="abilities">✨ <span>Capacités</span></button>
   <button class="nav" data-page="equipment">🎒 <span>Équipement</span></button>
-  <button class="nav" data-page="library">📚 <span>Bibliothèque</span></button>
   <button class="nav" data-page="mysheet">🪪 <span>Ma fiche</span></button>
   <div class="spacer"></div>
   <div class="server" id="serverInfo">Connexion en cours…</div>
@@ -2049,11 +2048,6 @@ function confirmDeleteEquipment(id){
   S.equipment=(S.equipment||[]).filter(x=>x.id!==id);
   saveState(); render();
   toast('🗑️ Équipement supprimé.');
-}
-
-/* ============================= BIBLIOTHÈQUE (page dédiée) ============================= */
-function libraryPage(){
-  return `<div class="grid3"><div class="card"><h2>🗺️ Cartes</h2><p class="muted">Import d'images de cartes prévu ici.</p><button class="btn">＋ Importer une carte</button></div><div class="card"><h2>🖼️ Effets</h2><p class="muted">Bibliothèque d'effets visuels : feu, glace, magie, explosions…</p><button class="btn">＋ Ajouter un effet</button></div><div class="card"><h2>🎲 Assets</h2><p class="muted">Tokens, portraits, objets et autres ressources.</p><button class="btn">＋ Ajouter un asset</button></div></div><div class="card" style="margin-top:16px"><h2>Prochaine étape</h2><p>Cette bibliothèque deviendra le stockage local de tes cartes et assets, sans abonnement externe. Les fiches et instances sont déjà gérées séparément (voir l'onglet 📚 Bibliothèque du panneau de droite sur la Table de jeu).</p></div>`;
 }
 
 /* ============================= MA FICHE (lecture seule, par joueur) ============================= */
