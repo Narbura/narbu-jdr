@@ -1539,6 +1539,7 @@ function affected(a,start,explicitTargetInstId){
     const {cx,cy,angle,range}=axis, c=S.map.cell;
     const dx=Math.cos(angle), dy=Math.sin(angle);
     return S.instances.filter(t=>{
+      if(t.id===selectedToken)return false;
       if(!instTemplate(t))return false;
       const px=(S.freeMovement&&t.px!=null)?t.px:t.x*c+c/2;
       const py=(S.freeMovement&&t.py!=null)?t.py:t.y*c+c/2;
