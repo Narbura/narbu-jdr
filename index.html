@@ -1490,7 +1490,10 @@ function setupMapInteractions(){
         if(activeAbility==='__dissipation__'){applyDissipation(id);return;}
         const a=S.abilities.find(x=>x.id===activeAbility); const t=inst(id);
         if(a&&t){
-          if(a.type==='Buff')resolveBuffAbility(a,inst(selectedToken),id);
+          if(a.type==='Buff'){
+            if(a.area==='single')resolveBuffAbility(a,inst(selectedToken),id);
+            else resolveBuffZone(a,inst(selectedToken),[t.x,t.y]);
+          }
           else resolveAbility(a,[t.x,t.y],id);
         }
         return;
@@ -1517,7 +1520,10 @@ function setupMapInteractions(){
       const pt=mapPoint(e.clientX,e.clientY);
       const a=S.abilities.find(x=>x.id===activeAbility);
       if(a){
-        if(a.type==='Buff'){toast('🎯 Choisis une cible (clique sur un jeton).');}
+        if(a.type==='Buff'){
+          if(a.area==='single')toast('🎯 Choisis une cible (clique sur un jeton).');
+          else resolveBuffZone(a,inst(selectedToken),pt);
+        }
         else resolveAbility(a,pt);
       }
       return;
@@ -1859,6 +1865,36 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
   t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
   addLog(`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${a.duration} tour(s), 🎲 d100 : ${atk} → ${label}).`);
+  activeAbility=null; hoverCell=null;
+  if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
+  saveState(); render();
+}
+function resolveBuffZone(a,casterInst,start){
+  if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
+  if(!canControlInstance(casterInst.id)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
+  if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
+    toast(`🚫 Mana insuffisant (${casterInst.mana}/${a.manaCost}).`);
+    activeAbility=null; hoverCell=null; render(); return;
+  }
+  if(a.range&&a.range>0){
+    const dist=footprintDistance(casterInst.x,casterInst.y,casterInst.sizeW||1,casterInst.sizeH||1,start[0],start[1],1,1);
+    if(dist>a.range){toast(`🚫 Trop loin (portée max ${a.range} case${a.range>1?'s':''}).`);return;}
+  }
+  if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
+  const casterTpl=instTemplate(casterInst);
+  const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
+  const targets=affected(a,start);
+  const lines=[`🌀 <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b> en zone (🎲 d100 : ${atk} → ${label})`];
+  if(!targets.length){
+    lines.push('<span class="muted">Aucune cible valide dans la zone.</span>');
+  }else{
+    targets.forEach(t=>{
+      t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
+      t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
+      lines.push(`🌀 ${esc(t.label)} affecté (${a.duration} tour(s))`);
+    });
+  }
+  addLog(lines.join('<br>'));
   activeAbility=null; hoverCell=null;
   if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
   saveState(); render();
@@ -2227,7 +2263,7 @@ function abilityResultsHtml(){
       : a.type==='Passif'
       ? `Aura (${esc(a.area)} ${a.areaSize}) · ${esc(a.formula)} · Effet : ${a.auraEffect==='heal'?'Soin':a.auraEffect==='shield'?'Bouclier':'Dégâts'} · Mana/tick ${a.manaCost||0}`
       : a.type==='Buff'
-      ? `Buff/Débuff · ${esc(a.formula)} · ${esc(a.element)} · ${a.duration} tour(s) · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
+      ? `Buff/Débuff · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:(a.area+' '+a.areaSize)} · ${a.duration} tour(s) · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
       : `${esc(a.type)}${a.hotkey?` [${esc(a.hotkey)}]`:''} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`;
     return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
   }).join('');
@@ -2262,7 +2298,7 @@ function openAbility(id){
   <div class="field"><label>Type</label><select id="a_type" onchange="toggleAbilityTypeFields()">${typeOpts}</select></div>
   <div class="field" id="a_manacost_field"><label>Coût en mana (0 = aucun)</label><input id="a_manacost" type="number" min="0" value="${a.manaCost??0}"></div>
   <div class="field" id="ability_passif_extra" style="display:${a.type==='Passif'?'':'none'}"><label>Effet de l'aura</label><select id="a_auraeffect">${opt('damage','Dégâts',a.auraEffect)}${opt('heal','Soin',a.auraEffect)}${opt('shield','Bouclier',a.auraEffect)}</select><p class="tiny muted">Aura auto-centrée sur le lanceur (zone = Carré ou Cercle uniquement), se déclenche à chaque début de son tour.</p></div>
-  <div class="field" id="ability_buff_extra" style="display:${a.type==='Buff'?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.duration||3}"><p class="tiny muted">Cible unique. Effet auto à chaque début de tour de la cible pendant N tours. Élément « Physique »=CA au lieu de DM ; « Bouclier »/« Soin »/« Récupération » ignorent défense/résistance.</p></div>
+  <div class="field" id="ability_buff_extra" style="display:${a.type==='Buff'?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.duration||3}"><p class="tiny muted">Cible unique ou zone (voir champ Zone ci-dessous). Effet auto à chaque début de tour de la/les cible(s) pendant N tours. Choisis toi-même la défense ciblée (dont « Aucune »).</p></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
     <div class="field full"><label>Se transforme en</label><input id="a_transformchar_search" placeholder="Rechercher un personnage par nom…" oninput="filterTransformCharSelect()"><select id="a_transformchar" size="6" style="margin-top:6px">${transformCharOpts}</select></div>
     <div class="field full"><label><input type="checkbox" id="a_triggerondeath" ${a.triggerOnDeath?'checked':''}> Activer automatiquement cette transformation à la mort du personnage (si assez de mana)</label></div>
@@ -2348,10 +2384,7 @@ function saveAbility(id){
     if(target.type==='Passif'){
       if(target.area!=='circle'&&target.area!=='square')target.area='square';
     }
-    if(target.type==='Buff'){
-      target.area='single'; target.areaSize=1;
-      target.defense=target.element==='Physique'?'CA':(['Soin','Bouclier','Récupération','Neutre'].includes(target.element)?'none':'DM');
-    }
+
   }
   target.characterIds=[...document.querySelectorAll('.ac-check:checked')].map(el=>el.value);
   if(!id)S.abilities.push(target);
