@@ -343,6 +343,7 @@ function normalizeState(){
     if(a.coneEnd===undefined)a.coneEnd=3;
     if(a.auraEffect===undefined)a.auraEffect='damage';
     if(a.duration===undefined)a.duration=3;
+    if(a.dmgMult===undefined)a.dmgMult='';
   });
 }
 
@@ -378,6 +379,7 @@ let abilitySearchQuery='';     // recherche texte page Capacités
 let abilityTypeFilter='';      // filtre par type page Capacités
 let abilityCharFilter='';      // filtre par personnage page Capacités
 let transfoSearchQuery='';     // recherche texte dans la liste des transformations (fiche personnage)
+let pendingPersistentOrigin=null; // {abilityId,origin:[x,y]} : sort persistant ligne/cône en attente du 2e clic (direction)
 
 /* ============================= SYNCHRONISATION SUPABASE ============================= */
 async function loadProfiles(){
@@ -716,6 +718,15 @@ function roll(expr){
   const n=+(m[1]||1), sides=+m[2], rolls=[]; for(let i=0;i<n;i++)rolls.push(1+Math.floor(Math.random()*sides));
   return {total:rolls.reduce((a,x)=>a+x,0)+bonus,rolls,bonus};
 }
+function applyMult(value,multStr){
+  if(!multStr)return value;
+  const m=String(multStr).trim().toLowerCase().replace(',','.');
+  const mDiv=m.match(/^\/\s*(\d+(\.\d+)?)$/);
+  const mMul=m.match(/^x\s*(\d+(\.\d+)?)$/);
+  if(mDiv){const d=+mDiv[1]; if(d>0)return Math.ceil(value/d);}
+  if(mMul){const x=+mMul[1]; if(x>0)return Math.ceil(value*x);}
+  return value;
+}
 function combineFormula(abilityFormula,weaponFormula){
   const parse=(expr)=>{
     expr=String(expr||'').replace(/\s+/g,'');
@@ -843,6 +854,12 @@ function updateTargetingBanner(){
     banner.classList.add('show');
     return;
   }
+  if(pendingPersistentOrigin&&currentPage==='table'){
+    const pa=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId);
+    banner.innerHTML=`🎯 <b>${esc(pa?.name||'Zone')}</b> — clique pour choisir la direction (Échap pour annuler)`;
+    banner.classList.add('show');
+    return;
+  }
   const a=activeAbility?S.abilities.find(x=>x.id===activeAbility):null;
   if(a&&currentPage==='table'){
     const caster=selectedToken?inst(selectedToken):null;
@@ -934,15 +951,19 @@ function tokensHtml(){
     </div>`;
   }).join('');
 }
-function zoneAxis(a,targetCell){
-  const casterInst=selectedToken?inst(selectedToken):null;
-  if(!casterInst)return null;
+function zoneAxis(a,targetCell,originOverride){
   const c=S.map.cell;
-  const cx=(S.freeMovement&&casterInst.px!=null)?casterInst.px:casterInst.x*c+c/2;
-  const cy=(S.freeMovement&&casterInst.py!=null)?casterInst.py:casterInst.y*c+c/2;
+  let cx,cy;
+  if(originOverride){
+    cx=originOverride[0]*c+c/2; cy=originOverride[1]*c+c/2;
+  }else{
+    const casterInst=selectedToken?inst(selectedToken):null;
+    if(!casterInst)return null;
+    cx=(S.freeMovement&&casterInst.px!=null)?casterInst.px:casterInst.x*c+c/2;
+    cy=(S.freeMovement&&casterInst.py!=null)?casterInst.py:casterInst.y*c+c/2;
+  }
   const tx=targetCell[0]*c+c/2, ty=targetCell[1]*c+c/2;
-  let angle=Math.atan2(ty-cy,tx-cx);
-  if(a.area==='line')angle=Math.round(angle/(Math.PI/4))*(Math.PI/4);
+  const angle=Math.atan2(ty-cy,tx-cx);
   return {cx,cy,angle,range:(a.range||1)*c};
 }
 function lineConeHitTest(axis,areaType,c,coneStart,coneEnd,px,py){
@@ -961,8 +982,8 @@ function footprintHitsLineCone(tx,ty,tw,th,axis,areaType,c,coneStart,coneEnd){
   const pts=[[tx,ty],[tx+tw,ty],[tx,ty+th],[tx+tw,ty+th],[tx+tw/2,ty+th/2]].map(p=>[p[0]*c,p[1]*c]);
   return pts.some(([px,py])=>lineConeHitTest(axis,areaType,c,coneStart,coneEnd,px,py));
 }
-function lineConeMarkup(a,targetCell){
-  const axis=zoneAxis(a,targetCell); if(!axis)return '';
+function lineConeMarkup(a,targetCell,originOverride){
+  const axis=zoneAxis(a,targetCell,originOverride); if(!axis)return '';
   const {cx,cy,angle,range}=axis, c=S.map.cell;
   const dx=Math.cos(angle), dy=Math.sin(angle), px=-dy, py=dx;
   let poly;
@@ -978,8 +999,8 @@ function lineConeMarkup(a,targetCell){
   const effect=a.effect?`<text x="${cx+dx*range/2}" y="${cy+dy*range/2}" font-size="${Math.max(24,c*0.8)}" text-anchor="middle" dominant-baseline="middle" opacity=".42">${esc(a.effect)}</text>`:'';
   return `<svg id="zonePreview" style="position:absolute;left:0;top:0;pointer-events:none;z-index:20" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="#a44cff38" stroke="#c084fc" stroke-width="2"/>${effect}</svg>`;
 }
-function zoneMarkup(a,cell){
-  if(a.area==='line'||a.area==='cone')return lineConeMarkup(a,cell);
+function zoneMarkup(a,cell,originOverride){
+  if(a.area==='line'||a.area==='cone')return lineConeMarkup(a,cell,originOverride);
   let size=a.areaSize||3, x=cell[0], y=cell[1];
   x=Math.max(0,Math.min(S.map.cols-size,x)); y=Math.max(0,Math.min(S.map.rows-size,y));
   const px=x*S.map.cell, py=y*S.map.cell, d=size*S.map.cell;
@@ -990,6 +1011,13 @@ function zoneMarkup(a,cell){
 function updateZonePreview(){
   const map=document.getElementById('map'); if(!map)return;
   document.getElementById('zonePreview')?.remove();
+  if(pendingPersistentOrigin){
+    if(!hoverCell)return;
+    const a=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId);
+    if(!a)return;
+    map.insertAdjacentHTML('beforeend',zoneMarkup(a,hoverCell,pendingPersistentOrigin.origin));
+    return;
+  }
   if(!activeAbility||!hoverCell)return;
   const a=S.abilities.find(x=>x.id===activeAbility);
   if(!a||a.area==='single')return;
@@ -1329,7 +1357,7 @@ function triggerAuras(casterInst){
     const lines=[`🌀 <b>${esc(casterInst.label)}</b> — aura <b>${esc(a.name)}</b> : ${esc(a.formula)} = ${r.total}`];
     targets.forEach(t=>{
       const tTpl=instTemplate(t);
-      const amount=Math.ceil(r.total*(casterTpl.stats[a.stat]||0)/100);
+      const amount=applyMult(Math.ceil(r.total*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
       if(a.auraEffect==='heal'){
         t.hp=Math.min(t.hpMax,t.hp+amount);
         lines.push(`💚 ${esc(t.label)} : +${amount} PV`);
@@ -1355,7 +1383,7 @@ function tickStatusEffects(inst_){
   const remaining=[];
   inst_.statusEffects.forEach(se=>{
     const r=roll(se.formula);
-    const raw=Math.max(0,Math.ceil(r.total*(se.mult||1)*(se.statValue||0)/100));
+    const raw=applyMult(Math.max(0,Math.ceil(r.total*(se.mult||1)*(se.statValue||0)/100)),se.dmgMult);
     if(se.element==='Soin'){
       inst_.hp=Math.min(inst_.hpMax,inst_.hp+raw);
       addLog(`🌀 <b>${esc(inst_.label)}</b> — ${esc(se.name)} : +${raw} PV`);
@@ -1408,6 +1436,7 @@ function advanceTurn(){
   let safety=0;
   while(true){
     S.combat.turn=(S.combat.turn+1)%S.combat.order.length;
+    if(S.combat.turn===0)decayPersistentZones(); // tout le monde a joué : un tour complet s'écoule
     const nt=inst(S.combat.order[S.combat.turn]);
     if(nt){
       const tpl=instTemplate(nt);
@@ -1416,7 +1445,6 @@ function advanceTurn(){
       triggerAuras(nt);
       tickStatusEffects(nt);
       tickPersistentZones(nt);
-      decayPersistentZones();
       const res=tickAfflictions(nt);
       nt.movementBlocked=res.blockMove;
       if(res.skip){
@@ -1514,6 +1542,7 @@ function setupMapInteractions(){
             if(a.area==='single')resolveBuffAbility(a,inst(selectedToken),id);
             else resolveBuffZone(a,inst(selectedToken),[t.x,t.y]);
           }
+          else if(a.type==='Persistant'&&(a.area==='line'||a.area==='cone'))handlePersistentLineConeClick(a,inst(selectedToken),[t.x,t.y]);
           else if(a.type==='Persistant')resolvePersistentAbility(a,inst(selectedToken),[t.x,t.y]);
           else resolveAbility(a,[t.x,t.y],id);
         }
@@ -1545,6 +1574,7 @@ function setupMapInteractions(){
           if(a.area==='single')toast('🎯 Choisis une cible (clique sur un jeton).');
           else resolveBuffZone(a,inst(selectedToken),pt);
         }
+        else if(a.type==='Persistant'&&(a.area==='line'||a.area==='cone'))handlePersistentLineConeClick(a,inst(selectedToken),pt);
         else if(a.type==='Persistant')resolvePersistentAbility(a,inst(selectedToken),pt);
         else resolveAbility(a,pt);
       }
@@ -1807,7 +1837,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     const tTpl=instTemplate(t);
     if(a.type==='Soin'){
       const r=isAoE?sharedRoll:roll(a.formula);
-      const amount=Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100);
+      const amount=applyMult(Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
       t.hp=Math.min(t.hpMax,t.hp+amount);
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
       lines.push(`💚 Soin : ${amount}`);
@@ -1816,7 +1846,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     }
     if(a.type==='Bouclier'){
       const r=isAoE?sharedRoll:roll(a.formula);
-      const amount=Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100);
+      const amount=applyMult(Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
       t.shield=(t.shield||0)+amount;
       if(t.shield>t.shieldMax)t.shieldMax=t.shield;
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
@@ -1827,7 +1857,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);continue;}
     const usedFormula=isAoE?sharedUsedFormula:(weaponFormula?combineFormula(a.formula,weaponFormula):a.formula);
     const r=isAoE?sharedRoll:roll(usedFormula); const raw=r.total;
-    let damage=Math.ceil(raw*mult*(casterTpl.stats[a.stat]||0)/100);
+    let damage=applyMult(Math.ceil(raw*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
     const def=(a.defense!=='none')?(effectiveDef(tTpl)[a.defense]||0):0;
     damage=Math.max(0,damage-def);
     const resist=(effectiveRes(tTpl)[a.element]||0)/100;
@@ -1884,7 +1914,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   const casterTpl=instTemplate(casterInst);
   const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
   t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-  t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
+  t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
   addLog(`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${a.duration} tour(s), 🎲 d100 : ${atk} → ${label}).`);
   activeAbility=null; hoverCell=null;
   if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
@@ -1911,7 +1941,7 @@ function resolveBuffZone(a,casterInst,start){
   }else{
     targets.forEach(t=>{
       t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-      t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
+      t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
       lines.push(`🌀 ${esc(t.label)} affecté (${a.duration} tour(s))`);
     });
   }
@@ -1921,22 +1951,39 @@ function resolveBuffZone(a,casterInst,start){
   saveState(); render();
 }
 /* ============================= ZONES PERSISTANTES (type Persistant) ============================= */
-function resolvePersistentAbility(a,casterInst,start){
+function handlePersistentLineConeClick(a,casterInst,pt){
+  if(pendingPersistentOrigin&&pendingPersistentOrigin.abilityId===a.id){
+    const origin=pendingPersistentOrigin.origin;
+    pendingPersistentOrigin=null; activeAbility=null; hoverCell=null;
+    resolvePersistentAbility(a,casterInst,pt,origin);
+    return;
+  }
+  if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
+  if(a.range&&a.range>0){
+    const dist=footprintDistance(casterInst.x,casterInst.y,casterInst.sizeW||1,casterInst.sizeH||1,pt[0],pt[1],1,1);
+    if(dist>a.range){toast(`🚫 Trop loin (portée max ${a.range} case${a.range>1?'s':''}).`);return;}
+  }
+  pendingPersistentOrigin={abilityId:a.id,origin:pt};
+  hoverCell=null;
+  toast('🎯 Choisis la direction du sort (clique pour confirmer)');
+  render();
+}
+function resolvePersistentAbility(a,casterInst,start,originOverride){
   if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
   if(!canControlInstance(casterInst.id)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
   if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
     toast(`🚫 Mana insuffisant (${casterInst.mana}/${a.manaCost}).`);
-    activeAbility=null; hoverCell=null; render(); return;
+    activeAbility=null; hoverCell=null; pendingPersistentOrigin=null; render(); return;
   }
-  if(a.range&&a.range>0&&a.area!=='self'){
+  if(!originOverride&&a.range&&a.range>0&&a.area!=='self'){
     const dist=footprintDistance(casterInst.x,casterInst.y,casterInst.sizeW||1,casterInst.sizeH||1,start[0],start[1],1,1);
     if(dist>a.range){toast(`🚫 Trop loin (portée max ${a.range} case${a.range>1?'s':''}).`);return;}
   }
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   const casterTpl=instTemplate(casterInst);
-  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,statValue:casterTpl?.stats?.[a.stat]||0,casterLabel:casterInst.label,turnsLeft:a.duration||3,effect:a.effect};
+  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,casterLabel:casterInst.label,turnsLeft:a.duration||3,effect:a.effect};
   if(a.area==='line'||a.area==='cone'){
-    const axis=zoneAxis(a,start); if(!axis){toast('Sélectionne d’abord un personnage.');return;}
+    const axis=zoneAxis(a,start,originOverride); if(!axis){toast('Sélectionne d’abord un personnage.');return;}
     zone.cx=axis.cx; zone.cy=axis.cy; zone.angle=axis.angle; zone.range=axis.range;
   }else if(a.area==='self'){
     zone.cx=casterInst.x; zone.cy=casterInst.y;
@@ -1964,7 +2011,7 @@ function tickPersistentZones(nt){
   S.persistentZones.forEach(z=>{
     if(!tokenInPersistentZone(nt,z))return;
     const r=roll(z.formula);
-    const raw=Math.max(0,Math.ceil(r.total*(z.statValue||0)/100));
+    const raw=applyMult(Math.max(0,Math.ceil(r.total*(z.statValue||0)/100)),z.dmgMult);
     if(z.element==='Soin'){
       nt.hp=Math.min(nt.hpMax,nt.hp+raw);
       addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : +${raw} PV`);
@@ -2429,6 +2476,7 @@ function openAbility(id){
   </div>
   <div id="ability_normal_fields" style="display:${isTransfo?'none':'contents'}">
   <div class="field"><label>Formule de dégâts / soin</label><input id="a_formula" value="${esc(a.formula)}"></div>
+  <div class="field"><label>Multiplicateur (ex : /2, X2 — vide = aucun)</label><input id="a_dmgmult" value="${esc(a.dmgMult||'')}" placeholder="/2 ou X2"></div>
   <div class="field"><label>Statistique</label><select id="a_stat">${statOpts}</select></div>
   <div class="field"><label>Défense ciblée</label><select id="a_def">${defOpts}</select></div>
   <div class="field"><label>Élément</label><select id="a_element">${elementOpts}</select></div>
@@ -2437,7 +2485,7 @@ function openAbility(id){
   <div class="field" id="a_conestart_field" style="display:${a.area==='cone'?'':'none'}"><label>Largeur au départ (cases)</label><input id="a_conestart" type="number" min="1" value="${a.coneStart||1}"></div>
   <div class="field" id="a_coneend_field" style="display:${a.area==='cone'?'':'none'}"><label>Largeur à l'arrivée (cases)</label><input id="a_coneend" type="number" min="1" value="${a.coneEnd||3}"></div>
   <div class="field"><label>Portée maximale (cases, 0 = illimitée)</label><input id="a_range" type="number" min="0" value="${a.range??0}"></div>
-  <p class="tiny muted full" style="grid-column:1/-1">Ligne droite : rayon d'1 case de large, dans l'axe (8 directions) de la souris. Cône : s'évase du lanceur (largeur « départ ») jusqu'à la portée max (largeur « arrivée »), dans la direction de la souris.</p>
+  <p class="tiny muted full" style="grid-column:1/-1">Ligne droite et Cône suivent librement la souris (pixel par pixel), dans la direction du clic. Cône : s'évase du lanceur (largeur « départ ») jusqu'à la portée max (largeur « arrivée »). Multiplicateur : appliqué au résultat (capacité + arme) avant déduction de la défense et de la résistance élémentaire. Pour un sort « Persistant » ligne/cône : 1er clic = position de la zone (dans la portée), 2e clic = direction.</p>
   <div class="field full"><label>Description</label>${richEditorHtml('a_desc',a.desc||'')}</div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
   </div>
@@ -2489,9 +2537,10 @@ function saveAbility(id){
     target.transformCharId=document.getElementById('a_transformchar').value||null;
     target.triggerOnDeath=document.getElementById('a_triggerondeath').checked;
     target.formula='0'; target.stat='Force'; target.defense='none'; target.element='Neutre';
-    target.area='single'; target.areaSize=1; target.range=0; target.desc=''; target.effect='';
+    target.area='single'; target.areaSize=1; target.range=0; target.desc=''; target.effect=''; target.dmgMult='';
   }else{
     target.formula=document.getElementById('a_formula').value||'1d20';
+    target.dmgMult=document.getElementById('a_dmgmult').value.trim();
     target.stat=document.getElementById('a_stat').value;
     target.defense=document.getElementById('a_def').value;
     target.element=document.getElementById('a_element').value;
@@ -3474,6 +3523,7 @@ document.addEventListener('fullscreenchange',()=>{
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
     if(stageFullscreen){exitStageFullscreen();return;}
+    if(pendingPersistentOrigin){pendingPersistentOrigin=null;activeAbility=null;hoverCell=null;render();return;}
     if(activeAbility){activeAbility=null;hoverCell=null;render();return;}
     if(multiSel.length){multiSel=[];render();return;}
   }
