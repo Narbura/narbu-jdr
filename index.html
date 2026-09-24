@@ -1205,59 +1205,26 @@ function fxAddConeFill(cx,cy,angle,range,halfWStart,halfWEnd,color,duration){
 }
 const FX_ELEMENT_COLORS={Feu:'#ff6a3c',Eau:'#3ca0ff',Terre:'#8a6b3c',Air:'#c9e6ff',Glace:'#7fd8ff',Foudre:'#ffe066',Lumière:'#fff3b0',Ténèbres:'#8b5cf6',Neutre:'#c084fc',Physique:'#e0e0e0'};
 function fxElementColor(el){return (FX_ELEMENT_COLORS[el]||'#c084fc')+'99';}
-function playAbilityFX(a, casterInst, targets, start){
-  if(!casterInst) return;
+function playAbilityFX(a,casterInst,targets,start){
+  if(!casterInst)return;
   ensureFxCanvas();
-  const cell = S.map.cell, fps = a.animFps || 60;
-  const projImg = a.projectileImage ? getFxImg(a.projectileImage) : null;
-  const impactImg = a.impactSpritesheet ? getFxImg(a.impactSpritesheet) : null;
-  const projFrames = Math.max(1, a.projectileFrames || 1);
-  const impactFrames = Math.max(1, a.impactFrames || 1);
-  const [fromX, fromY] = instCenterPx(casterInst);
-  
-  // Cette fonction s'assure que le canvas ne dessine pas dans le vide si l'image charge encore
-  const doImpact = (cx, cy, size, clip) => { 
-    if (!impactImg) return;
-    
-    if (!impactImg.complete) {
-      // Si l'image n'est pas encore prête, on attend qu'elle charge pour lancer l'animation
-      impactImg.onload = () => fxAddImpact(impactImg, impactFrames, cx, cy, size, size, fps, clip);
-    } else {
-      fxAddImpact(impactImg, impactFrames, cx, cy, size, size, fps, clip);
-    }
-  };
+  const cell=S.map.cell, fps=a.animFps||60;
+  const projImg=a.projectileImage?getFxImg(a.projectileImage):null;
+  const impactImg=a.impactSpritesheet?getFxImg(a.impactSpritesheet):null;
+  const projFrames=Math.max(1,a.projectileFrames||1);
+  const impactFrames=Math.max(1,a.impactFrames||1);
+  const [fromX,fromY]=instCenterPx(casterInst);
+  const doImpact=(cx,cy,size,clip)=>{ if(impactImg)fxAddImpact(impactImg,impactFrames,cx,cy,size,size,fps,clip); };
 
   if(a.area==='single'){
     (targets||[]).forEach(t=>{
       const [tx,ty]=instCenterPx(t);
       const size=Math.max(cell*1.4,(t.sizeW||1)*cell*1.4);
-      if(projImg) fxAddProjectile(projImg,projFrames,fromX,fromY,tx,ty,cell*0.9,fps,()=>doImpact(tx,ty,size));
+      if(projImg)fxAddProjectile(projImg,projFrames,fromX,fromY,tx,ty,cell*0.9,fps,()=>doImpact(tx,ty,size));
       else doImpact(tx,ty,size);
     });
     return;
   }
-  if(a.area==='square'||a.area==='circle'){
-    const size=(a.areaSize||3)*cell;
-    const cx=start[0]*cell+size/2, cy=start[1]*cell+size/2;
-    const clip=a.area==='circle'?(ctx=>{ctx.beginPath();ctx.arc(cx,cy,size/2,0,Math.PI*2);ctx.clip();}):null;
-    if(projImg) fxAddProjectile(projImg,projFrames,fromX,fromY,cx,cy,cell*0.9,fps,()=>doImpact(cx,cy,size,clip));
-    else doImpact(cx,cy,size,clip);
-    return;
-  }
-  if(a.area==='self'){
-    const size=((a.areaSize||1)*2+1)*cell;
-    doImpact(fromX,fromY,size);
-    return;
-  }
-  if(a.area==='line'||a.area==='cone'){
-    const axis=zoneAxis(a,start); if(!axis)return;
-    const c=cell;
-    const sw=a.area==='cone'?(a.coneStart||1)*c/2:c/2;
-    const ew=a.area==='cone'?(a.coneEnd||3)*c/2:c/2;
-    const duration=Math.max(200,(axis.range/700)*1000);
-    fxAddConeFill(axis.cx,axis.cy,axis.angle,axis.range,sw,ew,fxElementColor(a.element),duration);
-  }
-}
   if(a.area==='square'||a.area==='circle'){
     const size=(a.areaSize||3)*cell;
     const cx=start[0]*cell+size/2, cy=start[1]*cell+size/2;
