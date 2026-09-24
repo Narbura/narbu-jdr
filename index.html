@@ -341,6 +341,7 @@ function normalizeState(){
     if(a.hotkey===undefined)a.hotkey=null;
     if(a.coneStart===undefined)a.coneStart=1;
     if(a.coneEnd===undefined)a.coneEnd=3;
+    if(a.zoneRange===undefined)a.zoneRange=a.range||3;
     if(a.auraEffect===undefined)a.auraEffect='damage';
     if(a.duration===undefined)a.duration=3;
     if(a.dmgMult===undefined)a.dmgMult='';
@@ -951,7 +952,7 @@ function tokensHtml(){
     </div>`;
   }).join('');
 }
-function zoneAxis(a,targetCell,originOverride){
+function zoneAxis(a,targetCell,originOverride,rangeCellsOverride){
   const c=S.map.cell;
   let cx,cy;
   if(originOverride){
@@ -964,7 +965,15 @@ function zoneAxis(a,targetCell,originOverride){
   }
   const tx=targetCell[0]*c+c/2, ty=targetCell[1]*c+c/2;
   const angle=Math.atan2(ty-cy,tx-cx);
-  return {cx,cy,angle,range:(a.range||1)*c};
+  const rangeCells=(rangeCellsOverride!=null)?rangeCellsOverride:(a.range||1);
+  return {cx,cy,angle,range:rangeCells*c};
+}
+/* Longueur réelle (en cases) d'une zone ligne/cône persistante : distance origine→clic, plafonnée à la longueur max définie sur la capacité (zoneRange). Permet de faire une zone plus courte que le maximum. */
+function persistentZoneRangeCells(a,origin,targetCell){
+  const dx=targetCell[0]-origin[0], dy=targetCell[1]-origin[1];
+  const dist=Math.sqrt(dx*dx+dy*dy);
+  const maxZone=a.zoneRange||a.range||1;
+  return Math.max(1,Math.min(dist||1,maxZone));
 }
 function lineConeHitTest(axis,areaType,c,coneStart,coneEnd,px,py){
   const {cx,cy,angle,range}=axis;
@@ -982,8 +991,8 @@ function footprintHitsLineCone(tx,ty,tw,th,axis,areaType,c,coneStart,coneEnd){
   const pts=[[tx,ty],[tx+tw,ty],[tx,ty+th],[tx+tw,ty+th],[tx+tw/2,ty+th/2]].map(p=>[p[0]*c,p[1]*c]);
   return pts.some(([px,py])=>lineConeHitTest(axis,areaType,c,coneStart,coneEnd,px,py));
 }
-function lineConeMarkup(a,targetCell,originOverride){
-  const axis=zoneAxis(a,targetCell,originOverride); if(!axis)return '';
+function lineConeMarkup(a,targetCell,originOverride,rangeCellsOverride){
+  const axis=zoneAxis(a,targetCell,originOverride,rangeCellsOverride); if(!axis)return '';
   const {cx,cy,angle,range}=axis, c=S.map.cell;
   const dx=Math.cos(angle), dy=Math.sin(angle), px=-dy, py=dx;
   let poly;
@@ -999,8 +1008,8 @@ function lineConeMarkup(a,targetCell,originOverride){
   const effect=a.effect?`<text x="${cx+dx*range/2}" y="${cy+dy*range/2}" font-size="${Math.max(24,c*0.8)}" text-anchor="middle" dominant-baseline="middle" opacity=".42">${esc(a.effect)}</text>`:'';
   return `<svg id="zonePreview" style="position:absolute;left:0;top:0;pointer-events:none;z-index:20" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="#a44cff38" stroke="#c084fc" stroke-width="2"/>${effect}</svg>`;
 }
-function zoneMarkup(a,cell,originOverride){
-  if(a.area==='line'||a.area==='cone')return lineConeMarkup(a,cell,originOverride);
+function zoneMarkup(a,cell,originOverride,rangeCellsOverride){
+  if(a.area==='line'||a.area==='cone')return lineConeMarkup(a,cell,originOverride,rangeCellsOverride);
   let size=a.areaSize||3, x=cell[0], y=cell[1];
   x=Math.max(0,Math.min(S.map.cols-size,x)); y=Math.max(0,Math.min(S.map.rows-size,y));
   const px=x*S.map.cell, py=y*S.map.cell, d=size*S.map.cell;
@@ -1015,7 +1024,8 @@ function updateZonePreview(){
     if(!hoverCell)return;
     const a=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId);
     if(!a)return;
-    map.insertAdjacentHTML('beforeend',zoneMarkup(a,hoverCell,pendingPersistentOrigin.origin));
+    const rC=(a.area==='line'||a.area==='cone')?persistentZoneRangeCells(a,pendingPersistentOrigin.origin,hoverCell):undefined;
+    map.insertAdjacentHTML('beforeend',zoneMarkup(a,hoverCell,pendingPersistentOrigin.origin,rC));
     return;
   }
   if(!activeAbility||!hoverCell)return;
@@ -1983,7 +1993,9 @@ function resolvePersistentAbility(a,casterInst,start,originOverride){
   const casterTpl=instTemplate(casterInst);
   const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,casterLabel:casterInst.label,turnsLeft:a.duration||3,effect:a.effect};
   if(a.area==='line'||a.area==='cone'){
-    const axis=zoneAxis(a,start,originOverride); if(!axis){toast('Sélectionne d’abord un personnage.');return;}
+    const originPt=originOverride||[casterInst.x,casterInst.y];
+    const rC=persistentZoneRangeCells(a,originPt,start);
+    const axis=zoneAxis(a,start,originOverride,rC); if(!axis){toast('Sélectionne d’abord un personnage.');return;}
     zone.cx=axis.cx; zone.cy=axis.cy; zone.angle=axis.angle; zone.range=axis.range;
   }else if(a.area==='self'){
     zone.cx=casterInst.x; zone.cy=casterInst.y;
@@ -2434,7 +2446,7 @@ function abilityResultsHtml(){
       : a.type==='Buff'
       ? `Buff/Débuff · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · ${a.duration} tour(s) · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
       : a.type==='Persistant'
-      ? `Zone persistante · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · ${a.duration} tour(s) · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
+      ? `Zone persistante · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?`Ligne (zone ${a.zoneRange||a.range} cases)`:a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3} (zone ${a.zoneRange||a.range} cases)`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · ${a.duration} tour(s) · Portée origine ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
       : `${esc(a.type)}${a.hotkey?` [${esc(a.hotkey)}]`:''} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`;
     return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
   }).join('');
@@ -2485,7 +2497,8 @@ function openAbility(id){
   <div class="field" id="a_conestart_field" style="display:${a.area==='cone'?'':'none'}"><label>Largeur au départ (cases)</label><input id="a_conestart" type="number" min="1" value="${a.coneStart||1}"></div>
   <div class="field" id="a_coneend_field" style="display:${a.area==='cone'?'':'none'}"><label>Largeur à l'arrivée (cases)</label><input id="a_coneend" type="number" min="1" value="${a.coneEnd||3}"></div>
   <div class="field"><label>Portée maximale (cases, 0 = illimitée)</label><input id="a_range" type="number" min="0" value="${a.range??0}"></div>
-  <p class="tiny muted full" style="grid-column:1/-1">Ligne droite et Cône suivent librement la souris (pixel par pixel), dans la direction du clic. Cône : s'évase du lanceur (largeur « départ ») jusqu'à la portée max (largeur « arrivée »). Multiplicateur : appliqué au résultat (capacité + arme) avant déduction de la défense et de la résistance élémentaire. Pour un sort « Persistant » ligne/cône : 1er clic = position de la zone (dans la portée), 2e clic = direction.</p>
+  <div class="field" id="a_zonerange_field" style="display:${((a.area==='line'||a.area==='cone')&&a.type==='Persistant')?'':'none'}"><label>Longueur maximale de la zone (cases)</label><input id="a_zonerange" type="number" min="1" value="${a.zoneRange||a.range||3}"></div>
+  <p class="tiny muted full" style="grid-column:1/-1">Ligne droite et Cône suivent librement la souris (pixel par pixel), dans la direction du clic. Cône : s'évase du lanceur (largeur « départ ») jusqu'à la longueur de zone (largeur « arrivée »). Multiplicateur : appliqué au résultat (capacité + arme) avant déduction de la défense et de la résistance élémentaire. Pour un sort « Persistant » ligne/cône : « Portée maximale » = distance max à laquelle poser l'origine de la zone (1er clic). « Longueur maximale de la zone » = longueur max de la ligne/cône lui-même. Au 2e clic (direction), la zone s'étend jusqu'au point cliqué, sans dépasser cette longueur max — tu peux donc la faire plus courte.</p>
   <div class="field full"><label>Description</label>${richEditorHtml('a_desc',a.desc||'')}</div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
   </div>
@@ -2507,9 +2520,12 @@ function filterTransformCharSelect(){
 }
 function toggleAreaFields(){
   const v=document.getElementById('a_area').value;
+  const type=document.getElementById('a_type')?document.getElementById('a_type').value:'';
   document.getElementById('a_size_field').style.display=(v==='line'||v==='cone')?'none':'';
   document.getElementById('a_conestart_field').style.display=v==='cone'?'':'none';
   document.getElementById('a_coneend_field').style.display=v==='cone'?'':'none';
+  const zf=document.getElementById('a_zonerange_field');
+  if(zf)zf.style.display=((v==='line'||v==='cone')&&type==='Persistant')?'':'none';
 }
 function toggleAbilityTypeFields(){
   const val=document.getElementById('a_type').value;
@@ -2518,6 +2534,7 @@ function toggleAbilityTypeFields(){
   document.getElementById('ability_normal_fields').style.display=isTransfo?'none':'contents';
   document.getElementById('ability_passif_extra').style.display=val==='Passif'?'':'none';
   document.getElementById('ability_buff_extra').style.display=(val==='Buff'||val==='Persistant')?'':'none';
+  toggleAreaFields();
 }
 function filterAbilityCharList(){
   const q=(document.getElementById('a_char_search')?.value||'').trim().toLowerCase();
@@ -2549,6 +2566,7 @@ function saveAbility(id){
     target.coneStart=Math.max(1,+document.getElementById('a_conestart').value||1);
     target.coneEnd=Math.max(1,+document.getElementById('a_coneend').value||3);
     target.range=Math.max(0,+document.getElementById('a_range').value||0);
+    target.zoneRange=Math.max(1,+document.getElementById('a_zonerange').value||target.range||3);
     target.desc=rteHtml('a_desc');
     target.effect=document.getElementById('a_effect').value||'✨';
     target.transformCharId=null; target.triggerOnDeath=false;
