@@ -857,7 +857,10 @@ function updateTargetingBanner(){
   }
   if(pendingPersistentOrigin&&currentPage==='table'){
     const pa=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId);
-    banner.innerHTML=`🎯 <b>${esc(pa?.name||'Zone')}</b> — clique pour choisir la direction (Échap pour annuler)`;
+    const stageTxt=pendingPersistentOrigin.stage==='angle'?'clique pour choisir la direction'
+      :pendingPersistentOrigin.stage==='distance'?'clique pour choisir la distance'
+      :'ajuste l’orientation puis clique pour lancer';
+    banner.innerHTML=`🎯 <b>${esc(pa?.name||'Zone')}</b> — ${stageTxt} (Échap pour annuler)`;
     banner.classList.add('show');
     return;
   }
@@ -968,12 +971,19 @@ function zoneAxis(a,targetCell,originOverride,rangeCellsOverride){
   const rangeCells=(rangeCellsOverride!=null)?rangeCellsOverride:(a.range||1);
   return {cx,cy,angle,range:rangeCells*c};
 }
-/* Longueur réelle (en cases) d'une zone ligne/cône persistante : distance origine→clic, plafonnée à la longueur max définie sur la capacité (zoneRange). Permet de faire une zone plus courte que le maximum. */
-function persistentZoneRangeCells(a,origin,targetCell){
-  const dx=targetCell[0]-origin[0], dy=targetCell[1]-origin[1];
-  const dist=Math.sqrt(dx*dx+dy*dy);
-  const maxZone=a.zoneRange||a.range||1;
-  return Math.max(1,Math.min(dist||1,maxZone));
+/* Position (pixels) du lanceur, utilisée pour le placement en 3 clics des sorts persistants ligne/cône. */
+function casterPixelPos(casterInst){
+  const c=S.map.cell;
+  return [(S.freeMovement&&casterInst.px!=null)?casterInst.px:casterInst.x*c+c/2,(S.freeMovement&&casterInst.py!=null)?casterInst.py:casterInst.y*c+c/2];
+}
+/* Projette une case survolée sur l'axe (origine cx,cy à l'angle donné) pour obtenir une distance en cases, plafonnée à maxCells. */
+function projectDistanceCells(cx,cy,angle,cell,maxCells){
+  const c=S.map.cell;
+  const hx=cell[0]*c+c/2, hy=cell[1]*c+c/2;
+  const dx=Math.cos(angle), dy=Math.sin(angle);
+  const proj=((hx-cx)*dx+(hy-cy)*dy)/c;
+  const max=(maxCells>0)?maxCells:9999;
+  return Math.max(0,Math.min(max,Math.round(proj)));
 }
 function lineConeHitTest(axis,areaType,c,coneStart,coneEnd,px,py){
   const {cx,cy,angle,range}=axis;
@@ -991,8 +1001,7 @@ function footprintHitsLineCone(tx,ty,tw,th,axis,areaType,c,coneStart,coneEnd){
   const pts=[[tx,ty],[tx+tw,ty],[tx,ty+th],[tx+tw,ty+th],[tx+tw/2,ty+th/2]].map(p=>[p[0]*c,p[1]*c]);
   return pts.some(([px,py])=>lineConeHitTest(axis,areaType,c,coneStart,coneEnd,px,py));
 }
-function lineConeMarkup(a,targetCell,originOverride,rangeCellsOverride){
-  const axis=zoneAxis(a,targetCell,originOverride,rangeCellsOverride); if(!axis)return '';
+function lineConeMarkupFromAxis(a,axis){
   const {cx,cy,angle,range}=axis, c=S.map.cell;
   const dx=Math.cos(angle), dy=Math.sin(angle), px=-dy, py=dx;
   let poly;
@@ -1007,6 +1016,10 @@ function lineConeMarkup(a,targetCell,originOverride,rangeCellsOverride){
   const mapW=S.map.cols*c, mapH=S.map.rows*c;
   const effect=a.effect?`<text x="${cx+dx*range/2}" y="${cy+dy*range/2}" font-size="${Math.max(24,c*0.8)}" text-anchor="middle" dominant-baseline="middle" opacity=".42">${esc(a.effect)}</text>`:'';
   return `<svg id="zonePreview" style="position:absolute;left:0;top:0;pointer-events:none;z-index:20" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="#a44cff38" stroke="#c084fc" stroke-width="2"/>${effect}</svg>`;
+}
+function lineConeMarkup(a,targetCell,originOverride,rangeCellsOverride){
+  const axis=zoneAxis(a,targetCell,originOverride,rangeCellsOverride); if(!axis)return '';
+  return lineConeMarkupFromAxis(a,axis);
 }
 function zoneMarkup(a,cell,originOverride,rangeCellsOverride){
   if(a.area==='line'||a.area==='cone')return lineConeMarkup(a,cell,originOverride,rangeCellsOverride);
@@ -1024,8 +1037,33 @@ function updateZonePreview(){
     if(!hoverCell)return;
     const a=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId);
     if(!a)return;
-    const rC=(a.area==='line'||a.area==='cone')?persistentZoneRangeCells(a,pendingPersistentOrigin.origin,hoverCell):undefined;
-    map.insertAdjacentHTML('beforeend',zoneMarkup(a,hoverCell,pendingPersistentOrigin.origin,rC));
+    const c=S.map.cell, zoneLen=a.zoneRange||a.range||1;
+    if(a.area==='line'||a.area==='cone'){
+      if(pendingPersistentOrigin.stage==='angle'){
+        // 1er clic à venir : la zone suit la souris depuis le lanceur.
+        map.insertAdjacentHTML('beforeend',zoneMarkup(a,hoverCell,null,zoneLen));
+        return;
+      }
+      if(pendingPersistentOrigin.stage==='distance'){
+        // 2e clic à venir : la zone glisse le long de la direction verrouillée, de 0 à la portée max.
+        const {angle,casterPx}=pendingPersistentOrigin;
+        const maxCells=a.range>0?a.range:9999;
+        const distCells=projectDistanceCells(casterPx[0],casterPx[1],angle,hoverCell,maxCells);
+        const originPx=[casterPx[0]+Math.cos(angle)*distCells*c,casterPx[1]+Math.sin(angle)*distCells*c];
+        map.insertAdjacentHTML('beforeend',lineConeMarkupFromAxis(a,{cx:originPx[0],cy:originPx[1],angle,range:zoneLen*c}));
+        return;
+      }
+      if(pendingPersistentOrigin.stage==='final'){
+        // 3e clic à venir : réoriente la zone autour du point de distance déjà choisi.
+        const {originPx}=pendingPersistentOrigin;
+        const hx=hoverCell[0]*c+c/2, hy=hoverCell[1]*c+c/2;
+        const angle=Math.atan2(hy-originPx[1],hx-originPx[0]);
+        map.insertAdjacentHTML('beforeend',lineConeMarkupFromAxis(a,{cx:originPx[0],cy:originPx[1],angle,range:zoneLen*c}));
+        return;
+      }
+      return;
+    }
+    map.insertAdjacentHTML('beforeend',zoneMarkup(a,hoverCell,pendingPersistentOrigin.origin));
     return;
   }
   if(!activeAbility||!hoverCell)return;
@@ -1961,31 +1999,56 @@ function resolveBuffZone(a,casterInst,start){
   saveState(); render();
 }
 /* ============================= ZONES PERSISTANTES (type Persistant) ============================= */
+/* Placement en 3 clics pour Ligne/Cône :
+   1) direction depuis le lanceur   2) distance du lanceur (0 → portée max)   3) orientation finale (pivote sur le point choisi) puis lance. */
 function handlePersistentLineConeClick(a,casterInst,pt){
-  if(pendingPersistentOrigin&&pendingPersistentOrigin.abilityId===a.id){
-    const origin=pendingPersistentOrigin.origin;
-    pendingPersistentOrigin=null; activeAbility=null; hoverCell=null;
-    resolvePersistentAbility(a,casterInst,pt,origin);
+  if(!casterInst){toast('Sélectionne d’abord un personnage.');pendingPersistentOrigin=null;activeAbility=null;render();return;}
+  if(!pendingPersistentOrigin||pendingPersistentOrigin.abilityId!==a.id){
+    pendingPersistentOrigin={abilityId:a.id,stage:'angle'};
+  }
+  const c=S.map.cell;
+  const casterPx=casterPixelPos(casterInst);
+
+  if(pendingPersistentOrigin.stage==='angle'){
+    const clickPx=[pt[0]*c+c/2,pt[1]*c+c/2];
+    pendingPersistentOrigin.angle=Math.atan2(clickPx[1]-casterPx[1],clickPx[0]-casterPx[0]);
+    pendingPersistentOrigin.casterPx=casterPx;
+    pendingPersistentOrigin.stage='distance';
+    hoverCell=null;
+    toast('🎯 Choisis la distance (clique pour confirmer)');
+    render();
     return;
   }
-  if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
-  if(a.range&&a.range>0){
-    const dist=footprintDistance(casterInst.x,casterInst.y,casterInst.sizeW||1,casterInst.sizeH||1,pt[0],pt[1],1,1);
-    if(dist>a.range){toast(`🚫 Trop loin (portée max ${a.range} case${a.range>1?'s':''}).`);return;}
+  if(pendingPersistentOrigin.stage==='distance'){
+    const {angle,casterPx:cp}=pendingPersistentOrigin;
+    const maxCells=a.range>0?a.range:9999;
+    const distCells=projectDistanceCells(cp[0],cp[1],angle,pt,maxCells);
+    pendingPersistentOrigin.originPx=[cp[0]+Math.cos(angle)*distCells*c,cp[1]+Math.sin(angle)*distCells*c];
+    pendingPersistentOrigin.stage='final';
+    hoverCell=null;
+    toast('🎯 Ajuste l’orientation puis clique pour lancer (Échap pour annuler)');
+    render();
+    return;
   }
-  pendingPersistentOrigin={abilityId:a.id,origin:pt};
-  hoverCell=null;
-  toast('🎯 Choisis la direction du sort (clique pour confirmer)');
-  render();
+  if(pendingPersistentOrigin.stage==='final'){
+    const {originPx}=pendingPersistentOrigin;
+    const clickPx=[pt[0]*c+c/2,pt[1]*c+c/2];
+    const finalAngle=Math.atan2(clickPx[1]-originPx[1],clickPx[0]-originPx[0]);
+    const zoneLen=a.zoneRange||a.range||1;
+    const axis={cx:originPx[0],cy:originPx[1],angle:finalAngle,range:zoneLen*c};
+    pendingPersistentOrigin=null; activeAbility=null; hoverCell=null;
+    resolvePersistentAbility(a,casterInst,pt,null,axis);
+    return;
+  }
 }
-function resolvePersistentAbility(a,casterInst,start,originOverride){
+function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride){
   if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
   if(!canControlInstance(casterInst.id)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
   if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
     toast(`🚫 Mana insuffisant (${casterInst.mana}/${a.manaCost}).`);
     activeAbility=null; hoverCell=null; pendingPersistentOrigin=null; render(); return;
   }
-  if(!originOverride&&a.range&&a.range>0&&a.area!=='self'){
+  if(!originOverride&&!axisOverride&&a.range&&a.range>0&&a.area!=='self'){
     const dist=footprintDistance(casterInst.x,casterInst.y,casterInst.sizeW||1,casterInst.sizeH||1,start[0],start[1],1,1);
     if(dist>a.range){toast(`🚫 Trop loin (portée max ${a.range} case${a.range>1?'s':''}).`);return;}
   }
@@ -1993,9 +2056,8 @@ function resolvePersistentAbility(a,casterInst,start,originOverride){
   const casterTpl=instTemplate(casterInst);
   const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,casterLabel:casterInst.label,turnsLeft:a.duration||3,effect:a.effect};
   if(a.area==='line'||a.area==='cone'){
-    const originPt=originOverride||[casterInst.x,casterInst.y];
-    const rC=persistentZoneRangeCells(a,originPt,start);
-    const axis=zoneAxis(a,start,originOverride,rC); if(!axis){toast('Sélectionne d’abord un personnage.');return;}
+    const axis=axisOverride||zoneAxis(a,start,originOverride,a.zoneRange||a.range||1);
+    if(!axis){toast('Sélectionne d’abord un personnage.');return;}
     zone.cx=axis.cx; zone.cy=axis.cy; zone.angle=axis.angle; zone.range=axis.range;
   }else if(a.area==='self'){
     zone.cx=casterInst.x; zone.cy=casterInst.y;
@@ -2168,8 +2230,9 @@ function startAbility(id){
     else resolveAbility(a,[caster.x,caster.y]);
     return;
   }
+  pendingPersistentOrigin=(a.type==='Persistant'&&(a.area==='line'||a.area==='cone'))?{abilityId:id,stage:'angle'}:null;
   activeAbility=id; hoverCell=null; render();
-  toast('🎯 Ciblage : clique sur une cible ou une case (Échap pour annuler)');
+  toast(pendingPersistentOrigin?'🎯 Choisis la direction du sort (clique pour confirmer)':'🎯 Ciblage : clique sur une cible ou une case (Échap pour annuler)');
 }
 function transformInstance(instId,targetCharId){
   const t=inst(instId); const newChar=char(targetCharId);
