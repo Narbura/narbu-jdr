@@ -151,7 +151,7 @@ body.stage-fullscreen .targeting-banner{top:64px}
   <button class="btn ghost" style="width:100%" onclick="logout()">↩ Se déconnecter</button>
 </aside>
 <main class="main">
-<header class="top"><h1 id="pageTitle">Table de jeu</h1><div class="actions"><button class="btn" id="undoBtn" onclick="undoLast()" title="Annuler la dernière modification">↺ Annuler</button><button class="btn" id="resetBtn" onclick="resetDemo()">Réinitialiser la démo</button><button class="btn primary" onclick="saveState()">💾 Sauvegarder</button></div></header>
+<header class="top"><h1 id="pageTitle">Table de jeu</h1><div class="actions"><button class="btn" id="undoBtn" onclick="undoLast()" title="Annuler la dernière modification">↺ Annuler</button><button class="btn" id="resetBtn" onclick="resetDemo()">Réinitialiser la démo</button><button class="btn primary" onclick="saveState(true)">💾 Sauvegarder</button></div></header>
 <section class="content" id="content"></section>
 </main>
 </div>
@@ -222,6 +222,7 @@ async function handleAuth() {
 }
 
 async function logout(){
+  if(saveDebounceTimer){ await flushSave(); }
   if(gameChannel){ supabaseClient.removeChannel(gameChannel); gameChannel=null; }
   await supabaseClient.auth.signOut();
   currentUser=null;
@@ -288,6 +289,7 @@ function normalizeState(){
   S.notes.forEach(n=>{ if(n.categoryId===undefined)n.categoryId=null; });
   if(S.notesReveal===undefined)S.notesReveal=null;
   if(!S.afflictionDefs)S.afflictionDefs=[];
+  if(S._rev===undefined)S._rev=0;
   S.instances.forEach(t=>{
     if(t.px===undefined)t.px=null;
     if(t.py===undefined)t.py=null;
@@ -415,17 +417,50 @@ async function undoLast(){
   S=JSON.parse(undoStack[undoStack.length-1]);
   normalizeState();
   selectedToken=null; activeAbility=null; multiSel=[];
-  await persistState(); render();
+  bumpRev();
+  await flushSave(); render();
   toast('↺ Dernière modification annulée.');
 }
-async function persistState(){
-  pushUndoCheckpoint();
+/* ---- Sauvegarde : l'UI et l'undo restent instantanés (local uniquement), l'écriture réseau
+   Supabase est groupée (debounce) pour ne jamais bloquer/désynchroniser en cas d'actions rapides.
+   Chaque état porte un numéro de version (_rev) : un retour Realtime plus vieux que notre état
+   local est ignoré, ce qui supprime le rubberbanding en cas de réponses réseau en désordre. ---- */
+let saveDebounceTimer=null;
+let saveInFlight=false;
+let saveQueued=false;
+function bumpRev(){ S._rev=(S._rev||0)+1; }
+async function flushSave(){
+  clearTimeout(saveDebounceTimer); saveDebounceTimer=null;
+  if(saveInFlight){ saveQueued=true; return; }
+  saveInFlight=true;
+  const snapshot=S;
   try{
-    const { error } = await supabaseClient.from('game_state').upsert({id:'main',data:S,updated_at:new Date().toISOString()});
+    const { error } = await supabaseClient.from('game_state').upsert({id:'main',data:snapshot,updated_at:new Date().toISOString()});
     if(error) console.error('persistState', error);
   }catch(e){ console.error('persistState', e); }
-  localStorage.setItem('arcanum-vtt', JSON.stringify(S));
+  saveInFlight=false;
+  if(saveQueued){ saveQueued=false; flushSave(); }
 }
+async function persistState(){
+  bumpRev(); pushUndoCheckpoint();
+  localStorage.setItem('arcanum-vtt', JSON.stringify(S));
+  await flushSave();
+}
+/* saveState() : appelée partout après une action de jeu. Met à jour l'undo + le stockage local
+   instantanément, puis regroupe l'envoi Supabase (350ms après la dernière action) au lieu d'en
+   envoyer un par action. saveState(true) force un envoi immédiat (bouton "Sauvegarder"). */
+function saveState(immediate){
+  bumpRev(); pushUndoCheckpoint();
+  localStorage.setItem('arcanum-vtt', JSON.stringify(S));
+  if(immediate){
+    flushSave();
+    toast('Sauvegarde effectuée');
+  }else{
+    clearTimeout(saveDebounceTimer);
+    saveDebounceTimer=setTimeout(flushSave,350);
+  }
+}
+window.addEventListener('beforeunload',()=>{ if(saveDebounceTimer)flushSave(); });
 let lastTurnCombatant=null;
 function syncTurnSelection(){
   if(!S.combat.active){ lastTurnCombatant=null; return; }
@@ -440,7 +475,10 @@ function subscribeRealtime(){
   gameChannel=supabaseClient.channel('game_state_sync')
     .on('postgres_changes',{event:'*',schema:'public',table:'game_state',filter:'id=eq.main'},payload=>{
       if(payload.new && payload.new.data){
-        S=payload.new.data;
+        const incoming=payload.new.data;
+        // Écho de notre propre sauvegarde (ou réponse réseau en retard) : notre état local est déjà plus récent, on ignore.
+        if((incoming._rev||0)<(S._rev||0))return;
+        S=incoming;
         normalizeState();
         syncTurnSelection();
         render();
