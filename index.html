@@ -347,6 +347,11 @@ function normalizeState(){
     if(a.auraEffect===undefined)a.auraEffect='damage';
     if(a.duration===undefined)a.duration=3;
     if(a.dmgMult===undefined)a.dmgMult='';
+    if(a.projectileImage===undefined)a.projectileImage=null;
+    if(a.projectileFrames===undefined)a.projectileFrames=1;
+    if(a.impactSpritesheet===undefined)a.impactSpritesheet=null;
+    if(a.impactFrames===undefined)a.impactFrames=1;
+    if(a.animFps===undefined)a.animFps=60;
   });
 }
 
@@ -1110,6 +1115,139 @@ function updateZonePreview(){
   map.insertAdjacentHTML('beforeend',zoneMarkup(a,hoverCell));
 }
 
+/* ============================= ANIMATIONS DE SORTS (FX) ============================= */
+const fxImgCache={};
+function getFxImg(url){
+  if(!url)return null;
+  if(!fxImgCache[url]){const im=new Image();im.src=url;fxImgCache[url]=im;}
+  return fxImgCache[url];
+}
+function instCenterPx(t){
+  const c=S.map.cell;
+  return [(S.freeMovement&&t.px!=null)?t.px:t.x*c+c/2,(S.freeMovement&&t.py!=null)?t.py:t.y*c+c/2];
+}
+function ensureFxCanvas(){
+  const map=document.getElementById('map'); if(!map)return null;
+  let cv=document.getElementById('fxCanvas');
+  if(!cv){
+    cv=document.createElement('canvas');
+    cv.id='fxCanvas';
+    cv.style.cssText='position:absolute;left:0;top:0;pointer-events:none;z-index:32';
+    map.appendChild(cv);
+  }
+  cv.width=S.map.cols*S.map.cell; cv.height=S.map.rows*S.map.cell;
+  if(fxList.length&&!fxRafRunning){fxRafRunning=true;requestAnimationFrame(fxLoop);}
+  return cv;
+}
+let fxList=[];
+let fxRafRunning=false;
+function fxStart(fx){
+  fx.start=performance.now();
+  fxList.push(fx);
+  if(!fxRafRunning){fxRafRunning=true;requestAnimationFrame(fxLoop);}
+}
+function fxLoop(now){
+  const cv=document.getElementById('fxCanvas');
+  if(!cv){fxRafRunning=false;return;}
+  const ctx=cv.getContext('2d');
+  ctx.clearRect(0,0,cv.width,cv.height);
+  fxList=fxList.filter(fx=>{
+    const elapsed=now-fx.start;
+    if(elapsed>=fx.duration){if(fx.onEnd)fx.onEnd();return false;}
+    try{fx.draw(ctx,elapsed);}catch(e){}
+    return true;
+  });
+  if(fxList.length)requestAnimationFrame(fxLoop); else fxRafRunning=false;
+}
+function fxDrawFrame(ctx,img,frame,frames,dx,dy,dw,dh){
+  if(!img||!img.complete||!img.naturalWidth)return;
+  const fw=img.naturalWidth/frames, fh=img.naturalHeight;
+  ctx.drawImage(img,frame*fw,0,fw,fh,dx,dy,dw,dh);
+}
+function fxAddImpact(img,frames,cx,cy,w,h,fps,clip){
+  if(!img)return;
+  const duration=Math.max(200,frames/fps*1000);
+  fxStart({duration,draw(ctx,elapsed){
+    const frame=Math.min(frames-1,Math.floor(elapsed/1000*fps));
+    ctx.save(); if(clip)clip(ctx);
+    fxDrawFrame(ctx,img,frame,frames,cx-w/2,cy-h/2,w,h);
+    ctx.restore();
+  }});
+}
+function fxAddProjectile(img,frames,fromX,fromY,toX,toY,size,fps,onArrive){
+  const dist=Math.hypot(toX-fromX,toY-fromY);
+  const speed=900; // px/s
+  const duration=Math.max(120,dist/speed*1000);
+  const angle=Math.atan2(toY-fromY,toX-fromX);
+  fxStart({duration,draw(ctx,elapsed){
+    const t=Math.min(1,elapsed/duration);
+    const x=fromX+(toX-fromX)*t, y=fromY+(toY-fromY)*t;
+    if(!img||!img.complete||!img.naturalWidth)return;
+    const frame=frames>1?Math.floor(elapsed/1000*fps)%frames:0;
+    ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
+    fxDrawFrame(ctx,img,frame,frames,-size/2,-size/2,size,size);
+    ctx.restore();
+  },onEnd:onArrive});
+}
+function fxAddConeFill(cx,cy,angle,range,halfWStart,halfWEnd,color,duration){
+  fxStart({duration,draw(ctx,elapsed){
+    const t=Math.min(1,elapsed/duration);
+    const curRange=range*t;
+    const dx=Math.cos(angle),dy=Math.sin(angle),px=-dy,py=dx;
+    const w=halfWStart+(halfWEnd-halfWStart)*t;
+    ctx.beginPath();
+    ctx.moveTo(cx+px*halfWStart,cy+py*halfWStart);
+    ctx.lineTo(cx-px*halfWStart,cy-py*halfWStart);
+    ctx.lineTo(cx-px*w+dx*curRange,cy-py*w+dy*curRange);
+    ctx.lineTo(cx+px*w+dx*curRange,cy+py*w+dy*curRange);
+    ctx.closePath(); ctx.fillStyle=color; ctx.fill();
+  }});
+}
+const FX_ELEMENT_COLORS={Feu:'#ff6a3c',Eau:'#3ca0ff',Terre:'#8a6b3c',Air:'#c9e6ff',Glace:'#7fd8ff',Foudre:'#ffe066',Lumière:'#fff3b0',Ténèbres:'#8b5cf6',Neutre:'#c084fc',Physique:'#e0e0e0'};
+function fxElementColor(el){return (FX_ELEMENT_COLORS[el]||'#c084fc')+'99';}
+function playAbilityFX(a,casterInst,targets,start){
+  if(!casterInst)return;
+  ensureFxCanvas();
+  const cell=S.map.cell, fps=a.animFps||60;
+  const projImg=a.projectileImage?getFxImg(a.projectileImage):null;
+  const impactImg=a.impactSpritesheet?getFxImg(a.impactSpritesheet):null;
+  const projFrames=Math.max(1,a.projectileFrames||1);
+  const impactFrames=Math.max(1,a.impactFrames||1);
+  const [fromX,fromY]=instCenterPx(casterInst);
+  const doImpact=(cx,cy,size,clip)=>{ if(impactImg)fxAddImpact(impactImg,impactFrames,cx,cy,size,size,fps,clip); };
+
+  if(a.area==='single'){
+    (targets||[]).forEach(t=>{
+      const [tx,ty]=instCenterPx(t);
+      const size=Math.max(cell*1.4,(t.sizeW||1)*cell*1.4);
+      if(projImg)fxAddProjectile(projImg,projFrames,fromX,fromY,tx,ty,cell*0.9,fps,()=>doImpact(tx,ty,size));
+      else doImpact(tx,ty,size);
+    });
+    return;
+  }
+  if(a.area==='square'||a.area==='circle'){
+    const size=(a.areaSize||3)*cell;
+    const cx=start[0]*cell+size/2, cy=start[1]*cell+size/2;
+    const clip=a.area==='circle'?(ctx=>{ctx.beginPath();ctx.arc(cx,cy,size/2,0,Math.PI*2);ctx.clip();}):null;
+    if(projImg)fxAddProjectile(projImg,projFrames,fromX,fromY,cx,cy,cell*0.9,fps,()=>doImpact(cx,cy,size,clip));
+    else doImpact(cx,cy,size,clip);
+    return;
+  }
+  if(a.area==='self'){
+    const size=((a.areaSize||1)*2+1)*cell;
+    doImpact(fromX,fromY,size);
+    return;
+  }
+  if(a.area==='line'||a.area==='cone'){
+    const axis=zoneAxis(a,start); if(!axis)return;
+    const c=cell;
+    const sw=a.area==='cone'?(a.coneStart||1)*c/2:c/2;
+    const ew=a.area==='cone'?(a.coneEnd||3)*c/2:c/2;
+    const duration=Math.max(200,(axis.range/700)*1000);
+    fxAddConeFill(axis.cx,axis.cy,axis.angle,axis.range,sw,ew,fxElementColor(a.element),duration);
+  }
+}
+
 /* ---- Panneau latéral : Bibliothèque / Chat + combat ---- */
 function sidePanelHtml(){
   const mj=isMJ();
@@ -1568,6 +1706,7 @@ function applyMapTransform(){const map=document.getElementById('map');if(map)map
 function setupMapInteractions(){
   const wrap=document.getElementById('mapWrap'); const map=document.getElementById('map');
   if(!wrap||!map)return;
+  ensureFxCanvas();
   const hint=document.getElementById('mapDropHint');
 
   wrap.ondragover=e=>{e.preventDefault();hint?.classList.add('show');};
@@ -1895,6 +2034,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   }
   const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
   const targets=affected(a,start,explicitTargetInstId);
+  playAbilityFX(a,casterInst,targets,start);
   const lines=[`⚔ <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b>`];
   if(a.manaCost>0)lines.push(`💧 Coût en mana : ${a.manaCost} (reste ${casterInst.mana}/${casterInst.manaMax})`);
   lines.push(`🎲 d100 : <b>${atk}</b> → ${label}`);
@@ -2602,6 +2742,32 @@ function openAbility(id){
   <p class="tiny muted full" style="grid-column:1/-1">Ligne droite et Cône suivent librement la souris (pixel par pixel), dans la direction du clic. Cône : s'évase du lanceur (largeur « départ ») jusqu'à la longueur de zone (largeur « arrivée »). Multiplicateur : appliqué au résultat (capacité + arme) avant déduction de la défense et de la résistance élémentaire. Pour un sort « Persistant » ligne/cône : « Portée maximale » = distance max à laquelle poser l'origine de la zone (1er clic). « Longueur maximale de la zone » = longueur max de la ligne/cône lui-même. Au 2e clic (direction), la zone s'étend jusqu'au point cliqué, sans dépasser cette longueur max — tu peux donc la faire plus courte.</p>
   <div class="field full"><label>Description</label>${richEditorHtml('a_desc',a.desc||'')}</div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
+  <div class="field full">
+    <label>🎯 Image du projectile (optionnelle — spritesheet horizontale possible)</label>
+    <div class="icon-dropzone" onclick="document.getElementById('a_proj_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'a_projectile','a_proj_preview')">
+      <div id="a_proj_preview" class="icon-preview">${a.projectileImage?`<img src="${esc(a.projectileImage)}">`:'<span>➡️</span>'}</div>
+      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir. Vide = sort instantané (pas de projectile).</p>
+      <input type="file" id="a_proj_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'a_projectile','a_proj_preview')">
+    </div>
+    <input type="hidden" id="a_projectile" value="${esc(a.projectileImage||'')}">
+    ${a.projectileImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('a_projectile','a_proj_preview','➡️')">↺ Retirer</button>`:''}
+    <div class="field" style="margin-top:6px;max-width:220px"><label>Nombre de frames (projectile)</label><input id="a_proj_frames" type="number" min="1" value="${a.projectileFrames||1}"></div>
+  </div>
+  <div class="field full">
+    <label>💥 Spritesheet d'impact (frames alignées horizontalement)</label>
+    <div class="icon-dropzone" onclick="document.getElementById('a_impact_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'a_impact','a_impact_preview')">
+      <div id="a_impact_preview" class="icon-preview">${a.impactSpritesheet?`<img src="${esc(a.impactSpritesheet)}">`:'<span>💥</span>'}</div>
+      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir. Vide = pas d'animation d'impact.</p>
+      <input type="file" id="a_impact_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'a_impact','a_impact_preview')">
+    </div>
+    <input type="hidden" id="a_impact" value="${esc(a.impactSpritesheet||'')}">
+    ${a.impactSpritesheet?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('a_impact','a_impact_preview','💥')">↺ Retirer</button>`:''}
+    <div class="row" style="gap:10px;margin-top:6px;flex-wrap:wrap">
+      <div class="field" style="max-width:220px"><label>Nombre de frames (impact)</label><input id="a_impact_frames" type="number" min="1" value="${a.impactFrames||1}"></div>
+      <div class="field" style="max-width:220px"><label>Vitesse d'animation (FPS)</label><input id="a_animfps" type="number" min="1" max="60" value="${a.animFps||60}"></div>
+    </div>
+    <p class="tiny muted">Ligne/Cône : pas de projectile ni d'impact — la zone se remplit progressivement avec une couleur selon l'élément.</p>
+  </div>
   </div>
   <div class="field full">
     <label>Personnages liés (peuvent lancer cette capacité)</label>
@@ -2670,6 +2836,11 @@ function saveAbility(id){
     target.zoneRange=Math.max(1,+document.getElementById('a_zonerange').value||target.range||3);
     target.desc=rteHtml('a_desc');
     target.effect=document.getElementById('a_effect').value||'✨';
+    target.projectileImage=document.getElementById('a_projectile').value.trim()||null;
+    target.projectileFrames=Math.max(1,+document.getElementById('a_proj_frames').value||1);
+    target.impactSpritesheet=document.getElementById('a_impact').value.trim()||null;
+    target.impactFrames=Math.max(1,+document.getElementById('a_impact_frames').value||1);
+    target.animFps=Math.max(1,Math.min(60,+document.getElementById('a_animfps').value||60));
     target.transformCharId=null; target.triggerOnDeath=false;
     target.auraEffect=document.getElementById('a_auraeffect')?document.getElementById('a_auraeffect').value:'damage';
     target.duration=Math.max(1,+(document.getElementById('a_duration')?.value)||3);
