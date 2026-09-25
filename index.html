@@ -1137,8 +1137,29 @@ function updateZonePreview(){
 const fxImgCache={};
 function getFxImg(url){
   if(!url)return null;
-  if(!fxImgCache[url]){const im=new Image();im.src=url;fxImgCache[url]=im;}
+  if(!fxImgCache[url]){const im=new Image();im.crossOrigin='anonymous';im.src=url;fxImgCache[url]=im;}
   return fxImgCache[url];
+}
+const fxAvgColorCache={};
+function getAvgColorFromImage(url,cb){
+  if(!url)return;
+  if(fxAvgColorCache[url]){cb(fxAvgColorCache[url]);return;}
+  const img=getFxImg(url); if(!img)return;
+  const compute=()=>{
+    try{
+      const cw=8,ch=8;
+      const cv=document.createElement('canvas'); cv.width=cw; cv.height=ch;
+      const cx=cv.getContext('2d');
+      cx.drawImage(img,0,0,cw,ch);
+      const data=cx.getImageData(0,0,cw,ch).data;
+      let r=0,g=0,b=0,n=0;
+      for(let i=0;i<data.length;i+=4){r+=data[i];g+=data[i+1];b+=data[i+2];n++;}
+      const hex='#'+[Math.round(r/n),Math.round(g/n),Math.round(b/n)].map(v=>v.toString(16).padStart(2,'0')).join('');
+      fxAvgColorCache[url]=hex;
+      cb(hex);
+    }catch(e){ /* image non accessible en canvas (CORS) : on garde la couleur par élément */ }
+  };
+  if(img.complete&&img.naturalWidth)compute(); else img.onload=compute;
 }
 function instCenterPx(t){
   const c=S.map.cell;
@@ -1269,7 +1290,12 @@ function playAbilityFX(a,casterInst,targets,start){
     const sw=a.area==='cone'?(a.coneStart||1)*c/2:c/2;
     const ew=a.area==='cone'?(a.coneEnd||3)*c/2:c/2;
     const duration=Math.max(200,(axis.range/700)*1000);
-    fxAddConeFill(axis.cx,axis.cy,axis.angle,axis.range,sw,ew,fxElementColor(a.element),duration);
+    let color=fxElementColor(a.element);
+    if(a.zoneImage){
+      if(fxAvgColorCache[a.zoneImage])color=fxAvgColorCache[a.zoneImage]+'99';
+      else getAvgColorFromImage(a.zoneImage,()=>{});
+    }
+    fxAddConeFill(axis.cx,axis.cy,axis.angle,axis.range,sw,ew,color,duration);
   }
 }
 
@@ -2330,8 +2356,8 @@ function persistentZonesHtml(){
       const pts=poly.map(p=>p.map(n=>n.toFixed(1)).join(',')).join(' ');
       const mapW=S.map.cols*c, mapH=S.map.rows*c;
       if(z.zoneImage){
-        const clipId='clip'+Math.random().toString(36).slice(2,9);
-        return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><defs><clipPath id="${clipId}"><polygon points="${pts}"/></clipPath></defs><image href="${esc(z.zoneImage)}" x="0" y="0" width="${mapW}" height="${mapH}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" opacity=".85"/><polygon points="${pts}" fill="none" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4"/></svg>`;
+        const patId='pat'+Math.random().toString(36).slice(2,9);
+        return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><defs><pattern id="${patId}" patternUnits="userSpaceOnUse" width="${c}" height="${c}"><image href="${esc(z.zoneImage)}" x="0" y="0" width="${c}" height="${c}" preserveAspectRatio="xMidYMid slice"/></pattern></defs><polygon points="${pts}" fill="url(#${patId})" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4" opacity=".9"/></svg>`;
       }
       const effect=z.effect?`<text x="${cx+dx*range/2}" y="${cy+dy*range/2}" font-size="${Math.max(24,c*0.8)}" text-anchor="middle" dominant-baseline="middle" opacity=".5">${esc(z.effect)}</text>`:'';
       return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="#ff6a1f2e" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4"/>${effect}</svg>`;
@@ -2341,7 +2367,7 @@ function persistentZonesHtml(){
     else{size=z.areaSize||1;x=z.x;y=z.y;}
     const px=x*c, py=y*c, d=size*c;
     if(z.zoneImage){
-      return `<div style="position:absolute;left:${px}px;top:${py}px;width:${d}px;height:${d}px;border:2px dashed #ff8c3c;z-index:12;overflow:hidden;pointer-events:none"><img src="${esc(z.zoneImage)}" style="width:100%;height:100%;object-fit:cover;opacity:.85"></div>`;
+      return `<div style="position:absolute;left:${px}px;top:${py}px;width:${d}px;height:${d}px;border:2px dashed #ff8c3c;z-index:12;pointer-events:none;background-image:url('${esc(z.zoneImage)}');background-size:${c}px ${c}px;background-repeat:repeat;opacity:.9;${z.area==='circle'?'border-radius:50%;':''}"></div>`;
     }
     const effect=z.effect?`<span style="font-size:${Math.max(24,size*8)}px;opacity:.5">${esc(z.effect)}</span>`:'';
     return `<div style="position:absolute;left:${px}px;top:${py}px;width:${d}px;height:${d}px;background:#ff6a1f2e;border:2px dashed #ff8c3c;z-index:12;display:grid;place-items:center;pointer-events:none">${effect}</div>`;
