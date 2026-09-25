@@ -372,6 +372,13 @@ let collapsedAssets={players:false,enemies:false};
 let sidePanelTab='library';
 let stageFullscreen=false;
 let gridOpacity=Math.max(0,Math.min(100,parseInt(localStorage.getItem('narbudr-grid-opacity')||'100',10)));
+let impactPerToken=localStorage.getItem('narbudr-impact-per-token')==='1';
+function toggleImpactPerToken(){
+  impactPerToken=!impactPerToken;
+  localStorage.setItem('narbudr-impact-per-token',impactPerToken?'1':'0');
+  const btn=document.getElementById('impactPerTokenBtn');
+  if(btn)btn.classList.toggle('primary',impactPerToken);
+}
 let gridVisible=localStorage.getItem('narbudr-grid-visible')!=='0';
 let gridPopoverOpen=false;
 let dragCandidate=null;
@@ -946,6 +953,7 @@ function tablePage(){
           <p class="tiny muted" style="margin:6px 0 0">Ce réglage n'affecte que ton propre écran.</p>
         </div>
       </div>
+      <button class="btn ${impactPerToken?'primary':''}" id="impactPerTokenBtn" onclick="toggleImpactPerToken()" title="Si activé : l'animation d'impact se joue séparément sur chaque cible touchée (centrée sur elle). Sinon, un seul impact sur toute la zone.">💥 Impact/cible${impactPerToken?' : ON':''}</button>
       <button class="btn ${S.freeMovement?'primary':''}" ${(isMJ()&&!S.combat.active)?'':'disabled'} onclick="toggleFreeMovement()" title="${S.combat.active?'Indisponible pendant le combat — les tokens sont alignés sur la grille':(isMJ()?'Activer/désactiver le placement libre des tokens (hors combat)':'Seul le MJ peut activer cette option')}">🎯 Placement libre${S.freeMovement?' : ON':''}</button>
       ${combatControls}
     </div>
@@ -989,18 +997,18 @@ function auraZonesHtml(){
   const cell=S.map.cell;
   S.instances.forEach(t=>{
     if(!t.activeAuras||!t.activeAuras.length)return;
-    const cx=(S.freeMovement&&t.px!=null)?t.px:t.x*cell+cell/2;
-    const cy=(S.freeMovement&&t.py!=null)?t.py:t.y*cell+cell/2;
+    const sw=t.sizeW||1, sh=t.sizeH||1;
+    const [cx,cy]=instCenterPx(t);
     t.activeAuras.forEach(abilityId=>{
       const a=S.abilities.find(x=>x.id===abilityId); if(!a)return;
-      const size=((a.areaSize||1)*2+1)*cell;
-      const px=cx-size/2, py=cy-size/2;
+      const w=((a.areaSize||1)*2+sw)*cell, h=((a.areaSize||1)*2+sh)*cell;
+      const px=cx-w/2, py=cy-h/2;
       const radius=a.area==='circle'?'border-radius:50%;':'';
       if(a.zoneImage){
-        out+=`<div class="zone" style="left:${px}px;top:${py}px;width:${size}px;height:${size}px;${radius}background:none;overflow:hidden"><img src="${esc(a.zoneImage)}" style="width:100%;height:100%;object-fit:cover;opacity:.55"></div>`;
+        out+=`<div class="zone" style="left:${px}px;top:${py}px;width:${w}px;height:${h}px;${radius}background:none;overflow:hidden"><img src="${esc(a.zoneImage)}" style="width:100%;height:100%;object-fit:cover;opacity:.55"></div>`;
       }else{
         const effect=a.effect?`<span class="zone-effect" style="font-size:${Math.max(24,(a.areaSize||1)*8)}px">${esc(a.effect)}</span>`:'';
-        out+=`<div class="zone" style="left:${px}px;top:${py}px;width:${size}px;height:${size}px;${radius}">${effect}</div>`;
+        out+=`<div class="zone" style="left:${px}px;top:${py}px;width:${w}px;height:${h}px;${radius}">${effect}</div>`;
       }
     });
   });
@@ -1039,8 +1047,7 @@ function zoneAxis(a,targetCell,originOverride,rangeCellsOverride){
   }else{
     const casterInst=selectedToken?inst(selectedToken):null;
     if(!casterInst)return null;
-    cx=(S.freeMovement&&casterInst.px!=null)?casterInst.px:casterInst.x*c+c/2;
-    cy=(S.freeMovement&&casterInst.py!=null)?casterInst.py:casterInst.y*c+c/2;
+    [cx,cy]=instCenterPx(casterInst);
   }
   const tx=targetCell[0]*c+c/2, ty=targetCell[1]*c+c/2;
   const angle=Math.atan2(ty-cy,tx-cx);
@@ -1049,8 +1056,7 @@ function zoneAxis(a,targetCell,originOverride,rangeCellsOverride){
 }
 /* Position (pixels) du lanceur, utilisée pour le placement en 3 clics des sorts persistants ligne/cône. */
 function casterPixelPos(casterInst){
-  const c=S.map.cell;
-  return [(S.freeMovement&&casterInst.px!=null)?casterInst.px:casterInst.x*c+c/2,(S.freeMovement&&casterInst.py!=null)?casterInst.py:casterInst.y*c+c/2];
+  return instCenterPx(casterInst);
 }
 /* Projette une case survolée sur l'axe (origine cx,cy à l'angle donné) pour obtenir une distance en cases, plafonnée à maxCells. */
 function projectDistanceCells(cx,cy,angle,cell,maxCells){
@@ -1185,7 +1191,8 @@ function getAvgColorFromImage(url,cb){
 }
 function instCenterPx(t){
   const c=S.map.cell;
-  return [(S.freeMovement&&t.px!=null)?t.px:t.x*c+c/2,(S.freeMovement&&t.py!=null)?t.py:t.y*c+c/2];
+  const sw=t.sizeW||1, sh=t.sizeH||1;
+  return [(S.freeMovement&&t.px!=null)?t.px:t.x*c+sw*c/2,(S.freeMovement&&t.py!=null)?t.py:t.y*c+sh*c/2];
 }
 function ensureFxCanvas(){
   const map=document.getElementById('map'); if(!map)return null;
@@ -1283,11 +1290,22 @@ function playAbilityFX(a,casterInst,targets,start){
   const impactFrames=Math.max(1,a.impactFrames||1);
   const [fromX,fromY]=instCenterPx(casterInst);
   const doImpact=(cx,cy,size,clip)=>{ if(impactImg)fxAddImpact(impactImg,impactFrames,a.impactRows||1,cx,cy,size,size,fps,clip); };
+  const doImpactZoneOrPerToken=(cx,cy,size,clip)=>{
+    if(impactPerToken&&(targets||[]).length){
+      targets.forEach(t=>{
+        const [tx,ty]=instCenterPx(t);
+        const tsize=Math.max(cell*1.4,Math.max(t.sizeW||1,t.sizeH||1)*cell*1.4);
+        doImpact(tx,ty,tsize);
+      });
+    }else{
+      doImpact(cx,cy,size,clip);
+    }
+  };
 
   if(a.area==='single'){
     (targets||[]).forEach(t=>{
       const [tx,ty]=instCenterPx(t);
-      const size=Math.max(cell*1.4,(t.sizeW||1)*cell*1.4);
+      const size=Math.max(cell*1.4,Math.max(t.sizeW||1,t.sizeH||1)*cell*1.4);
       if(projImg)fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,tx,ty,cell*0.9,fps,()=>doImpact(tx,ty,size));
       else doImpact(tx,ty,size);
     });
@@ -1297,20 +1315,30 @@ function playAbilityFX(a,casterInst,targets,start){
     const size=(a.areaSize||3)*cell;
     const cx=start[0]*cell+size/2, cy=start[1]*cell+size/2;
     const clip=a.area==='circle'?(ctx=>{ctx.beginPath();ctx.arc(cx,cy,size/2,0,Math.PI*2);ctx.clip();}):null;
-    if(projImg)fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,cx,cy,cell*0.9,fps,()=>doImpact(cx,cy,size,clip));
-    else doImpact(cx,cy,size,clip);
+    if(projImg)fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,cx,cy,cell*0.9,fps,()=>doImpactZoneOrPerToken(cx,cy,size,clip));
+    else doImpactZoneOrPerToken(cx,cy,size,clip);
     return;
   }
   if(a.area==='self'){
-    const size=((a.areaSize||1)*2+1)*cell;
-    doImpact(fromX,fromY,size);
+    const sw=casterInst.sizeW||1, sh=casterInst.sizeH||1;
+    const size=((a.areaSize||1)*2+Math.max(sw,sh))*cell;
+    doImpactZoneOrPerToken(fromX,fromY,size);
     return;
   }
-  if(a.area==='line'||a.area==='cone'){
+  if(a.area==='line'){
+    const axis=zoneAxis(a,start); if(!axis)return;
+    const endX=axis.cx+Math.cos(axis.angle)*axis.range;
+    const endY=axis.cy+Math.sin(axis.angle)*axis.range;
+    const size=cell*1.4;
+    if(projImg)fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,endX,endY,cell*0.9,fps,()=>doImpactZoneOrPerToken(endX,endY,size));
+    else doImpactZoneOrPerToken(endX,endY,size);
+    return;
+  }
+  if(a.area==='cone'){
     const axis=zoneAxis(a,start); if(!axis)return;
     const c=cell;
-    const sw=a.area==='cone'?(a.coneStart||1)*c/2:c/2;
-    const ew=a.area==='cone'?(a.coneEnd||3)*c/2:c/2;
+    const sw=(a.coneStart||1)*c/2;
+    const ew=(a.coneEnd||3)*c/2;
     const duration=Math.max(200,(axis.range/700)*1000);
     let color=fxElementColor(a.element);
     if(a.zoneImage){
@@ -1633,9 +1661,11 @@ function endCombat(){
 /* ---- Effets automatiques de début de tour : auras (Passif), buffs/débuffs, afflictions ---- */
 function tokenInAura(caster,target,a){
   const size=a.areaSize||1;
-  const dx=Math.abs(target.x-caster.x), dy=Math.abs(target.y-caster.y);
-  if(a.area==='circle')return Math.sqrt(dx*dx+dy*dy)<=size;
-  return dx<=size&&dy<=size;
+  const csw=caster.sizeW||1, csh=caster.sizeH||1, tsw=target.sizeW||1, tsh=target.sizeH||1;
+  const gapX=Math.max(0, target.x-(caster.x+csw-1), caster.x-(target.x+tsw-1));
+  const gapY=Math.max(0, target.y-(caster.y+csh-1), caster.y-(target.y+tsh-1));
+  if(a.area==='circle')return Math.sqrt(gapX*gapX+gapY*gapY)<=size;
+  return gapX<=size&&gapY<=size;
 }
 function triggerAuras(casterInst){
   const casterTpl=instTemplate(casterInst); if(!casterTpl)return;
@@ -2028,8 +2058,7 @@ function affected(a,start,explicitTargetInstId){
   const isSupport=(a.type==='Soin'||a.type==='Bouclier');
 
   if(a.area==='self'){
-    const size=a.areaSize||1;
-    const inZone=t=>{const dx=Math.abs(t.x-casterInst.x),dy=Math.abs(t.y-casterInst.y);return dx<=size&&dy<=size;};
+    const inZone=t=>tokenInAura(casterInst,t,{area:'square',areaSize:a.areaSize||1});
     if(isSupport)return S.instances.filter(inZone);
     return S.instances.filter(t=>t.id!==casterInst.id&&inZone(t));
   }
@@ -2313,6 +2342,7 @@ function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride
     zone.cx=axis.cx; zone.cy=axis.cy; zone.angle=axis.angle; zone.range=axis.range;
   }else if(a.area==='self'){
     zone.cx=casterInst.x; zone.cy=casterInst.y;
+    zone.casterSW=casterInst.sizeW||1; zone.casterSH=casterInst.sizeH||1;
   }else{
     const size=a.areaSize||3;
     zone.x=Math.max(0,Math.min(S.map.cols-size,start[0]));
@@ -2327,7 +2357,12 @@ function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride
 function tokenInPersistentZone(t,z){
   const c=S.map.cell, sw=t.sizeW||1, sh=t.sizeH||1;
   if(z.area==='line'||z.area==='cone')return footprintHitsLineCone(t.x,t.y,sw,sh,{cx:z.cx,cy:z.cy,angle:z.angle,range:z.range},z.area,c,z.coneStart,z.coneEnd);
-  if(z.area==='self'){const dx=Math.abs(t.x-z.cx),dy=Math.abs(t.y-z.cy);return dx<=(z.areaSize||1)&&dy<=(z.areaSize||1);}
+  if(z.area==='self'){
+    const size=z.areaSize||1, csw=z.casterSW||1, csh=z.casterSH||1;
+    const gapX=Math.max(0, t.x-(z.cx+csw-1), z.cx-(t.x+sw-1));
+    const gapY=Math.max(0, t.y-(z.cy+csh-1), z.cy-(t.y+sh-1));
+    return gapX<=size&&gapY<=size;
+  }
   const size=z.areaSize||1;
   return (t.x+sw>z.x)&&(t.x<z.x+size)&&(t.y+sh>z.y)&&(t.y<z.y+size);
 }
@@ -2384,15 +2419,18 @@ function persistentZonesHtml(){
       const effect=z.effect?`<text x="${cx+dx*range/2}" y="${cy+dy*range/2}" font-size="${Math.max(24,c*0.8)}" text-anchor="middle" dominant-baseline="middle" opacity=".5">${esc(z.effect)}</text>`:'';
       return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="#ff6a1f2e" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4"/>${effect}</svg>`;
     }
-    let x,y,size;
-    if(z.area==='self'){size=(z.areaSize||1)*2+1;x=z.cx-(z.areaSize||1);y=z.cy-(z.areaSize||1);}
-    else{size=z.areaSize||1;x=z.x;y=z.y;}
-    const px=x*c, py=y*c, d=size*c;
+    let x,y,w,h;
+    if(z.area==='self'){
+      const csw=z.casterSW||1, csh=z.casterSH||1;
+      w=(z.areaSize||1)*2+csw; h=(z.areaSize||1)*2+csh;
+      x=z.cx-(z.areaSize||1); y=z.cy-(z.areaSize||1);
+    }else{w=h=z.areaSize||1;x=z.x;y=z.y;}
+    const px=x*c, py=y*c, dw=w*c, dh=h*c;
     if(z.zoneImage){
-      return `<div style="position:absolute;left:${px}px;top:${py}px;width:${d}px;height:${d}px;border:2px dashed #ff8c3c;z-index:12;pointer-events:none;background-image:url('${esc(z.zoneImage)}');background-size:${c}px ${c}px;background-repeat:repeat;opacity:.9;${z.area==='circle'?'border-radius:50%;':''}"></div>`;
+      return `<div style="position:absolute;left:${px}px;top:${py}px;width:${dw}px;height:${dh}px;border:2px dashed #ff8c3c;z-index:12;pointer-events:none;background-image:url('${esc(z.zoneImage)}');background-size:${c}px ${c}px;background-repeat:repeat;opacity:.9;${z.area==='circle'?'border-radius:50%;':''}"></div>`;
     }
-    const effect=z.effect?`<span style="font-size:${Math.max(24,size*8)}px;opacity:.5">${esc(z.effect)}</span>`:'';
-    return `<div style="position:absolute;left:${px}px;top:${py}px;width:${d}px;height:${d}px;background:#ff6a1f2e;border:2px dashed #ff8c3c;z-index:12;display:grid;place-items:center;pointer-events:none">${effect}</div>`;
+    const effect=z.effect?`<span style="font-size:${Math.max(24,Math.min(w,h)*8)}px;opacity:.5">${esc(z.effect)}</span>`:'';
+    return `<div style="position:absolute;left:${px}px;top:${py}px;width:${dw}px;height:${dh}px;background:#ff6a1f2e;border:2px dashed #ff8c3c;z-index:12;display:grid;place-items:center;pointer-events:none">${effect}</div>`;
   }).join('');
 }
 /* ============================= DISSIPATION (MJ universel) ============================= */
