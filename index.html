@@ -881,7 +881,7 @@ function showHudFloating(instId,deltas){
     if(!el)return;
     const dur=S.hudSettings?.resourceDurationMs??1000;
     const lines=[];
-    if(deltas.hp)lines.push(`<div style="color:#ef6262">${deltas.hp>0?'+':''}${deltas.hp} PV</div>`);
+    if (deltas.hp) lines.push(`<div style="color:${deltas.hp > 0 ? '#2ecc71' : '#ef6262'}">${deltas.hp > 0 ? '+' : ''}${deltas.hp} PV</div>`);
     if(deltas.mana)lines.push(`<div style="color:#5da5ff">${deltas.mana>0?'+':''}${deltas.mana} Mana</div>`);
     if(deltas.shield)lines.push(`<div style="color:#e7b85c">${deltas.shield>0?'+':''}${deltas.shield} Bouclier</div>`);
     if(!lines.length)return;
