@@ -349,6 +349,7 @@ function normalizeState(){
     if(a.dmgMult===undefined)a.dmgMult='';
     if(a.projectileImage===undefined)a.projectileImage=null;
     if(a.projectileFrames===undefined)a.projectileFrames=1;
+    if(a.projectileRows===undefined)a.projectileRows=1;
     if(a.impactSpritesheet===undefined)a.impactSpritesheet=null;
     if(a.impactFrames===undefined)a.impactFrames=1;
     if(a.impactRows===undefined)a.impactRows=1;
@@ -1189,7 +1190,7 @@ function fxAddImpact(img,frames,rows,cx,cy,w,h,fps,clip){
     ctx.restore();
   }});
 }
-function fxAddProjectile(img,frames,fromX,fromY,toX,toY,size,fps,onArrive){
+function fxAddProjectile(img,frames,rows,fromX,fromY,toX,toY,size,fps,onArrive){
   const dist=Math.hypot(toX-fromX,toY-fromY);
   const speed=900; // px/s
   const duration=Math.max(120,dist/speed*1000);
@@ -1200,7 +1201,7 @@ function fxAddProjectile(img,frames,fromX,fromY,toX,toY,size,fps,onArrive){
     if(!img||!img.complete||!img.naturalWidth)return;
     const frame=frames>1?Math.floor(elapsed/1000*fps)%frames:0;
     ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
-    fxDrawFrame(ctx,img,frame,frames,1,-size/2,-size/2,size,size);
+    fxDrawFrame(ctx,img,frame,frames,rows||1,-size/2,-size/2,size,size);
     ctx.restore();
   },onEnd:onArrive});
 }
@@ -1227,6 +1228,7 @@ function playAbilityFX(a,casterInst,targets,start){
   const projImg=a.projectileImage?getFxImg(a.projectileImage):null;
   const impactImg=a.impactSpritesheet?getFxImg(a.impactSpritesheet):null;
   const projFrames=Math.max(1,a.projectileFrames||1);
+  const projRows=Math.max(1,a.projectileRows||1);
   const impactFrames=Math.max(1,a.impactFrames||1);
   const [fromX,fromY]=instCenterPx(casterInst);
   const doImpact=(cx,cy,size,clip)=>{ if(impactImg)fxAddImpact(impactImg,impactFrames,a.impactRows||1,cx,cy,size,size,fps,clip); };
@@ -1235,7 +1237,7 @@ function playAbilityFX(a,casterInst,targets,start){
     (targets||[]).forEach(t=>{
       const [tx,ty]=instCenterPx(t);
       const size=Math.max(cell*1.4,(t.sizeW||1)*cell*1.4);
-      if(projImg)fxAddProjectile(projImg,projFrames,fromX,fromY,tx,ty,cell*0.9,fps,()=>doImpact(tx,ty,size));
+      if(projImg)fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,tx,ty,cell*0.9,fps,()=>doImpact(tx,ty,size));
       else doImpact(tx,ty,size);
     });
     return;
@@ -1244,7 +1246,7 @@ function playAbilityFX(a,casterInst,targets,start){
     const size=(a.areaSize||3)*cell;
     const cx=start[0]*cell+size/2, cy=start[1]*cell+size/2;
     const clip=a.area==='circle'?(ctx=>{ctx.beginPath();ctx.arc(cx,cy,size/2,0,Math.PI*2);ctx.clip();}):null;
-    if(projImg)fxAddProjectile(projImg,projFrames,fromX,fromY,cx,cy,cell*0.9,fps,()=>doImpact(cx,cy,size,clip));
+    if(projImg)fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,cx,cy,cell*0.9,fps,()=>doImpact(cx,cy,size,clip));
     else doImpact(cx,cy,size,clip);
     return;
   }
@@ -2767,7 +2769,10 @@ function openAbility(id){
     </div>
     <input type="hidden" id="a_projectile" value="${esc(a.projectileImage||'')}">
     ${a.projectileImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('a_projectile','a_proj_preview','➡️')">↺ Retirer</button>`:''}
-    <div class="field" style="margin-top:6px;max-width:220px"><label>Nombre de frames (projectile)</label><input id="a_proj_frames" type="number" min="1" value="${a.projectileFrames||1}"></div>
+    <div class="row" style="gap:10px;margin-top:6px;flex-wrap:wrap">
+      <div class="field" style="max-width:220px"><label>Nombre de frames (projectile)</label><input id="a_proj_frames" type="number" min="1" value="${a.projectileFrames||1}"></div>
+      <div class="field" style="max-width:220px"><label>Nombre de lignes (projectile)</label><input id="a_proj_rows" type="number" min="1" value="${a.projectileRows||1}"></div>
+    </div>
   </div>
   <div class="field full">
     <label>💥 Spritesheet d'impact (frames alignées horizontalement)</label>
@@ -2856,6 +2861,7 @@ function saveAbility(id){
     target.effect=document.getElementById('a_effect').value||'✨';
     target.projectileImage=document.getElementById('a_projectile').value.trim()||null;
     target.projectileFrames=Math.max(1,+document.getElementById('a_proj_frames').value||1);
+    target.projectileRows=Math.max(1,+document.getElementById('a_proj_rows').value||1);
     target.impactSpritesheet=document.getElementById('a_impact').value.trim()||null;
     target.impactFrames=Math.max(1,+document.getElementById('a_impact_frames').value||1);
     target.impactRows=Math.max(1,+document.getElementById('a_impact_rows').value||1);
