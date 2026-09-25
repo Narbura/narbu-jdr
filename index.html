@@ -351,6 +351,7 @@ function normalizeState(){
     if(a.projectileFrames===undefined)a.projectileFrames=1;
     if(a.impactSpritesheet===undefined)a.impactSpritesheet=null;
     if(a.impactFrames===undefined)a.impactFrames=1;
+    if(a.impactRows===undefined)a.impactRows=1;
     if(a.animFps===undefined)a.animFps=60;
   });
 }
@@ -488,6 +489,14 @@ function subscribeRealtime(){
         syncTurnSelection();
         render();
       }
+    })
+    .on('broadcast',{event:'fx'},payload=>{
+      const d=payload.payload||{};
+      const a=S.abilities.find(x=>x.id===d.abilityId);
+      const casterInst=inst(d.casterId);
+      if(!a||!casterInst)return;
+      const targets=(d.targetIds||[]).map(id=>inst(id)).filter(Boolean);
+      if(currentPage==='table')playAbilityFX(a,casterInst,targets,d.start);
     })
     .subscribe();
 }
@@ -1151,26 +1160,32 @@ function fxLoop(now){
   if(!cv){fxRafRunning=false;return;}
   const ctx=cv.getContext('2d');
   ctx.clearRect(0,0,cv.width,cv.height);
-  fxList=fxList.filter(fx=>{
+  const stillAlive=[], ended=[];
+  fxList.forEach(fx=>{
     const elapsed=now-fx.start;
-    if(elapsed>=fx.duration){if(fx.onEnd)fx.onEnd();return false;}
+    if(elapsed>=fx.duration){ended.push(fx);return;}
     try{fx.draw(ctx,elapsed);}catch(e){}
-    return true;
+    stillAlive.push(fx);
   });
+  fxList=stillAlive;
+  ended.forEach(fx=>{ if(fx.onEnd)fx.onEnd(); });
   if(fxList.length)requestAnimationFrame(fxLoop); else fxRafRunning=false;
 }
-function fxDrawFrame(ctx,img,frame,frames,dx,dy,dw,dh){
+function fxDrawFrame(ctx,img,frame,frames,rows,dx,dy,dw,dh){
   if(!img||!img.complete||!img.naturalWidth)return;
-  const fw=img.naturalWidth/frames, fh=img.naturalHeight;
-  ctx.drawImage(img,frame*fw,0,fw,fh,dx,dy,dw,dh);
+  rows=rows||1;
+  const cols=Math.max(1,Math.ceil(frames/rows));
+  const fw=img.naturalWidth/cols, fh=img.naturalHeight/rows;
+  const row=Math.floor(frame/cols), col=frame%cols;
+  ctx.drawImage(img,col*fw,row*fh,fw,fh,dx,dy,dw,dh);
 }
-function fxAddImpact(img,frames,cx,cy,w,h,fps,clip){
+function fxAddImpact(img,frames,rows,cx,cy,w,h,fps,clip){
   if(!img)return;
   const duration=Math.max(200,frames/fps*1000);
   fxStart({duration,draw(ctx,elapsed){
     const frame=Math.min(frames-1,Math.floor(elapsed/1000*fps));
     ctx.save(); if(clip)clip(ctx);
-    fxDrawFrame(ctx,img,frame,frames,cx-w/2,cy-h/2,w,h);
+    fxDrawFrame(ctx,img,frame,frames,rows,cx-w/2,cy-h/2,w,h);
     ctx.restore();
   }});
 }
@@ -1185,7 +1200,7 @@ function fxAddProjectile(img,frames,fromX,fromY,toX,toY,size,fps,onArrive){
     if(!img||!img.complete||!img.naturalWidth)return;
     const frame=frames>1?Math.floor(elapsed/1000*fps)%frames:0;
     ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
-    fxDrawFrame(ctx,img,frame,frames,-size/2,-size/2,size,size);
+    fxDrawFrame(ctx,img,frame,frames,1,-size/2,-size/2,size,size);
     ctx.restore();
   },onEnd:onArrive});
 }
@@ -1214,7 +1229,7 @@ function playAbilityFX(a,casterInst,targets,start){
   const projFrames=Math.max(1,a.projectileFrames||1);
   const impactFrames=Math.max(1,a.impactFrames||1);
   const [fromX,fromY]=instCenterPx(casterInst);
-  const doImpact=(cx,cy,size,clip)=>{ if(impactImg)fxAddImpact(impactImg,impactFrames,cx,cy,size,size,fps,clip); };
+  const doImpact=(cx,cy,size,clip)=>{ if(impactImg)fxAddImpact(impactImg,impactFrames,a.impactRows||1,cx,cy,size,size,fps,clip); };
 
   if(a.area==='single'){
     (targets||[]).forEach(t=>{
@@ -2035,6 +2050,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
   const targets=affected(a,start,explicitTargetInstId);
   playAbilityFX(a,casterInst,targets,start);
+  gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,casterId:casterInst.id,targetIds:targets.map(t=>t.id),start}});
   const lines=[`⚔ <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b>`];
   if(a.manaCost>0)lines.push(`💧 Coût en mana : ${a.manaCost} (reste ${casterInst.mana}/${casterInst.manaMax})`);
   lines.push(`🎲 d100 : <b>${atk}</b> → ${label}`);
@@ -2764,8 +2780,10 @@ function openAbility(id){
     ${a.impactSpritesheet?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('a_impact','a_impact_preview','💥')">↺ Retirer</button>`:''}
     <div class="row" style="gap:10px;margin-top:6px;flex-wrap:wrap">
       <div class="field" style="max-width:220px"><label>Nombre de frames (impact)</label><input id="a_impact_frames" type="number" min="1" value="${a.impactFrames||1}"></div>
+      <div class="field" style="max-width:220px"><label>Nombre de lignes (impact)</label><input id="a_impact_rows" type="number" min="1" value="${a.impactRows||1}"></div>
       <div class="field" style="max-width:220px"><label>Vitesse d'animation (FPS)</label><input id="a_animfps" type="number" min="1" max="60" value="${a.animFps||60}"></div>
     </div>
+    <p class="tiny muted">« Frames » = nombre total d'images dans la spritesheet. « Lignes » = si les images sont réparties sur plusieurs rangées (grille), indique le nombre de lignes ; sinon laisse 1.</p>
     <p class="tiny muted">Ligne/Cône : pas de projectile ni d'impact — la zone se remplit progressivement avec une couleur selon l'élément.</p>
   </div>
   </div>
@@ -2840,6 +2858,7 @@ function saveAbility(id){
     target.projectileFrames=Math.max(1,+document.getElementById('a_proj_frames').value||1);
     target.impactSpritesheet=document.getElementById('a_impact').value.trim()||null;
     target.impactFrames=Math.max(1,+document.getElementById('a_impact_frames').value||1);
+    target.impactRows=Math.max(1,+document.getElementById('a_impact_rows').value||1);
     target.animFps=Math.max(1,Math.min(60,+document.getElementById('a_animfps').value||60));
     target.transformCharId=null; target.triggerOnDeath=false;
     target.auraEffect=document.getElementById('a_auraeffect')?document.getElementById('a_auraeffect').value:'damage';
