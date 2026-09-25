@@ -290,6 +290,14 @@ function normalizeState(){
   if(S.notesReveal===undefined)S.notesReveal=null;
   if(!S.afflictionDefs)S.afflictionDefs=[];
   if(S._rev===undefined)S._rev=0;
+  if(S.hudEnabled===undefined)S.hudEnabled=false;
+  if(!S.hudSettings)S.hudSettings={};
+  if(S.hudSettings.resourceDurationMs===undefined)S.hudSettings.resourceDurationMs=1000;
+  if(S.hudSettings.criticalDurationMs===undefined)S.hudSettings.criticalDurationMs=1000;
+  if(!S.hudSettings.critical)S.hudSettings.critical={};
+  ['echecUltime','echecCritique','reussiteCritique','reussiteUltime'].forEach(k=>{
+    if(!S.hudSettings.critical[k])S.hudSettings.critical[k]={image:null,audio:null};
+  });
   S.instances.forEach(t=>{
     if(t.px===undefined)t.px=null;
     if(t.py===undefined)t.py=null;
@@ -355,6 +363,7 @@ function normalizeState(){
     if(a.impactRows===undefined)a.impactRows=1;
     if(a.animFps===undefined)a.animFps=60;
     if(a.zoneImage===undefined)a.zoneImage=null;
+    if(a.impactPerToken===undefined)a.impactPerToken=false;
   });
 }
 
@@ -372,13 +381,6 @@ let collapsedAssets={players:false,enemies:false};
 let sidePanelTab='library';
 let stageFullscreen=false;
 let gridOpacity=Math.max(0,Math.min(100,parseInt(localStorage.getItem('narbudr-grid-opacity')||'100',10)));
-let impactPerToken=localStorage.getItem('narbudr-impact-per-token')==='1';
-function toggleImpactPerToken(){
-  impactPerToken=!impactPerToken;
-  localStorage.setItem('narbudr-impact-per-token',impactPerToken?'1':'0');
-  const btn=document.getElementById('impactPerTokenBtn');
-  if(btn)btn.classList.toggle('primary',impactPerToken);
-}
 let gridVisible=localStorage.getItem('narbudr-grid-visible')!=='0';
 let gridPopoverOpen=false;
 let dragCandidate=null;
@@ -506,6 +508,14 @@ function subscribeRealtime(){
       if(!a||!casterInst)return;
       const targets=(d.targetIds||[]).map(id=>inst(id)).filter(Boolean);
       if(currentPage==='table')playAbilityFX(a,casterInst,targets,d.start);
+    })
+    .on('broadcast',{event:'hud'},payload=>{
+      const d=payload.payload||{};
+      showHudFloating(d.instId,d.deltas);
+    })
+    .on('broadcast',{event:'crit'},payload=>{
+      const d=payload.payload||{};
+      showCriticalPopup(d.instId,d.key);
     })
     .subscribe();
 }
@@ -852,6 +862,59 @@ function toggleFreeMovement(){
   }
   saveState(); render();
 }
+function toggleHudEnabled(){
+  if(!isMJ()){toast('⛔ Seul le MJ peut activer/désactiver le HUD.');return;}
+  S.hudEnabled=!S.hudEnabled;
+  addLog(S.hudEnabled?'🎯 Le MJ active le HUD flottant.':'🎯 Le MJ désactive le HUD flottant.');
+  saveState(); render();
+}
+/* ---- HUD flottant de ressources (dégâts/soins/bouclier) ---- */
+function broadcastHud(instId,deltas){
+  if(!deltas||(!deltas.hp&&!deltas.mana&&!deltas.shield))return;
+  gameChannel?.send({type:'broadcast',event:'hud',payload:{instId,deltas}});
+  showHudFloating(instId,deltas);
+}
+function showHudFloating(instId,deltas){
+  if(!S.hudEnabled||currentPage!=='table')return;
+  setTimeout(()=>{
+    const el=document.querySelector(`[data-token="${instId}"]`);
+    if(!el)return;
+    const dur=S.hudSettings?.resourceDurationMs??1000;
+    const lines=[];
+    if(deltas.hp)lines.push(`<div style="color:#ef6262">${deltas.hp>0?'+':''}${deltas.hp} PV</div>`);
+    if(deltas.mana)lines.push(`<div style="color:#5da5ff">${deltas.mana>0?'+':''}${deltas.mana} Mana</div>`);
+    if(deltas.shield)lines.push(`<div style="color:#e7b85c">${deltas.shield>0?'+':''}${deltas.shield} Bouclier</div>`);
+    if(!lines.length)return;
+    const wrap=document.createElement('div');
+    wrap.style.cssText='position:absolute;left:50%;bottom:calc(var(--tok-h,var(--cell-size,32px))/2 + 4px);transform:translateX(-50%);pointer-events:none;z-index:85;text-align:center;white-space:nowrap;font-size:12px;font-weight:800;text-shadow:0 1px 3px #000,0 0 4px #000';
+    wrap.innerHTML=lines.join('');
+    el.appendChild(wrap);
+    setTimeout(()=>wrap.remove(),dur);
+  },500);
+}
+/* ---- Pop-ups de réussite/échec critique ---- */
+const CRITICAL_KEYS={'Échec ultime':'echecUltime','Échec critique':'echecCritique','Réussite critique':'reussiteCritique','Réussite ultime':'reussiteUltime'};
+function broadcastCritical(instId,label){
+  const key=CRITICAL_KEYS[label]; if(!key)return;
+  gameChannel?.send({type:'broadcast',event:'crit',payload:{instId,key}});
+  showCriticalPopup(instId,key);
+}
+function showCriticalPopup(instId,key){
+  if(!S.hudEnabled||currentPage!=='table')return;
+  const cfg=(S.hudSettings?.critical||{})[key]; if(!cfg)return;
+  const el=document.querySelector(`[data-token="${instId}"]`);
+  const t=inst(instId);
+  const dur=S.hudSettings?.criticalDurationMs??1000;
+  if(cfg.audio){ try{ const au=new Audio(cfg.audio); au.play().catch(()=>{}); }catch(e){} }
+  if(cfg.image&&el&&t){
+    const sw=t.sizeW||1, sh=t.sizeH||1, cell=S.map.cell;
+    const img=document.createElement('img');
+    img.src=cfg.image;
+    img.style.cssText=`position:absolute;left:50%;bottom:calc(var(--tok-h,${cell}px)/2);transform:translate(-50%,-100%);width:${cell*sw}px;height:${cell*sh}px;object-fit:contain;z-index:96;pointer-events:none`;
+    el.appendChild(img);
+    setTimeout(()=>img.remove(),dur);
+  }
+}
 function findFreeCell(x,y,excludeId){
   if(!isOccupied(x,y,excludeId))return [x,y];
   const maxR=Math.max(S.map.cols,S.map.rows);
@@ -953,7 +1016,7 @@ function tablePage(){
           <p class="tiny muted" style="margin:6px 0 0">Ce réglage n'affecte que ton propre écran.</p>
         </div>
       </div>
-      <button class="btn ${impactPerToken?'primary':''}" id="impactPerTokenBtn" onclick="toggleImpactPerToken()" title="Si activé : l'animation d'impact se joue séparément sur chaque cible touchée (centrée sur elle). Sinon, un seul impact sur toute la zone.">💥 Impact/cible${impactPerToken?' : ON':''}</button>
+      <button class="btn ${S.hudEnabled?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleHudEnabled()" title="${isMJ()?'Activer/désactiver le HUD flottant (dégâts/soins) et les pop-ups de critiques':'Seul le MJ peut activer cette option'}">🎯 HUD${S.hudEnabled?' : ON':''}</button>
       <button class="btn ${S.freeMovement?'primary':''}" ${(isMJ()&&!S.combat.active)?'':'disabled'} onclick="toggleFreeMovement()" title="${S.combat.active?'Indisponible pendant le combat — les tokens sont alignés sur la grille':(isMJ()?'Activer/désactiver le placement libre des tokens (hors combat)':'Seul le MJ peut activer cette option')}">🎯 Placement libre${S.freeMovement?' : ON':''}</button>
       ${combatControls}
     </div>
@@ -1291,7 +1354,7 @@ function playAbilityFX(a,casterInst,targets,start){
   const [fromX,fromY]=instCenterPx(casterInst);
   const doImpact=(cx,cy,size,clip)=>{ if(impactImg)fxAddImpact(impactImg,impactFrames,a.impactRows||1,cx,cy,size,size,fps,clip); };
   const doImpactZoneOrPerToken=(cx,cy,size,clip)=>{
-    if(impactPerToken&&(targets||[]).length){
+    if(a.impactPerToken&&(targets||[]).length){
       targets.forEach(t=>{
         const [tx,ty]=instCenterPx(t);
         const tsize=Math.max(cell*1.4,Math.max(t.sizeW||1,t.sizeH||1)*cell*1.4);
@@ -1688,9 +1751,11 @@ function triggerAuras(casterInst){
       if(a.auraEffect==='heal'){
         t.hp=Math.min(t.hpMax,t.hp+amount);
         lines.push(`💚 ${esc(t.label)} : +${amount} PV`);
+        broadcastHud(t.id,{hp:amount});
       }else if(a.auraEffect==='shield'){
         t.shield=(t.shield||0)+amount; if(t.shield>t.shieldMax)t.shieldMax=t.shield;
         lines.push(`🛡 ${esc(t.label)} : +${amount} bouclier`);
+        broadcastHud(t.id,{shield:amount});
       }else{
         let dmg=amount;
         const def=effectiveDef(tTpl)[a.defense]||0; dmg=Math.max(0,dmg-def);
@@ -1698,6 +1763,7 @@ function triggerAuras(casterInst){
         const absorbed=Math.min(t.shield||0,dmg); t.shield-=absorbed; const hpDmg=dmg-absorbed;
         t.hp=Math.max(0,t.hp-hpDmg);
         lines.push(`✨ ${esc(t.label)} : -${hpDmg} PV`);
+        broadcastHud(t.id,{hp:-hpDmg,shield:absorbed>0?-absorbed:0});
         if(t.hp<=0){lines.push(`💀 <b>${esc(t.label)} est KO</b>.`);handleInstanceDeath(t);}
       }
     });
@@ -1714,12 +1780,15 @@ function tickStatusEffects(inst_){
     if(se.element==='Soin'){
       inst_.hp=Math.min(inst_.hpMax,inst_.hp+raw);
       addLog(`🌀 <b>${esc(inst_.label)}</b> — ${esc(se.name)} : +${raw} PV`);
+      broadcastHud(inst_.id,{hp:raw});
     }else if(se.element==='Bouclier'){
       inst_.shield=(inst_.shield||0)+raw; if(inst_.shield>inst_.shieldMax)inst_.shieldMax=inst_.shield;
       addLog(`🌀 <b>${esc(inst_.label)}</b> — ${esc(se.name)} : +${raw} bouclier`);
+      broadcastHud(inst_.id,{shield:raw});
     }else if(se.element==='Récupération'){
       inst_.mana=Math.min(inst_.manaMax,inst_.mana+raw);
       addLog(`🌀 <b>${esc(inst_.label)}</b> — ${esc(se.name)} : +${raw} mana`);
+      broadcastHud(inst_.id,{mana:raw});
     }else{
       let dmg=raw;
       const def=se.defense!=='none'?(effectiveDef(tTpl)[se.defense]||0):0;
@@ -1731,6 +1800,7 @@ function tickStatusEffects(inst_){
       const absorbed=Math.min(inst_.shield||0,dmg); inst_.shield-=absorbed; const hpDmg=dmg-absorbed;
       inst_.hp=Math.max(0,inst_.hp-hpDmg);
       addLog(`🌀 <b>${esc(inst_.label)}</b> — ${esc(se.name)} : -${hpDmg} PV`);
+      broadcastHud(inst_.id,{hp:-hpDmg,shield:absorbed>0?-absorbed:0});
       if(inst_.hp<=0){addLog(`💀 <b>${esc(inst_.label)} est KO</b>.`);handleInstanceDeath(inst_);}
     }
     se.turnsLeft--;
@@ -1751,6 +1821,7 @@ function tickAfflictions(inst_){
       const absorbed=Math.min(inst_.shield||0,dmg); inst_.shield-=absorbed; const hpDmg=dmg-absorbed;
       inst_.hp=Math.max(0,inst_.hp-hpDmg);
       addLog(`🩸 <b>${esc(inst_.label)}</b> subit <b>${esc(def.name)}</b> : -${hpDmg} PV (${pct}%)`);
+      broadcastHud(inst_.id,{hp:-hpDmg,shield:absorbed>0?-absorbed:0});
       if(inst_.hp<=0){addLog(`💀 <b>${esc(inst_.label)} est KO</b>.`);handleInstanceDeath(inst_);}
     }
     if(def.skipTurn)skip=true;
@@ -2135,6 +2206,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(w&&w.itemType==='weapon'&&w.damageFormula&&(w.weaponStat||'Force')===a.stat){weaponUsed=w;weaponFormula=w.damageFormula;}
   }
   const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
+  broadcastCritical(casterInst.id,label);
   const targets=affected(a,start,explicitTargetInstId);
   playAbilityFX(a,casterInst,targets,start);
   gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,casterId:casterInst.id,targetIds:targets.map(t=>t.id),start}});
@@ -2171,6 +2243,7 @@ function resolveAbility(a,start,explicitTargetInstId){
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
       lines.push(`💚 Soin : ${amount}`);
       lines.push(`❤️ ${esc(t.label)} : +${amount} PV (${t.hp}/${t.hpMax})`);
+      broadcastHud(t.id,{hp:amount});
       continue;
     }
     if(a.type==='Bouclier'){
@@ -2181,6 +2254,7 @@ function resolveAbility(a,start,explicitTargetInstId){
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
       lines.push(`🛡 Bouclier accordé : ${amount}`);
       lines.push(`🛡 ${esc(t.label)} : ${t.shield}/${t.shieldMax}`);
+      broadcastHud(t.id,{shield:amount});
       continue;
     }
     if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);continue;}
@@ -2198,6 +2272,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     lines.push(`✨ Dégâts (${esc(a.element)}) : ${damage}${def?` (−${def} défense)`:''}${resist?` (résistance ${Math.round(resist*100)}%)`:''}`);
     if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
     lines.push(`❤️ ${esc(t.label)} : -${hpDamage} PV (${t.hp}/${t.hpMax})`);
+    broadcastHud(t.id,{hp:-hpDamage,shield:absorbed>0?-absorbed:0});
     if(t.hp<=0){
       lines.push(`💀 <b>${esc(t.label)} est KO</b>.`);
       handleInstanceDeath(t);
@@ -2242,6 +2317,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   const casterTpl=instTemplate(casterInst);
   const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
+  broadcastCritical(casterInst.id,label);
   t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
   t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
   addLog(`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${a.duration} tour(s), 🎲 d100 : ${atk} → ${label}).`);
@@ -2263,6 +2339,7 @@ function resolveBuffZone(a,casterInst,start){
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   const casterTpl=instTemplate(casterInst);
   const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
+  broadcastCritical(casterInst.id,label);
   const targets=affected(a,start);
   const lines=[`🌀 <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b> en zone (🎲 d100 : ${atk} → ${label})`];
   if(!targets.length){
@@ -2376,9 +2453,11 @@ function tickPersistentZones(nt){
     if(z.element==='Soin'){
       nt.hp=Math.min(nt.hpMax,nt.hp+raw);
       addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : +${raw} PV`);
+      broadcastHud(nt.id,{hp:raw});
     }else if(z.element==='Bouclier'){
       nt.shield=(nt.shield||0)+raw; if(nt.shield>nt.shieldMax)nt.shieldMax=nt.shield;
       addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : +${raw} bouclier`);
+      broadcastHud(nt.id,{shield:raw});
     }else{
       let dmg=raw;
       const def=z.defense!=='none'?(effectiveDef(tTpl)[z.defense]||0):0;
@@ -2388,6 +2467,7 @@ function tickPersistentZones(nt){
       const absorbed=Math.min(nt.shield||0,dmg); nt.shield-=absorbed; const hpDmg=dmg-absorbed;
       nt.hp=Math.max(0,nt.hp-hpDmg);
       addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : -${hpDmg} PV`);
+      broadcastHud(nt.id,{hp:-hpDmg,shield:absorbed>0?-absorbed:0});
       if(nt.hp<=0){addLog(`💀 <b>${esc(nt.label)} est KO</b>.`);handleInstanceDeath(nt);}
     }
   });
@@ -2861,6 +2941,7 @@ function openAbility(id){
   <p class="tiny muted full" style="grid-column:1/-1">Ligne droite et Cône suivent librement la souris (pixel par pixel), dans la direction du clic. Cône : s'évase du lanceur (largeur « départ ») jusqu'à la longueur de zone (largeur « arrivée »). Multiplicateur : appliqué au résultat (capacité + arme) avant déduction de la défense et de la résistance élémentaire. Pour un sort « Persistant » ligne/cône : « Portée maximale » = distance max à laquelle poser l'origine de la zone (1er clic). « Longueur maximale de la zone » = longueur max de la ligne/cône lui-même. Au 2e clic (direction), la zone s'étend jusqu'au point cliqué, sans dépasser cette longueur max — tu peux donc la faire plus courte.</p>
   <div class="field full"><label>Description</label>${richEditorHtml('a_desc',a.desc||'')}</div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
+  <div class="field full"><label><input type="checkbox" id="a_impactpertoken" ${a.impactPerToken?'checked':''}> 💥 Animation d'impact séparée par cible touchée (sinon un seul impact sur toute la zone)</label></div>
   <div class="field full" id="a_zoneimage_field" style="display:${a.area==='single'?'none':''}">
     <label>🖼️ Image de zone (remplace la couleur unie par cette image, visible uniquement dans la forme de la zone)</label>
     <div class="icon-dropzone" onclick="document.getElementById('a_zoneimage_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'a_zoneimage','a_zoneimage_preview')">
@@ -2972,6 +3053,7 @@ function saveAbility(id){
     target.zoneRange=Math.max(1,+document.getElementById('a_zonerange').value||target.range||3);
     target.desc=rteHtml('a_desc');
     target.effect=document.getElementById('a_effect').value||'✨';
+    target.impactPerToken=document.getElementById('a_impactpertoken')?.checked||false;
     target.zoneImage=document.getElementById('a_zoneimage').value.trim()||null;
     target.projectileImage=document.getElementById('a_projectile').value.trim()||null;
     target.projectileFrames=Math.max(1,+document.getElementById('a_proj_frames').value||1);
@@ -3024,7 +3106,75 @@ function equipmentPage(){
   <div class="card" style="margin-top:16px"><div class="row between"><h2>🩸 Afflictions</h2><button class="btn primary" onclick="openAfflictionDef()">＋ Nouvelle affliction</button></div>
   <p class="tiny muted">Fiche des afflictions (Brûlure, Gelé, Poison…) : % de dégâts/tour (fixe ou évolutif), tour annulé, immobilisation. Applique-les à un jeton depuis la table de jeu (bouton 🩸 Afflictions quand un jeton est sélectionné).</p>
   <div id="afflictionResultsContainer">${afflictionDefResultsHtml()}</div>
+  </div>
+  <div class="card" style="margin-top:16px"><div class="row between"><h2>🎯 HUD et critique</h2><button class="btn primary" onclick="openHudSettings()">⚙ Configurer</button></div>
+  <p class="tiny muted">Configure les images/sons des pop-ups de critique (Échec Ultime, Échec Critique, Réussite Critique, Réussite Ultime) et les durées d'affichage. L'activation se fait via le bouton 🎯 HUD sur la table de jeu.</p>
   </div>`;
+}
+const CRITICAL_LABELS={echecUltime:'💀 Échec ultime',echecCritique:'❌ Échec critique',reussiteCritique:'✨ Réussite critique',reussiteUltime:'🌟 Réussite ultime'};
+function openHudSettings(){
+  if(!isMJ())return;
+  const hs=S.hudSettings||{};
+  const critHtml=Object.entries(CRITICAL_LABELS).map(([key,label])=>{
+    const cfg=hs.critical?.[key]||{};
+    return `<div class="field full" style="border:1px solid #3a3e48;border-radius:10px;padding:10px;margin-bottom:8px">
+    <label><b>${label}</b></label>
+    <div class="icon-dropzone" onclick="document.getElementById('hud_${key}_imgfile').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'hud_${key}_img','hud_${key}_preview')">
+      <div id="hud_${key}_preview" class="icon-preview">${cfg.image?`<img src="${esc(cfg.image)}">`:'<span>🖼️</span>'}</div>
+      <p class="tiny muted">Image (PNG/JPG/WebP) — glisser ou cliquer</p>
+      <input type="file" id="hud_${key}_imgfile" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'hud_${key}_img','hud_${key}_preview')">
+    </div>
+    <input type="hidden" id="hud_${key}_img" value="${esc(cfg.image||'')}">
+    <div class="row" style="gap:6px;margin-top:6px;align-items:center">
+      <input type="file" id="hud_${key}_audiofile" accept="audio/*" onchange="handleHudAudioInput(event,'${key}')" style="flex:1">
+      <span class="tiny muted" id="hud_${key}_audiolabel">${cfg.audio?'🔊 Son défini':'Aucun son'}</span>
+      ${cfg.audio?`<button type="button" class="btn ghost" onclick="clearHudAudio('${key}')">🗑️</button>`:''}
+    </div>
+    <input type="hidden" id="hud_${key}_audio" value="${esc(cfg.audio||'')}">
+    </div>`;
+  }).join('');
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>🎯 HUD et critique</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <div class="form">
+  <div class="field"><label>Durée du HUD de ressources (ms)</label><input id="hud_resdur" type="number" min="100" value="${hs.resourceDurationMs??1000}"></div>
+  <div class="field"><label>Durée des pop-ups critiques (ms)</label><input id="hud_critdur" type="number" min="100" value="${hs.criticalDurationMs??1000}"></div>
+  </div>
+  ${critHtml}
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveHudSettings()">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+async function handleHudAudioInput(ev,key){
+  if(!isMJ())return;
+  const file=ev.target.files[0]; if(!file)return;
+  toast('⏳ Envoi du son…');
+  try{
+    const safeName=file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+    const filePath=`audio_${Date.now()}_${safeName}`;
+    const { error:upErr } = await supabaseClient.storage.from(MAPS_BUCKET).upload(filePath,file,{cacheControl:'3600',upsert:false});
+    if(upErr){ toast('❌ Échec de l\'envoi : '+upErr.message); return; }
+    const { data:pub } = supabaseClient.storage.from(MAPS_BUCKET).getPublicUrl(filePath);
+    document.getElementById(`hud_${key}_audio`).value=pub.publicUrl;
+    const lbl=document.getElementById(`hud_${key}_audiolabel`); if(lbl)lbl.textContent='🔊 Son défini';
+    toast('✅ Son envoyé.');
+  }catch(e){ console.error('handleHudAudioInput',e); toast('❌ Erreur lors de l\'envoi du son.'); }
+}
+function clearHudAudio(key){
+  const el=document.getElementById(`hud_${key}_audio`); if(el)el.value='';
+  const lbl=document.getElementById(`hud_${key}_audiolabel`); if(lbl)lbl.textContent='Aucun son';
+}
+function saveHudSettings(){
+  if(!isMJ())return;
+  if(!S.hudSettings)S.hudSettings={};
+  S.hudSettings.resourceDurationMs=Math.max(100,parseNum(document.getElementById('hud_resdur').value)||1000);
+  S.hudSettings.criticalDurationMs=Math.max(100,parseNum(document.getElementById('hud_critdur').value)||1000);
+  S.hudSettings.critical={};
+  Object.keys(CRITICAL_LABELS).forEach(key=>{
+    S.hudSettings.critical[key]={
+      image:document.getElementById(`hud_${key}_img`).value.trim()||null,
+      audio:document.getElementById(`hud_${key}_audio`).value.trim()||null
+    };
+  });
+  saveState(); closeModal(); render();
+  toast('✅ Réglages HUD enregistrés.');
 }
 function afflictionDefResultsHtml(){
   const items=S.afflictionDefs||[];
@@ -3141,8 +3291,8 @@ function useConsumable(charId,defId){
   const targets=S.instances.filter(i=>i.charId===charId);
   if(!targets.length){toast('⚠️ Ce personnage n’a pas de jeton sur la carte.');return;}
   targets.forEach(t=>{
-    if(def.resource==='Mana')t.mana=Math.min(t.manaMax,t.mana+def.amount);
-    else t.hp=Math.min(t.hpMax,t.hp+def.amount);
+    if(def.resource==='Mana'){t.mana=Math.min(t.manaMax,t.mana+def.amount);broadcastHud(t.id,{mana:def.amount});}
+    else {t.hp=Math.min(t.hpMax,t.hp+def.amount);broadcastHud(t.id,{hp:def.amount});}
   });
   entry.qty-=1;
   if(entry.qty<=0)c.consumablesOwned=c.consumablesOwned.filter(x=>x.id!==defId);
