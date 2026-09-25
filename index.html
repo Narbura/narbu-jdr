@@ -913,7 +913,7 @@ function showCriticalPopup(instId,key){
     img.style.cssText=`position:absolute;left:50%;bottom:calc(var(--tok-h,${cell}px)/2);transform:translate(-50%,-100%);width:${cell*sw}px;height:${cell*sh}px;object-fit:contain;z-index:96;pointer-events:none`;
     el.appendChild(img);
     setTimeout(()=>img.remove(),dur);
-  }
+  },400);
 }
 function findFreeCell(x,y,excludeId){
   if(!isOccupied(x,y,excludeId))return [x,y];
