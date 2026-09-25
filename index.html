@@ -951,7 +951,7 @@ function tablePage(){
     </div>
     <div class="map-wrap" id="mapWrap">
       <div class="map-drop-hint" id="mapDropHint">➕ Déposer sur la carte</div>
-      <div class="map" id="map" style="width:${S.map.cols*S.map.cell}px;height:${S.map.rows*S.map.cell}px${S.map.backgroundImage?`;background-image:url('${esc(S.map.backgroundImage)}');background-size:100% 100%;background-repeat:no-repeat`:''}">${mapCells()}${persistentZonesHtml()}${tokensHtml()}</div>
+	  <div class="map" id="map" style="width:${S.map.cols*S.map.cell}px;height:${S.map.rows*S.map.cell}px${S.map.backgroundImage?`;background-image:url('${esc(S.map.backgroundImage)}');background-size:100% 100%;background-repeat:no-repeat`:''}">${mapCells()}${persistentZonesHtml()}${auraZonesHtml()}${tokensHtml()}</div>      <div class="map" id="map" style="width:${S.map.cols*S.map.cell}px;height:${S.map.rows*S.map.cell}px${S.map.backgroundImage?`;background-image:url('${esc(S.map.backgroundImage)}');background-size:100% 100%;background-repeat:no-repeat`:''}">${mapCells()}${persistentZonesHtml()}${tokensHtml()}</div>
       ${S.combat.active?`<div class="turn-banner">⚔ Tour : <b>${esc(inst(S.combat.order[S.combat.turn])?.label||'—')}</b></div>`:''}
     </div>
     <div class="bottom-abilities">${(()=>{
@@ -1000,12 +1000,13 @@ function tokensHtml(){
          ${t.manaMax>0?`<div class="hud-row">💧 ${t.mana}/${t.manaMax}</div><div class="mini-bar mini-mana"><i style="width:${pct(t.mana,t.manaMax)}%"></i></div>`:''}
          ${t.shieldMax>0?`<div class="hud-row">🛡 ${t.shield}/${t.shieldMax}</div><div class="mini-bar mini-shield"><i style="width:${pct(t.shield,t.shieldMax)}%"></i></div>`:''}`;
     const afflictionIconsHtml=(t.afflictions&&t.afflictions.length)?`<div class="affliction-icons">${t.afflictions.map(af=>{const def=(S.afflictionDefs||[]).find(d=>d.id===af.defId);if(!def)return '';return `<span class="affliction-icon" title="${esc(def.name)}">${def.iconImage?`<img src="${esc(def.iconImage)}">`:esc(def.icon||'❓')}</span>`;}).join('')}</div>`:'';
+	const buffIconsHtml=(t.statusEffects&&t.statusEffects.length)?`<div class="affliction-icons" style="top:calc(var(--tok-h,var(--cell-size,32px))/2 + 22px)">${t.statusEffects.map(se=>`<span class="affliction-icon" title="${esc(se.name)} (${se.turnsLeft} tour(s))">${se.iconImage?`<img src="${esc(se.iconImage)}">`:esc(se.icon||'🌀')}</span>`).join('')}</div>`:'';
     const hasAura=t.activeAuras&&t.activeAuras.length;
     return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''} ${multiSel.includes(t.id)?'multi':''} ${hasAura?'has-aura':''}" data-token="${t.id}" style="left:${px}px;top:${py}px;--cell-size:${S.map.cell}px;--tok-w:${tokW}px;--tok-h:${tokH}px;--tok-min:${Math.min(tokW,tokH)}px">
       <div class="token-hud">${hud}</div>
       <div class="token ${tpl.type}" title="${esc(t.label)}">${iconBoxHtml(tpl,'0')}${mj?`<div class="token-resize-handle" onmousedown="startTokenResize(event,'${t.id}')" title="Glisser pour redimensionner"></div>`:''}</div>
       <div class="token-label">${esc(t.label)}</div>
-      ${afflictionIconsHtml}
+       ${afflictionIconsHtml}${buffIconsHtml}
     </div>`;
   }).join('');
 }
@@ -2372,6 +2373,26 @@ function persistentZonesHtml(){
     const effect=z.effect?`<span style="font-size:${Math.max(24,size*8)}px;opacity:.5">${esc(z.effect)}</span>`:'';
     return `<div style="position:absolute;left:${px}px;top:${py}px;width:${d}px;height:${d}px;background:#ff6a1f2e;border:2px dashed #ff8c3c;z-index:12;display:grid;place-items:center;pointer-events:none">${effect}</div>`;
   }).join('');
+}
+function auraZonesHtml(){
+  let out='';
+  S.instances.forEach(t=>{
+    (t.activeAuras||[]).forEach(abilityId=>{
+      const a=S.abilities.find(x=>x.id===abilityId); if(!a)return;
+      const size=a.areaSize||1, c=S.map.cell;
+      const cx=(S.freeMovement&&t.px!=null)?t.px:t.x*c+c/2;
+      const cy=(S.freeMovement&&t.py!=null)?t.py:t.y*c+c/2;
+      const d=(size*2+1)*c, px=cx-d/2, py=cy-d/2;
+      const radius=a.area==='circle'?'border-radius:50%;':'';
+      if(a.zoneImage){
+        out+=`<div class="zone" style="left:${px}px;top:${py}px;width:${d}px;height:${d}px;${radius}background:none;border-color:#c084fc;overflow:hidden;z-index:11"><img src="${esc(a.zoneImage)}" style="width:100%;height:100%;object-fit:cover;opacity:.55"></div>`;
+      }else{
+        const effect=a.effect?`<span class="zone-effect" style="font-size:${Math.max(24,size*8)}px">${esc(a.effect)}</span>`:'';
+        out+=`<div class="zone" style="left:${px}px;top:${py}px;width:${d}px;height:${d}px;${radius}opacity:.6;z-index:11">${effect}</div>`;
+      }
+    });
+  });
+  return out;
 }
 /* ============================= DISSIPATION (MJ universel) ============================= */
 function startDissipation(){
