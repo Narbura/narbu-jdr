@@ -354,6 +354,7 @@ function normalizeState(){
     if(a.impactFrames===undefined)a.impactFrames=1;
     if(a.impactRows===undefined)a.impactRows=1;
     if(a.animFps===undefined)a.animFps=60;
+    if(a.zoneImage===undefined)a.zoneImage=null;
   });
 }
 
@@ -1067,6 +1068,10 @@ function lineConeMarkupFromAxis(a,axis){
   }
   const pts=poly.map(p=>p.map(n=>n.toFixed(1)).join(',')).join(' ');
   const mapW=S.map.cols*c, mapH=S.map.rows*c;
+  if(a.zoneImage){
+    const clipId='clip'+Math.random().toString(36).slice(2,9);
+    return `<svg id="zonePreview" style="position:absolute;left:0;top:0;pointer-events:none;z-index:20" width="${mapW}" height="${mapH}"><defs><clipPath id="${clipId}"><polygon points="${pts}"/></clipPath></defs><image href="${esc(a.zoneImage)}" x="0" y="0" width="${mapW}" height="${mapH}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" opacity=".85"/><polygon points="${pts}" fill="none" stroke="#c084fc" stroke-width="2"/></svg>`;
+  }
   const effect=a.effect?`<text x="${cx+dx*range/2}" y="${cy+dy*range/2}" font-size="${Math.max(24,c*0.8)}" text-anchor="middle" dominant-baseline="middle" opacity=".42">${esc(a.effect)}</text>`:'';
   return `<svg id="zonePreview" style="position:absolute;left:0;top:0;pointer-events:none;z-index:20" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="#a44cff38" stroke="#c084fc" stroke-width="2"/>${effect}</svg>`;
 }
@@ -1080,6 +1085,9 @@ function zoneMarkup(a,cell,originOverride,rangeCellsOverride){
   x=Math.max(0,Math.min(S.map.cols-size,x)); y=Math.max(0,Math.min(S.map.rows-size,y));
   const px=x*S.map.cell, py=y*S.map.cell, d=size*S.map.cell;
   const radius=a.area==='circle'?'border-radius:50%;':'';
+  if(a.zoneImage){
+    return `<div id="zonePreview" class="zone" style="left:${px}px;top:${py}px;width:${d}px;height:${d}px;${radius}background:none;border-color:#c084fc;overflow:hidden"><img src="${esc(a.zoneImage)}" style="width:100%;height:100%;object-fit:cover;opacity:.85"></div>`;
+  }
   const effect=a.effect?`<span class="zone-effect" style="font-size:${Math.max(24,size*8)}px">${esc(a.effect)}</span>`:'';
   return `<div id="zonePreview" class="zone" style="left:${px}px;top:${py}px;width:${d}px;height:${d}px;${radius}">${effect}</div>`;
 }
@@ -2250,7 +2258,7 @@ function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride
   }
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   const casterTpl=instTemplate(casterInst);
-  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,casterLabel:casterInst.label,turnsLeft:a.duration||3,effect:a.effect};
+  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,casterLabel:casterInst.label,turnsLeft:a.duration||3,effect:a.effect,zoneImage:a.zoneImage||null};
   if(a.area==='line'||a.area==='cone'){
     const axis=axisOverride||zoneAxis(a,start,originOverride,a.zoneRange||a.range||1);
     if(!axis){toast('Sélectionne d’abord un personnage.');return;}
@@ -2321,6 +2329,10 @@ function persistentZonesHtml(){
       else{const sw=(z.coneStart||1)*c/2, ew=(z.coneEnd||3)*c/2;poly=[[cx+px*sw,cy+py*sw],[cx-px*sw,cy-py*sw],[cx+dx*range-px*ew,cy+dy*range-py*ew],[cx+dx*range+px*ew,cy+dy*range+py*ew]];}
       const pts=poly.map(p=>p.map(n=>n.toFixed(1)).join(',')).join(' ');
       const mapW=S.map.cols*c, mapH=S.map.rows*c;
+      if(z.zoneImage){
+        const clipId='clip'+Math.random().toString(36).slice(2,9);
+        return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><defs><clipPath id="${clipId}"><polygon points="${pts}"/></clipPath></defs><image href="${esc(z.zoneImage)}" x="0" y="0" width="${mapW}" height="${mapH}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" opacity=".85"/><polygon points="${pts}" fill="none" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4"/></svg>`;
+      }
       const effect=z.effect?`<text x="${cx+dx*range/2}" y="${cy+dy*range/2}" font-size="${Math.max(24,c*0.8)}" text-anchor="middle" dominant-baseline="middle" opacity=".5">${esc(z.effect)}</text>`:'';
       return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="#ff6a1f2e" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4"/>${effect}</svg>`;
     }
@@ -2328,6 +2340,9 @@ function persistentZonesHtml(){
     if(z.area==='self'){size=(z.areaSize||1)*2+1;x=z.cx-(z.areaSize||1);y=z.cy-(z.areaSize||1);}
     else{size=z.areaSize||1;x=z.x;y=z.y;}
     const px=x*c, py=y*c, d=size*c;
+    if(z.zoneImage){
+      return `<div style="position:absolute;left:${px}px;top:${py}px;width:${d}px;height:${d}px;border:2px dashed #ff8c3c;z-index:12;overflow:hidden;pointer-events:none"><img src="${esc(z.zoneImage)}" style="width:100%;height:100%;object-fit:cover;opacity:.85"></div>`;
+    }
     const effect=z.effect?`<span style="font-size:${Math.max(24,size*8)}px;opacity:.5">${esc(z.effect)}</span>`:'';
     return `<div style="position:absolute;left:${px}px;top:${py}px;width:${d}px;height:${d}px;background:#ff6a1f2e;border:2px dashed #ff8c3c;z-index:12;display:grid;place-items:center;pointer-events:none">${effect}</div>`;
   }).join('');
@@ -2760,6 +2775,16 @@ function openAbility(id){
   <p class="tiny muted full" style="grid-column:1/-1">Ligne droite et Cône suivent librement la souris (pixel par pixel), dans la direction du clic. Cône : s'évase du lanceur (largeur « départ ») jusqu'à la longueur de zone (largeur « arrivée »). Multiplicateur : appliqué au résultat (capacité + arme) avant déduction de la défense et de la résistance élémentaire. Pour un sort « Persistant » ligne/cône : « Portée maximale » = distance max à laquelle poser l'origine de la zone (1er clic). « Longueur maximale de la zone » = longueur max de la ligne/cône lui-même. Au 2e clic (direction), la zone s'étend jusqu'au point cliqué, sans dépasser cette longueur max — tu peux donc la faire plus courte.</p>
   <div class="field full"><label>Description</label>${richEditorHtml('a_desc',a.desc||'')}</div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
+  <div class="field full" id="a_zoneimage_field" style="display:${a.area==='single'?'none':''}">
+    <label>🖼️ Image de zone (remplace la couleur unie par cette image, visible uniquement dans la forme de la zone)</label>
+    <div class="icon-dropzone" onclick="document.getElementById('a_zoneimage_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'a_zoneimage','a_zoneimage_preview')">
+      <div id="a_zoneimage_preview" class="icon-preview">${a.zoneImage?`<img src="${esc(a.zoneImage)}">`:'<span>🖼️</span>'}</div>
+      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir. Vide = couleur unie par défaut.</p>
+      <input type="file" id="a_zoneimage_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'a_zoneimage','a_zoneimage_preview')">
+    </div>
+    <input type="hidden" id="a_zoneimage" value="${esc(a.zoneImage||'')}">
+    ${a.zoneImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('a_zoneimage','a_zoneimage_preview','🖼️')">↺ Retirer</button>`:''}
+  </div>
   <div class="field full">
     <label>🎯 Image du projectile (optionnelle — spritesheet horizontale possible)</label>
     <div class="icon-dropzone" onclick="document.getElementById('a_proj_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'a_projectile','a_proj_preview')">
@@ -2816,6 +2841,8 @@ function toggleAreaFields(){
   document.getElementById('a_coneend_field').style.display=v==='cone'?'':'none';
   const zf=document.getElementById('a_zonerange_field');
   if(zf)zf.style.display=((v==='line'||v==='cone')&&type==='Persistant')?'':'none';
+  const zif=document.getElementById('a_zoneimage_field');
+  if(zif)zif.style.display=(v==='single')?'none':'';
 }
 function toggleAbilityTypeFields(){
   const val=document.getElementById('a_type').value;
@@ -2859,6 +2886,7 @@ function saveAbility(id){
     target.zoneRange=Math.max(1,+document.getElementById('a_zonerange').value||target.range||3);
     target.desc=rteHtml('a_desc');
     target.effect=document.getElementById('a_effect').value||'✨';
+    target.zoneImage=document.getElementById('a_zoneimage').value.trim()||null;
     target.projectileImage=document.getElementById('a_projectile').value.trim()||null;
     target.projectileFrames=Math.max(1,+document.getElementById('a_proj_frames').value||1);
     target.projectileRows=Math.max(1,+document.getElementById('a_proj_rows').value||1);
