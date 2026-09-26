@@ -960,7 +960,7 @@ function showCriticalPopup(instId,key){
     const rect=el.getBoundingClientRect();
     const img=document.createElement('img');
     img.src=cfg.image;
-    img.style.cssText=`position:fixed;left:${rect.left+rect.width/2}px;top:${rect.top}px;transform:translate(-50%,-100%);width:${cell*sw}px;height:${cell*sh}px;object-fit:contain;z-index:9999;pointer-events:none`;
+    img.style.cssText=`position:fixed;left:${rect.left+rect.width/2}px;top:${rect.top - cell}px;transform:translate(-50%,-100%);width:${cell*sw}px;height:${cell*sh}px;object-fit:contain;z-index:9999;pointer-events:none`;
     document.body.appendChild(img);
     setTimeout(()=>img.remove(),dur);
   },500);
