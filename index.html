@@ -1519,34 +1519,40 @@ function fxAddConeImage(cx, cy, angle, range, halfWStart, halfWEnd, imgSrc, dura
   const img = new Image();
   img.src = imgSrc;
   
-  img.onload = () => {
-    fxStart({ duration, draw(ctx, elapsed) {
-      const t = Math.min(1, elapsed / duration);
-      const curRange = range * t;
-      const dx = Math.cos(angle), dy = Math.sin(angle), px = -dy, py = dx;
-      const w = halfWStart + (halfWEnd - halfWStart) * t;
-      
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(cx + px * halfWStart, cy + py * halfWStart);
-      ctx.lineTo(cx - px * halfWStart, cy - py * halfWStart);
-      ctx.lineTo(cx - px * w + dx * curRange, cy - py * w + dy * curRange);
-      ctx.lineTo(cx + px * w + dx * curRange, cy + py * w + dy * curRange);
-      ctx.closePath();
-      
-      ctx.clip(); // Découpe l'image à la forme du cône
-      
-      const pattern = ctx.createPattern(img, 'repeat');
-      ctx.fillStyle = pattern;
-      
-      // On applique une opacité globale pour que le feu reste un peu transparent (60%)
-      ctx.globalAlpha = 0.6; 
-      
-      ctx.fill();
-      ctx.restore();
-    }})
-  }
-  }
+  img.onload = function() {
+    fxStart({
+      duration: duration,
+      draw: function(ctx, elapsed) {
+        const t = Math.min(1, elapsed / duration);
+        const curRange = range * t;
+        const dx = Math.cos(angle);
+        const dy = Math.sin(angle);
+        const px = -dy;
+        const py = dx;
+        const w = halfWStart + (halfWEnd - halfWStart) * t;
+        
+        ctx.save(); // <-- Corrigé ! (Plus de rtx)
+        ctx.beginPath();
+        ctx.moveTo(cx + px * halfWStart, cy + py * halfWStart);
+        ctx.lineTo(cx - px * halfWStart, cy - py * halfWStart);
+        ctx.lineTo(cx - px * w + dx * curRange, cy - py * w + dy * curRange);
+        ctx.lineTo(cx + px * w + dx * curRange, cy + py * w + dy * curRange);
+        ctx.closePath();
+        
+        ctx.clip();
+        
+        const pattern = ctx.createPattern(img, 'repeat');
+        if (pattern) {
+          ctx.fillStyle = pattern;
+          ctx.globalAlpha = 0.6;
+          ctx.fill();
+        }
+        
+        ctx.restore();
+      }
+    });
+  };
+}
 const FX_ELEMENT_COLORS={Feu:'#ff6a3c',Eau:'#3ca0ff',Terre:'#8a6b3c',Air:'#c9e6ff',Glace:'#7fd8ff',Foudre:'#ffe066',Lumière:'#fff3b0',Ténèbres:'#8b5cf6',Neutre:'#c084fc',Physique:'#e0e0e0'};
 function fxElementColor(el){return (FX_ELEMENT_COLORS[el]||'#c084fc')+'99';}
 function playAbilityFX(a,casterInst,targets,start){
