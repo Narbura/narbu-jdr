@@ -339,6 +339,7 @@ function normalizeState(){
     if(c.profileImage===undefined)c.profileImage=null;
     if(c.bio===undefined)c.bio='';
     if(c.inventory===undefined)c.inventory='';
+    if(!c.oppAttack)c.oppAttack={formula:'',type:'Physique',element:'Neutre'};
     if(!Array.isArray(c.transformationIds))c.transformationIds=[];
     if(!Array.isArray(c.consumablesOwned))c.consumablesOwned=[];
     if(c.type==='player'){
@@ -1488,7 +1489,7 @@ function fxAddImpact(img,frames,rows,cx,cy,w,h,fps,clip){
 }
 function fxAddProjectile(img,frames,rows,fromX,fromY,toX,toY,size,fps,onArrive){
   const dist=Math.hypot(toX-fromX,toY-fromY);
-  const speed=600; // px/s
+  const speed=900; // px/s
   const duration=Math.max(120,dist/speed*1000);
   const angle=Math.atan2(toY-fromY,toX-fromX);
   fxStart({duration,draw(ctx,elapsed){
@@ -1501,91 +1502,20 @@ function fxAddProjectile(img,frames,rows,fromX,fromY,toX,toY,size,fps,onArrive){
     ctx.restore();
   },onEnd:onArrive});
 }
-// ==========================================
-// FONCTIONS DE CÔNES (COULEUR & IMAGE)
-// ==========================================
-
-function fxAddConeFill(cx, cy, angle, range, halfWStart, halfWEnd, color, duration) {
-  fxStart({
-    duration: duration,
-    draw: function(ctx, elapsed) {
-      var t = Math.min(1, elapsed / duration);
-      var curRange = range * t;
-      var dx = Math.cos(angle);
-      var dy = Math.sin(angle);
-      var px = -dy;
-      var py = dx;
-      var w = halfWStart + (halfWEnd - halfWStart) * t;
-      
-      ctx.beginPath();
-      ctx.moveTo(cx + px * halfWStart, cy + py * halfWStart);
-      ctx.lineTo(cx - px * halfWStart, cy - py * halfWStart);
-      ctx.lineTo(cx - px * w + dx * curRange, cy - py * w + dy * curRange);
-      ctx.lineTo(cx + px * w + dx * curRange, cy + py * w + dy * curRange);
-      ctx.closePath();
-      ctx.fillStyle = color;
-      ctx.fill();
-    }
-  });
+function fxAddConeFill(cx,cy,angle,range,halfWStart,halfWEnd,color,duration){
+  fxStart({duration,draw(ctx,elapsed){
+    const t=Math.min(1,elapsed/duration);
+    const curRange=range*t;
+    const dx=Math.cos(angle),dy=Math.sin(angle),px=-dy,py=dx;
+    const w=halfWStart+(halfWEnd-halfWStart)*t;
+    ctx.beginPath();
+    ctx.moveTo(cx+px*halfWStart,cy+py*halfWStart);
+    ctx.lineTo(cx-px*halfWStart,cy-py*halfWStart);
+    ctx.lineTo(cx-px*w+dx*curRange,cy-py*w+dy*curRange);
+    ctx.lineTo(cx+px*w+dx*curRange,cy+py*w+dy*curRange);
+    ctx.closePath(); ctx.fillStyle=color; ctx.fill();
+  }});
 }
-
-const fxConeImageCache = {};
-
-function fxAddConeImage(cx, cy, angle, range, halfWStart, halfWEnd, imgSrc, duration) {
-  if (!fxConeImageCache[imgSrc]) {
-    fxConeImageCache[imgSrc] = new Image();
-    fxConeImageCache[imgSrc].src = imgSrc;
-  }
-  var img = fxConeImageCache[imgSrc];
-
-  fxStart({
-    duration: duration,
-    draw: function(ctx, elapsed) {
-      var t = Math.min(1, elapsed / duration);
-      var curRange = range * t;
-      var dx = Math.cos(angle);
-      var dy = Math.sin(angle);
-      var px = -dy;
-      var py = dx;
-      var w = halfWStart + (halfWEnd - halfWStart) * t;
-
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(cx + px * halfWStart, cy + py * halfWStart);
-      ctx.lineTo(cx - px * halfWStart, cy - py * halfWStart);
-      ctx.lineTo(cx - px * w + dx * curRange, cy - py * w + dy * curRange);
-      ctx.lineTo(cx + px * w + dx * curRange, cy + py * w + dy * curRange);
-      ctx.closePath();
-
-      ctx.clip();
-
-      if (img.complete && img.naturalWidth !== 0) {
-        var pattern = ctx.createPattern(img, 'repeat');
-        if (pattern) {
-          var matrix = new DOMMatrix();
-          
-          var targetSize = (S.map?.cell ?? 32) * 1; 
-          var scaleX = targetSize / img.naturalWidth;
-          var scaleY = targetSize / img.naturalHeight;
-        
-          matrix = matrix.scale(scaleX, scaleY);
-          matrix = matrix.translate(-elapsed * 1.5, 0);
-          pattern.setTransform(matrix);
-          // ========================================================
-
-          ctx.fillStyle = pattern;
-          ctx.globalAlpha = 0.6; // Opacité (60%) pour voir la grille à travers
-          ctx.fill();
-        }
-      }
-      ctx.restore();
-    }
-  });
-}
-
-
-// ==========================================
-
 const FX_ELEMENT_COLORS={Feu:'#ff6a3c',Eau:'#3ca0ff',Terre:'#8a6b3c',Air:'#c9e6ff',Glace:'#7fd8ff',Foudre:'#ffe066',Lumière:'#fff3b0',Ténèbres:'#8b5cf6',Neutre:'#c084fc',Physique:'#e0e0e0'};
 function fxElementColor(el){return (FX_ELEMENT_COLORS[el]||'#c084fc')+'99';}
 function playAbilityFX(a,casterInst,targets,start){
@@ -1646,18 +1576,17 @@ function playAbilityFX(a,casterInst,targets,start){
   if(a.area==='cone'){
     const axis=zoneAxis(a,start); if(!axis)return;
     const c=cell;
-    const sw=((a.coneStart||1)*c/2)*0.2;
+    const sw=(a.coneStart||1)*c/2;
     const ew=(a.coneEnd||3)*c/2;
-    const duration = Math.max(200, (axis.range / 500) * 1000); ;
-    if (a.zoneImage) {
-      // Lance l'affichage du cône avec l'image (flammes)
-      fxAddConeImage(axis.cx, axis.cy, axis.angle, axis.range, sw, ew, a.zoneImage, duration);
-    } else {
-      let color=fxElementColor(a.element);
-      fxAddConeFill(axis.cx, axis.cy, axis.angle, axis.range, sw, ew, color, duration);
+    const duration=Math.max(200,(axis.range/700)*1000);
+    let color=fxElementColor(a.element);
+    if(a.zoneImage){
+      if(fxAvgColorCache[a.zoneImage])color=fxAvgColorCache[a.zoneImage]+'99';
+      else getAvgColorFromImage(a.zoneImage,()=>{});
     }
+    fxAddConeFill(axis.cx,axis.cy,axis.angle,axis.range,sw,ew,color,duration);
   }
-  }
+}
 
 /* ---- Panneau latéral : Bibliothèque / Chat + combat ---- */
 function sidePanelHtml(){
@@ -2335,6 +2264,7 @@ function setupMapInteractions(){
             }else{
               t.remainingMove=remaining-dist;
               addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
+              checkOpportunityAttacks(id,{x:origX,y:origY,sizeW:sw,sizeH:sh});
             }
           }else if(!S.combat.active){
             addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
@@ -2423,6 +2353,56 @@ function footprintDistance(x1,y1,w1,h1,x2,y2,w2,h2){
   const gapX=Math.max(0, x2-(x1+w1-1), x1-(x2+w2-1));
   const gapY=Math.max(0, y2-(y1+h1-1), y1-(y2+h2-1));
   return Math.max(gapX,gapY);
+}
+/* ============================= ATTAQUE D'OPPORTUNITÉ ============================= */
+function isAdjacentFootprint(a,b){
+  return footprintDistance(a.x,a.y,a.sizeW||1,a.sizeH||1,b.x,b.y,b.sizeW||1,b.sizeH||1)<=1;
+}
+function checkOpportunityAttacks(moverId,oldBox){
+  if(!S.combat.active)return;
+  const mover=inst(moverId); if(!mover)return;
+  const moverTpl=instTemplate(mover); if(!moverTpl)return;
+  S.instances.forEach(ot=>{
+    if(ot.id===moverId)return;
+    const otTpl=instTemplate(ot); if(!otTpl)return;
+    if(otTpl.type===moverTpl.type)return; // uniquement les camps opposés
+    const oa=otTpl.oppAttack; if(!oa||!oa.formula)return;
+    const wasAdj=isAdjacentFootprint(oldBox,ot);
+    const nowAdj=isAdjacentFootprint(mover,ot);
+    if(wasAdj&&!nowAdj)resolveOpportunityAttack(ot,mover);
+  });
+}
+function resolveOpportunityAttack(attackerInst,targetInst){
+  const attackerTpl=instTemplate(attackerInst), targetTpl=instTemplate(targetInst);
+  if(!attackerTpl||!targetTpl)return;
+  const oa=attackerTpl.oppAttack; if(!oa||!oa.formula)return;
+  const isPhys=oa.type!=='Magique';
+  const statKey=isPhys?'Force':'Magie';
+  let weaponFormula=null, weaponUsed=null;
+  if(attackerTpl.type==='player'&&attackerTpl.equipmentSlots){
+    const w=equip(attackerTpl.equipmentSlots['arme']);
+    if(w&&w.itemType==='weapon'&&w.damageFormula&&(w.weaponStat||'Force')===statKey){weaponUsed=w;weaponFormula=w.damageFormula;}
+  }
+  const usedFormula=weaponFormula?combineFormula(oa.formula,weaponFormula):oa.formula;
+  const r=roll(usedFormula);
+  playDiceRoll(formulaSides(usedFormula),r.rolls);
+  let damage=r.total;
+  const def=isPhys?(effectiveDef(targetTpl).CA||0):(effectiveDef(targetTpl).DM||0);
+  damage=Math.max(0,damage-def);
+  if(oa.element&&oa.element!=='Neutre'){
+    const resist=(effectiveRes(targetTpl)[oa.element]||0)/100;
+    damage=Math.max(0,Math.ceil(damage*(1-resist)));
+  }
+  const absorbed=Math.min(targetInst.shield||0,damage); targetInst.shield-=absorbed; const hpDamage=damage-absorbed;
+  targetInst.hp=Math.max(0,targetInst.hp-hpDamage);
+  const lines=[`⚡ <b>${esc(attackerInst.label)}</b> effectue une <b>attaque d'opportunité</b> sur <b>${esc(targetInst.label)}</b> !`];
+  lines.push(`🎲 ${esc(usedFormula)}${weaponUsed?` (${esc(oa.formula)} + arme « ${esc(weaponUsed.name)} » ${esc(weaponFormula)})`:''} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
+  lines.push(`✨ Dégâts (${esc(isPhys?'Physique':'Magique')} / ${esc(oa.element||'Neutre')}) : ${damage}${def?` (−${def} défense)`:''}`);
+  if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
+  lines.push(`❤️ ${esc(targetInst.label)} : -${hpDamage} PV (${targetInst.hp}/${targetInst.hpMax})`);
+  broadcastHud(targetInst.id,{hp:-hpDamage,shield:absorbed>0?-absorbed:0});
+  if(targetInst.hp<=0){lines.push(`💀 <b>${esc(targetInst.label)} est KO</b>.`);handleInstanceDeath(targetInst);}
+  addLog(lines.join('<br>'));
 }
 function resolveAbility(a,start,explicitTargetInstId){
   const casterInst=selectedToken?inst(selectedToken):null;
@@ -2940,10 +2920,26 @@ function equipmentSlotsHtml(base){
   <p class="tiny muted">La Résistance Naturelle n'est pas un équipement : elle se recalcule automatiquement (Constitution/10 et Magie/10, arrondis au supérieur).</p>
   </div>`;
 }
+function switchCharModalTab(tab){
+  const g=document.getElementById('charTabGeneral'), o=document.getElementById('charTabOpp');
+  if(g)g.style.display=tab==='general'?'':'none';
+  if(o)o.style.display=tab==='opp'?'':'none';
+  document.querySelectorAll('#charModalTabs .tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+}
+function oppAttackHtml(base){
+  const oa=base.oppAttack||{formula:'',type:'Physique',element:'Neutre'};
+  const elementOpts=['Neutre','Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres'].map(v=>opt(v,v,oa.element)).join('');
+  return `<div class="form">
+  <div class="field full"><label>Dégâts de l'attaque d'opportunité (formule, ex : 1d10+2 — vide = pas d'attaque d'opportunité)</label><input id="oa_formula" value="${esc(oa.formula||'')}" placeholder="1d10+2"></div>
+  <div class="field"><label>Type d'attaque</label><select id="oa_type">${opt('Physique',"Physique (Classe d'armure / Force)",oa.type)}${opt('Magique','Magique (Défense magique / Magie)',oa.type)}</select></div>
+  <div class="field"><label>Élément</label><select id="oa_element">${elementOpts}</select></div>
+  <p class="tiny muted full" style="grid-column:1/-1">Se déclenche automatiquement en combat quand une cible ennemie quitte une case adjacente. Si une arme équipée correspond à la statistique du type choisi (Force pour Physique, Magie pour Magique), ses dégâts s'ajoutent automatiquement. « Neutre » = aucune résistance magique appliquée.</p>
+  </div>`;
+}
 function openCharacter(id){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les fiches.');return;}
   const c=id?char(id):null;
-  const base=c||{name:'Nouveau personnage',icon:'🧙',iconImage:null,type:'player',move:6,ownerId:null,hidden:false,categoryId:currentCharCategory,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10,Constitution:4,Endurance:0,Social:0,Artisanat:0},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}};
+  const base=c||{name:'Nouveau personnage',icon:'🧙',iconImage:null,type:'player',move:6,ownerId:null,hidden:false,categoryId:currentCharCategory,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10,Constitution:4,Endurance:0,Social:0,Artisanat:0},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0},oppAttack:{formula:'',type:'Physique',element:'Neutre'}};
   const catOpts=`<option value="">— Racine —</option>`+(S.characterCategories||[]).map(cc=>`<option value="${esc(cc.id)}" ${base.categoryId===cc.id?'selected':''}>${esc(cc.name)}</option>`).join('');
   const typeOpts=[['player','Joueur'],['enemy','Monstre / PNJ']].map(([v,l])=>opt(v,l,base.type)).join('');
   const ownerOpts=`<option value="">— MJ / PNJ (aucun joueur) —</option>`+profiles.map(p=>`<option value="${esc(p.id)}" ${base.ownerId===p.id?'selected':''}>${esc(displayNameOf(p))}</option>`).join('');
@@ -2973,7 +2969,12 @@ function openCharacter(id){
   </div>
   <div class="field full"><label>Description</label>${richEditorHtml('c_bio',base.bio||'','280px')}</div>
   <div class="field full"><label>Inventaire</label>${richEditorHtml('c_inventory',base.inventory||'','280px')}</div>`;
-  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une fiche</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div><div class="form">
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une fiche</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <div class="tabs" id="charModalTabs">
+    <button type="button" class="tab active" data-tab="general" onclick="switchCharModalTab('general')">🪪 Fiche</button>
+    <button type="button" class="tab" data-tab="opp" onclick="switchCharModalTab('opp')">⚔ Attaque d'opportunité</button>
+  </div>
+  <div id="charTabGeneral"><div class="form">
   <div class="field"><label>Nom</label><input id="c_name" value="${esc(base.name)}"></div>
   <div class="field"><label>Icône</label><input id="c_icon" value="${esc(base.icon)}"></div>
   <div class="field full">
@@ -3021,7 +3022,8 @@ function openCharacter(id){
   ${bioHtml}
   ${equipmentSlotsHtml(base)}
   </div>
-  ${knownLine}
+  ${knownLine}</div>
+  <div id="charTabOpp" style="display:none">${oppAttackHtml(base)}</div>
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveCharacter('${id||''}')">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
 }
@@ -3052,6 +3054,7 @@ function saveCharacter(id){
     Lumière:parseNum(document.getElementById('r_lumiere').value),
     Ténèbres:parseNum(document.getElementById('r_tenebres').value)
   };
+  c.oppAttack={formula:document.getElementById('oa_formula').value.trim(),type:document.getElementById('oa_type').value,element:document.getElementById('oa_element').value};
   if(c.type==='player'){
     c.equipmentSlots=c.equipmentSlots||{};
     EQUIP_SLOTS.forEach(([k])=>{const el=document.getElementById('eqslot_'+k);if(el)c.equipmentSlots[k]=el.value||null;});
@@ -4638,6 +4641,7 @@ function moveSelectedTokenBy(dx,dy){
   const nx=t.x+dx, ny=t.y+dy;
   if(nx<0||ny<0||nx+sw>S.map.cols||ny+sh>S.map.rows)return;
   if(footprintOverlap(id,nx,ny,sw,sh)){toast('🚫 Case(s) déjà occupée(s).');return;}
+  const oldX=t.x, oldY=t.y;
   if(S.combat.active){
     const remaining=t.remainingMove??(instTemplate(t)?.move??6);
     if(remaining<1){toast('🚫 Déplacement maximal atteint pour ce tour.');return;}
@@ -4645,6 +4649,7 @@ function moveSelectedTokenBy(dx,dy){
   }
   t.x=nx; t.y=ny; t.px=null; t.py=null;
   addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
+  if(S.combat.active)checkOpportunityAttacks(id,{x:oldX,y:oldY,sizeW:sw,sizeH:sh});
   saveState(); render();
 }
 document.addEventListener('keydown',e=>{
