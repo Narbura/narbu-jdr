@@ -340,6 +340,10 @@ function normalizeState(){
     if(c.bio===undefined)c.bio='';
     if(c.inventory===undefined)c.inventory='';
     if(!c.oppAttack)c.oppAttack={formula:'',type:'Physique',element:'Neutre'};
+    if(c.oppAttack.impactImage===undefined)c.oppAttack.impactImage=null;
+    if(c.oppAttack.impactFrames===undefined)c.oppAttack.impactFrames=1;
+    if(c.oppAttack.impactRows===undefined)c.oppAttack.impactRows=1;
+    if(c.oppAttack.animFps===undefined)c.oppAttack.animFps=60;
     if(!Array.isArray(c.transformationIds))c.transformationIds=[];
     if(!Array.isArray(c.consumablesOwned))c.consumablesOwned=[];
     if(c.type==='player'){
@@ -533,6 +537,10 @@ function subscribeRealtime(){
     .on('broadcast',{event:'crit'},payload=>{
       const d=payload.payload||{};
       showCriticalPopup(d.instId,d.key);
+    })
+    .on('broadcast',{event:'oppfx'},payload=>{
+      const d=payload.payload||{};
+      if(currentPage==='table')playOppImpactAt(d.targetId,d.image,d.frames,d.rows,d.fps);
     })
     .subscribe();
 }
@@ -2372,6 +2380,15 @@ function checkOpportunityAttacks(moverId,oldBox){
     if(wasAdj&&!nowAdj)resolveOpportunityAttack(ot,mover);
   });
 }
+function playOppImpactAt(targetId,image,frames,rows,fps){
+  if(!image)return;
+  const t=inst(targetId); if(!t)return;
+  ensureFxCanvas();
+  const cell=S.map.cell;
+  const [cx,cy]=instCenterPx(t);
+  const size=Math.max(cell*1.4,Math.max(t.sizeW||1,t.sizeH||1)*cell*1.4);
+  fxAddImpact(getFxImg(image),Math.max(1,frames||1),Math.max(1,rows||1),cx,cy,size,size,Math.max(1,fps||60));
+}
 function resolveOpportunityAttack(attackerInst,targetInst){
   const attackerTpl=instTemplate(attackerInst), targetTpl=instTemplate(targetInst);
   if(!attackerTpl||!targetTpl)return;
@@ -2384,9 +2401,19 @@ function resolveOpportunityAttack(attackerInst,targetInst){
     if(w&&w.itemType==='weapon'&&w.damageFormula&&(w.weaponStat||'Force')===statKey){weaponUsed=w;weaponFormula=w.damageFormula;}
   }
   const usedFormula=weaponFormula?combineFormula(oa.formula,weaponFormula):oa.formula;
+  const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
+  playDiceRoll(100,[atk]);
+  broadcastCritical(attackerInst.id,label);
+  const lines=[`⚡ <b>${esc(attackerInst.label)}</b> effectue une <b>attaque d'opportunité</b> sur <b>${esc(targetInst.label)}</b> !`];
+  lines.push(`🎲 d100 : <b>${atk}</b> → ${label}`);
+  if(mult===0){
+    lines.push(`${esc(targetInst.label)} n'est pas touché·e.`);
+    addLog(lines.join('<br>'));
+    return;
+  }
   const r=roll(usedFormula);
   playDiceRoll(formulaSides(usedFormula),r.rolls);
-  let damage=r.total;
+  let damage=Math.ceil(r.total*mult);
   const def=isPhys?(effectiveDef(targetTpl).CA||0):(effectiveDef(targetTpl).DM||0);
   damage=Math.max(0,damage-def);
   if(oa.element&&oa.element!=='Neutre'){
@@ -2395,12 +2422,15 @@ function resolveOpportunityAttack(attackerInst,targetInst){
   }
   const absorbed=Math.min(targetInst.shield||0,damage); targetInst.shield-=absorbed; const hpDamage=damage-absorbed;
   targetInst.hp=Math.max(0,targetInst.hp-hpDamage);
-  const lines=[`⚡ <b>${esc(attackerInst.label)}</b> effectue une <b>attaque d'opportunité</b> sur <b>${esc(targetInst.label)}</b> !`];
   lines.push(`🎲 ${esc(usedFormula)}${weaponUsed?` (${esc(oa.formula)} + arme « ${esc(weaponUsed.name)} » ${esc(weaponFormula)})`:''} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
   lines.push(`✨ Dégâts (${esc(isPhys?'Physique':'Magique')} / ${esc(oa.element||'Neutre')}) : ${damage}${def?` (−${def} défense)`:''}`);
   if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
   lines.push(`❤️ ${esc(targetInst.label)} : -${hpDamage} PV (${targetInst.hp}/${targetInst.hpMax})`);
   broadcastHud(targetInst.id,{hp:-hpDamage,shield:absorbed>0?-absorbed:0});
+  if(oa.impactImage){
+    playOppImpactAt(targetInst.id,oa.impactImage,oa.impactFrames,oa.impactRows,oa.animFps);
+    gameChannel?.send({type:'broadcast',event:'oppfx',payload:{targetId:targetInst.id,image:oa.impactImage,frames:oa.impactFrames,rows:oa.impactRows,fps:oa.animFps}});
+  }
   if(targetInst.hp<=0){lines.push(`💀 <b>${esc(targetInst.label)} est KO</b>.`);handleInstanceDeath(targetInst);}
   addLog(lines.join('<br>'));
 }
@@ -2927,19 +2957,35 @@ function switchCharModalTab(tab){
   document.querySelectorAll('#charModalTabs .tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
 }
 function oppAttackHtml(base){
-  const oa=base.oppAttack||{formula:'',type:'Physique',element:'Neutre'};
+  const oa=base.oppAttack||{formula:'',type:'Physique',element:'Neutre',impactImage:null,impactFrames:1,impactRows:1,animFps:60};
   const elementOpts=['Neutre','Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres'].map(v=>opt(v,v,oa.element)).join('');
   return `<div class="form">
   <div class="field full"><label>Dégâts de l'attaque d'opportunité (formule, ex : 1d10+2 — vide = pas d'attaque d'opportunité)</label><input id="oa_formula" value="${esc(oa.formula||'')}" placeholder="1d10+2"></div>
   <div class="field"><label>Type d'attaque</label><select id="oa_type">${opt('Physique',"Physique (Classe d'armure / Force)",oa.type)}${opt('Magique','Magique (Défense magique / Magie)',oa.type)}</select></div>
   <div class="field"><label>Élément</label><select id="oa_element">${elementOpts}</select></div>
-  <p class="tiny muted full" style="grid-column:1/-1">Se déclenche automatiquement en combat quand une cible ennemie quitte une case adjacente. Si une arme équipée correspond à la statistique du type choisi (Force pour Physique, Magie pour Magique), ses dégâts s'ajoutent automatiquement. « Neutre » = aucune résistance magique appliquée.</p>
+  <p class="tiny muted full" style="grid-column:1/-1">Se déclenche automatiquement en combat quand une cible ennemie quitte une case adjacente, avec un jet de d100 (échec / réussite / critique…) comme une attaque normale. Si une arme équipée correspond à la statistique du type choisi (Force pour Physique, Magie pour Magique), ses dégâts s'ajoutent automatiquement. « Neutre » = aucune résistance magique appliquée.</p>
+  <div class="field full">
+    <label>💥 Image d'animation à l'impact (spritesheet horizontale, optionnelle)</label>
+    <div class="icon-dropzone" onclick="document.getElementById('oa_impact_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'oa_impact','oa_impact_preview')">
+      <div id="oa_impact_preview" class="icon-preview">${oa.impactImage?`<img src="${esc(oa.impactImage)}">`:'<span>💥</span>'}</div>
+      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir. Vide = pas d'animation.</p>
+      <input type="file" id="oa_impact_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'oa_impact','oa_impact_preview')">
+    </div>
+    <input type="hidden" id="oa_impact" value="${esc(oa.impactImage||'')}">
+    ${oa.impactImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('oa_impact','oa_impact_preview','💥')">↺ Retirer</button>`:''}
+    ${imagePickerHtml('oa_impact','oa_impact_preview')}
+    <div class="row" style="gap:10px;margin-top:6px;flex-wrap:wrap">
+      <div class="field" style="max-width:200px"><label>Nombre de frames</label><input id="oa_impact_frames" type="number" min="1" value="${oa.impactFrames||1}"></div>
+      <div class="field" style="max-width:200px"><label>Nombre de lignes</label><input id="oa_impact_rows" type="number" min="1" value="${oa.impactRows||1}"></div>
+      <div class="field" style="max-width:200px"><label>Vitesse (FPS)</label><input id="oa_animfps" type="number" min="1" max="60" value="${oa.animFps||60}"></div>
+    </div>
+  </div>
   </div>`;
 }
 function openCharacter(id){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les fiches.');return;}
   const c=id?char(id):null;
-  const base=c||{name:'Nouveau personnage',icon:'🧙',iconImage:null,type:'player',move:6,ownerId:null,hidden:false,categoryId:currentCharCategory,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10,Constitution:4,Endurance:0,Social:0,Artisanat:0},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0},oppAttack:{formula:'',type:'Physique',element:'Neutre'}};
+  const base=c||{name:'Nouveau personnage',icon:'🧙',iconImage:null,type:'player',move:6,ownerId:null,hidden:false,categoryId:currentCharCategory,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10,Constitution:4,Endurance:0,Social:0,Artisanat:0},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0},oppAttack:{formula:'',type:'Physique',element:'Neutre',impactImage:null,impactFrames:1,impactRows:1,animFps:60}};
   const catOpts=`<option value="">— Racine —</option>`+(S.characterCategories||[]).map(cc=>`<option value="${esc(cc.id)}" ${base.categoryId===cc.id?'selected':''}>${esc(cc.name)}</option>`).join('');
   const typeOpts=[['player','Joueur'],['enemy','Monstre / PNJ']].map(([v,l])=>opt(v,l,base.type)).join('');
   const ownerOpts=`<option value="">— MJ / PNJ (aucun joueur) —</option>`+profiles.map(p=>`<option value="${esc(p.id)}" ${base.ownerId===p.id?'selected':''}>${esc(displayNameOf(p))}</option>`).join('');
@@ -3054,7 +3100,7 @@ function saveCharacter(id){
     Lumière:parseNum(document.getElementById('r_lumiere').value),
     Ténèbres:parseNum(document.getElementById('r_tenebres').value)
   };
-  c.oppAttack={formula:document.getElementById('oa_formula').value.trim(),type:document.getElementById('oa_type').value,element:document.getElementById('oa_element').value};
+  c.oppAttack={formula:document.getElementById('oa_formula').value.trim(),type:document.getElementById('oa_type').value,element:document.getElementById('oa_element').value,impactImage:document.getElementById('oa_impact').value.trim()||null,impactFrames:Math.max(1,parseNum(document.getElementById('oa_impact_frames').value)||1),impactRows:Math.max(1,parseNum(document.getElementById('oa_impact_rows').value)||1),animFps:Math.max(1,Math.min(60,parseNum(document.getElementById('oa_animfps').value)||60))};
   if(c.type==='player'){
     c.equipmentSlots=c.equipmentSlots||{};
     EQUIP_SLOTS.forEach(([k])=>{const el=document.getElementById('eqslot_'+k);if(el)c.equipmentSlots[k]=el.value||null;});
