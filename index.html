@@ -1488,7 +1488,7 @@ function fxAddImpact(img,frames,rows,cx,cy,w,h,fps,clip){
 }
 function fxAddProjectile(img,frames,rows,fromX,fromY,toX,toY,size,fps,onArrive){
   const dist=Math.hypot(toX-fromX,toY-fromY);
-  const speed=900; // px/s
+  const speed=600; // px/s
   const duration=Math.max(120,dist/speed*1000);
   const angle=Math.atan2(toY-fromY,toX-fromX);
   fxStart({duration,draw(ctx,elapsed){
@@ -1576,7 +1576,7 @@ function fxAddConeImage(cx, cy, angle, range, halfWStart, halfWEnd, imgSrc, dura
           // ========================================================
 
           ctx.fillStyle = pattern;
-          ctx.globalAlpha = 0.6; // Opacité (60%) pour voir la grille à travers
+          ctx.globalAlpha = 0.8; // Opacité (60%) pour voir la grille à travers
           ctx.fill();
         }
       }
