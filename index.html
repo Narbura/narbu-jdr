@@ -101,11 +101,14 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .bottom-abilities{display:flex;gap:6px;overflow-x:auto;padding:7px 2px 0}.bottom-abilities .btn{white-space:nowrap;padding:7px 10px}
 .map-drop-hint{position:absolute;inset:0;display:none;place-items:center;background:#9b4dff18;border:2px dashed #c084fc88;z-index:60;pointer-events:none;font-size:18px;font-weight:700}.map-drop-hint.show{display:grid}
 .dice-overlay{position:fixed;top:90px;left:50%;transform:translateX(-50%);display:flex;gap:12px;z-index:500;pointer-events:none}
-.dice-die{position:relative;width:56px;height:56px;display:grid;place-items:center;font-size:34px;animation:diceSpin .7s linear}
-.dice-die img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 4px 10px #000a)}
-.dice-die .dice-number{position:absolute;font-size:20px;font-weight:900;color:#fff;text-shadow:0 1px 3px #000,0 0 4px #000;opacity:0;transition:opacity .2s}
-.dice-die.landed{animation:none}
-.dice-die.landed .dice-number{opacity:1}
+.dice-die-canvas{filter:drop-shadow(0 4px 10px #000a)}
+.dice-die-canvas.landed{animation:diceLand .3s ease}
+@keyframes diceLand{0%{transform:scale(1.35)}100%{transform:scale(1)}}
+.dice-die-simple{position:relative;width:56px;height:56px;display:grid;place-items:center;font-size:34px;animation:diceSpin .7s linear}
+.dice-die-simple img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 4px 10px #000a)}
+.dice-die-simple .dice-number{position:absolute;font-size:20px;font-weight:900;color:#fff;text-shadow:0 1px 3px #000,0 0 4px #000;opacity:0;transition:opacity .2s}
+.dice-die-simple.landed{animation:none}
+.dice-die-simple.landed .dice-number{opacity:1}
 @keyframes diceSpin{from{transform:rotate(0deg) scale(1)}to{transform:rotate(720deg) scale(1.15)}}
 
 /* Plein écran (mode Table de jeu) — une seule implémentation, indépendante de la Fullscreen API */
@@ -266,7 +269,7 @@ const DEFAULT={
   combat:{active:false,order:[],turn:0,initiatives:{}},
   freeMovement:false,
   persistentZones:[],
-  diceSettings:{image:null}
+  diceSettings:{image:null,frames:20,rows:4,fps:24}
 };
 const ELEMENT_RES_KEYS=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres'];
 const EQUIP_SLOTS=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['amulette','Amulette'],['anneau1','Anneau 1'],['anneau2','Anneau 2'],['arme','Arme']];
@@ -298,7 +301,10 @@ function normalizeState(){
   S.notes.forEach(n=>{ if(n.categoryId===undefined)n.categoryId=null; });
   if(S.notesReveal===undefined)S.notesReveal=null;
   if(!S.afflictionDefs)S.afflictionDefs=[];
-  if(!S.diceSettings)S.diceSettings={image:null};
+  if(!S.diceSettings)S.diceSettings={image:null,frames:20,rows:4,fps:24};
+  if(S.diceSettings.frames===undefined)S.diceSettings.frames=20;
+  if(S.diceSettings.rows===undefined)S.diceSettings.rows=4;
+  if(S.diceSettings.fps===undefined)S.diceSettings.fps=24;
   if(S._rev===undefined)S._rev=0;
   if(S.hudEnabled===undefined)S.hudEnabled=false;
   if(!S.hudSettings)S.hudSettings={};
@@ -796,30 +802,67 @@ function effectiveRes(c){
   return out;
 }
 
-/* ============================= ANIMATION VISUELLE DES DÉS ============================= */
+/* ============================= ANIMATION VISUELLE DES DÉS (spritesheet, façon FX de sorts) ============================= */
 function diceAnimEnabled(){return localStorage.getItem('narbudr-dice-anim-enabled')!=='0';}
 function toggleDiceAnim(v){localStorage.setItem('narbudr-dice-anim-enabled',v?'1':'0');}
 function formulaSides(expr){const m=String(expr||'').match(/d(\d+)/i);return m?+m[1]:20;}
+let activeDice=[];
+let diceRafRunning=false;
+function diceLoop(now){
+  const stillAlive=[];
+  activeDice.forEach(d=>{
+    const elapsed=now-d.start;
+    if(elapsed<0){stillAlive.push(d);return;}
+    d.ctx.clearRect(0,0,d.size,d.size);
+    if(elapsed<d.spinMs){
+      const frame=Math.floor(elapsed/1000*d.fps)%d.frames;
+      fxDrawFrame(d.ctx,d.img,frame,d.frames,d.rows,0,0,d.size,d.size);
+    }else{
+      fxDrawFrame(d.ctx,d.img,d.targetFrame,d.frames,d.rows,0,0,d.size,d.size);
+      if(!d.landed){d.landed=true;d.canvas.classList.add('landed');}
+    }
+    if(elapsed<d.spinMs+d.holdMs)stillAlive.push(d); else d.canvas.remove();
+  });
+  activeDice=stillAlive;
+  if(activeDice.length)requestAnimationFrame(diceLoop); else diceRafRunning=false;
+}
 function playDiceRoll(sides,values){
   if(!diceAnimEnabled()||!values||!values.length)return;
   let overlay=document.getElementById('diceOverlay');
   if(!overlay){overlay=document.createElement('div');overlay.id='diceOverlay';overlay.className='dice-overlay';document.body.appendChild(overlay);}
-  const img=S.diceSettings?.image;
+  const ds=S.diceSettings||{};
+  const frames=Math.max(1,ds.frames||20);
+  const rows=Math.max(1,ds.rows||1);
+  const fps=Math.max(1,ds.fps||24);
+  const useSprite=!!ds.image && sides===frames;
+  const size=56;
   values.forEach((v,i)=>{
-    const die=document.createElement('div');
-    die.className='dice-die';
-    die.style.animationDelay=(i*80)+'ms';
-    die.innerHTML=`${img?`<img src="${esc(img)}">`:'🎲'}<span class="dice-number">${v}</span>`;
-    overlay.appendChild(die);
-    setTimeout(()=>die.classList.add('landed'),700+i*80);
-    setTimeout(()=>die.remove(),2200+i*80);
+    if(useSprite){
+      const canvas=document.createElement('canvas');
+      canvas.className='dice-die-canvas';
+      canvas.width=size; canvas.height=size; canvas.style.cssText=`width:${size}px;height:${size}px`;
+      overlay.appendChild(canvas);
+      const targetFrame=Math.max(0,Math.min(frames-1,v-1));
+      activeDice.push({canvas,ctx:canvas.getContext('2d'),img:getFxImg(ds.image),frames,rows,fps,start:performance.now()+i*80,spinMs:650,holdMs:1300,targetFrame,size,landed:false});
+      if(!diceRafRunning){diceRafRunning=true;requestAnimationFrame(diceLoop);}
+    }else{
+      const die=document.createElement('div');
+      die.className='dice-die-simple';
+      die.style.animationDelay=(i*80)+'ms';
+      die.innerHTML=`${ds.image?`<img src="${esc(ds.image)}">`:'🎲'}<span class="dice-number">${v}</span>`;
+      overlay.appendChild(die);
+      setTimeout(()=>die.classList.add('landed'),700+i*80);
+      setTimeout(()=>die.remove(),2200+i*80);
+    }
   });
 }
 function dicePage(){
   const mj=isMJ();
   const enabled=diceAnimEnabled();
-  const img=S.diceSettings?.image;
-  const mjSection=mj?`<div class="card"><h2>🎲 Image du dé (partagée avec tous)</h2>
+  const ds=S.diceSettings||{};
+  const img=ds.image;
+  const mjSection=mj?`<div class="card"><h2>🎲 Spritesheet du dé (partagée avec tous)</h2>
+  <p class="tiny muted">Pour que le dé s'arrête pile sur le bon chiffre, l'image doit contenir une face par valeur (ex : 20 cases pour un d20), rangées de gauche à droite puis de haut en bas, dans l'ordre 1, 2, 3… Sinon, une animation simple (chiffre affiché par-dessus) est utilisée à la place.</p>
   <div class="icon-dropzone" onclick="document.getElementById('dice_img_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'dice_img_hidden','dice_img_preview')">
     <div id="dice_img_preview" class="icon-preview" style="width:90px;height:90px;font-size:36px">${img?`<img src="${esc(img)}">`:'<span>🎲</span>'}</div>
     <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir</p>
@@ -827,17 +870,21 @@ function dicePage(){
   </div>
   <input type="hidden" id="dice_img_hidden" value="${esc(img||'')}">
   ${imagePickerHtml('dice_img_hidden','dice_img_preview')}
-  <div class="row" style="gap:8px;margin-top:10px">
-    <button class="btn primary" onclick="saveDiceImage()">Enregistrer l'image</button>
-    ${img?`<button class="btn ghost" onclick="clearDiceImage()">↺ Retirer (emoji par défaut)</button>`:''}
+  <div class="row" style="gap:10px;margin-top:10px;flex-wrap:wrap">
+    <div class="field" style="max-width:180px"><label>Nombre de frames (faces)</label><input id="dice_frames" type="number" min="1" value="${ds.frames??20}"></div>
+    <div class="field" style="max-width:180px"><label>Nombre de lignes</label><input id="dice_rows" type="number" min="1" value="${ds.rows??4}"></div>
+    <div class="field" style="max-width:180px"><label>Vitesse de rotation (FPS)</label><input id="dice_fps" type="number" min="1" max="60" value="${ds.fps??24}"></div>
   </div>
-  <p class="tiny muted" style="margin-top:8px">Cette image sert de visuel unique au dé qui roule (pas de faces différentes par valeur) ; le résultat s'affiche en chiffre par-dessus.</p>
+  <div class="row" style="gap:8px;margin-top:10px">
+    <button class="btn primary" onclick="saveDiceImage()">Enregistrer</button>
+    ${img?`<button class="btn ghost" onclick="clearDiceImage()">↺ Retirer (animation simple par défaut)</button>`:''}
+  </div>
   </div>`:'';
   return `<div class="grid2">
   <div class="card"><h2>🎲 Animation des dés</h2>
   <p class="muted">Affiche un dé qui roule à l'écran à chaque lancer (chat /r et capacités). Ce réglage n'affecte que ton propre écran.</p>
   <label class="row" style="gap:8px"><input type="checkbox" id="dice_anim_toggle" ${enabled?'checked':''} onchange="toggleDiceAnim(this.checked)"> Activer les animations de dés</label>
-  <button class="btn" style="margin-top:12px" onclick="playDiceRoll(20,[1+Math.floor(Math.random()*20)])">🎲 Tester l'animation</button>
+  <button class="btn" style="margin-top:12px" onclick="playDiceRoll(20,[1+Math.floor(Math.random()*20)])">🎲 Tester (d20)</button>
   </div>
   ${mjSection}
   </div>`;
@@ -846,8 +893,11 @@ function saveDiceImage(){
   if(!isMJ())return;
   if(!S.diceSettings)S.diceSettings={};
   S.diceSettings.image=document.getElementById('dice_img_hidden').value.trim()||null;
+  S.diceSettings.frames=Math.max(1,parseNum(document.getElementById('dice_frames').value)||20);
+  S.diceSettings.rows=Math.max(1,parseNum(document.getElementById('dice_rows').value)||4);
+  S.diceSettings.fps=Math.max(1,Math.min(60,parseNum(document.getElementById('dice_fps').value)||24));
   saveState(); render();
-  toast('✅ Image du dé enregistrée.');
+  toast('✅ Réglages du dé enregistrés.');
 }
 function clearDiceImage(){
   if(!isMJ())return;
