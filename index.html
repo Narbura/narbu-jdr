@@ -100,6 +100,13 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .turn-banner{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:70;background:#17191fe8;border:1px solid #5a426e;border-radius:9px;padding:7px 12px;box-shadow:0 8px 25px #0008}
 .bottom-abilities{display:flex;gap:6px;overflow-x:auto;padding:7px 2px 0}.bottom-abilities .btn{white-space:nowrap;padding:7px 10px}
 .map-drop-hint{position:absolute;inset:0;display:none;place-items:center;background:#9b4dff18;border:2px dashed #c084fc88;z-index:60;pointer-events:none;font-size:18px;font-weight:700}.map-drop-hint.show{display:grid}
+.dice-overlay{position:fixed;top:90px;left:50%;transform:translateX(-50%);display:flex;gap:12px;z-index:500;pointer-events:none}
+.dice-die{position:relative;width:56px;height:56px;display:grid;place-items:center;font-size:34px;animation:diceSpin .7s linear}
+.dice-die img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 4px 10px #000a)}
+.dice-die .dice-number{position:absolute;font-size:20px;font-weight:900;color:#fff;text-shadow:0 1px 3px #000,0 0 4px #000;opacity:0;transition:opacity .2s}
+.dice-die.landed{animation:none}
+.dice-die.landed .dice-number{opacity:1}
+@keyframes diceSpin{from{transform:rotate(0deg) scale(1)}to{transform:rotate(720deg) scale(1.15)}}
 
 /* Plein écran (mode Table de jeu) — une seule implémentation, indépendante de la Fullscreen API */
 body.stage-fullscreen .app{display:block;height:100vh}
@@ -144,6 +151,7 @@ body.stage-fullscreen .targeting-banner{top:64px}
   <button class="nav" data-page="characters">🧙 <span>Personnages</span></button>
   <button class="nav" data-page="abilities">✨ <span>Capacités</span></button>
   <button class="nav" data-page="equipment">🎒 <span>Équipement</span></button>
+  <button class="nav" data-page="dice">🎲 <span>Dés</span></button>
   <button class="nav" data-page="mysheet">🪪 <span>Ma fiche</span></button>
   <div class="spacer"></div>
   <div class="server" id="serverInfo">Connexion en cours…</div>
@@ -257,7 +265,8 @@ const DEFAULT={
   chat:[],
   combat:{active:false,order:[],turn:0,initiatives:{}},
   freeMovement:false,
-  persistentZones:[]
+  persistentZones:[],
+  diceSettings:{image:null}
 };
 const ELEMENT_RES_KEYS=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres'];
 const EQUIP_SLOTS=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['amulette','Amulette'],['anneau1','Anneau 1'],['anneau2','Anneau 2'],['arme','Arme']];
@@ -289,6 +298,7 @@ function normalizeState(){
   S.notes.forEach(n=>{ if(n.categoryId===undefined)n.categoryId=null; });
   if(S.notesReveal===undefined)S.notesReveal=null;
   if(!S.afflictionDefs)S.afflictionDefs=[];
+  if(!S.diceSettings)S.diceSettings={image:null};
   if(S._rev===undefined)S._rev=0;
   if(S.hudEnabled===undefined)S.hudEnabled=false;
   if(!S.hudSettings)S.hudSettings={};
@@ -370,7 +380,7 @@ function normalizeState(){
 let S=JSON.parse(localStorage.getItem('arcanum-vtt')||'null')||structuredClone(DEFAULT);
 normalizeState();
 
-const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',equipment:'Équipement',library:'Bibliothèque',mysheet:'Ma fiche'};
+const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',equipment:'Équipement',dice:'Dés',library:'Bibliothèque',mysheet:'Ma fiche'};
 
 let currentPage='table';
 let selectedToken=null;
@@ -786,6 +796,65 @@ function effectiveRes(c){
   return out;
 }
 
+/* ============================= ANIMATION VISUELLE DES DÉS ============================= */
+function diceAnimEnabled(){return localStorage.getItem('narbudr-dice-anim-enabled')!=='0';}
+function toggleDiceAnim(v){localStorage.setItem('narbudr-dice-anim-enabled',v?'1':'0');}
+function formulaSides(expr){const m=String(expr||'').match(/d(\d+)/i);return m?+m[1]:20;}
+function playDiceRoll(sides,values){
+  if(!diceAnimEnabled()||!values||!values.length)return;
+  let overlay=document.getElementById('diceOverlay');
+  if(!overlay){overlay=document.createElement('div');overlay.id='diceOverlay';overlay.className='dice-overlay';document.body.appendChild(overlay);}
+  const img=S.diceSettings?.image;
+  values.forEach((v,i)=>{
+    const die=document.createElement('div');
+    die.className='dice-die';
+    die.style.animationDelay=(i*80)+'ms';
+    die.innerHTML=`${img?`<img src="${esc(img)}">`:'🎲'}<span class="dice-number">${v}</span>`;
+    overlay.appendChild(die);
+    setTimeout(()=>die.classList.add('landed'),700+i*80);
+    setTimeout(()=>die.remove(),2200+i*80);
+  });
+}
+function dicePage(){
+  const mj=isMJ();
+  const enabled=diceAnimEnabled();
+  const img=S.diceSettings?.image;
+  const mjSection=mj?`<div class="card"><h2>🎲 Image du dé (partagée avec tous)</h2>
+  <div class="icon-dropzone" onclick="document.getElementById('dice_img_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'dice_img_hidden','dice_img_preview')">
+    <div id="dice_img_preview" class="icon-preview" style="width:90px;height:90px;font-size:36px">${img?`<img src="${esc(img)}">`:'<span>🎲</span>'}</div>
+    <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir</p>
+    <input type="file" id="dice_img_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'dice_img_hidden','dice_img_preview')">
+  </div>
+  <input type="hidden" id="dice_img_hidden" value="${esc(img||'')}">
+  ${imagePickerHtml('dice_img_hidden','dice_img_preview')}
+  <div class="row" style="gap:8px;margin-top:10px">
+    <button class="btn primary" onclick="saveDiceImage()">Enregistrer l'image</button>
+    ${img?`<button class="btn ghost" onclick="clearDiceImage()">↺ Retirer (emoji par défaut)</button>`:''}
+  </div>
+  <p class="tiny muted" style="margin-top:8px">Cette image sert de visuel unique au dé qui roule (pas de faces différentes par valeur) ; le résultat s'affiche en chiffre par-dessus.</p>
+  </div>`:'';
+  return `<div class="grid2">
+  <div class="card"><h2>🎲 Animation des dés</h2>
+  <p class="muted">Affiche un dé qui roule à l'écran à chaque lancer (chat /r et capacités). Ce réglage n'affecte que ton propre écran.</p>
+  <label class="row" style="gap:8px"><input type="checkbox" id="dice_anim_toggle" ${enabled?'checked':''} onchange="toggleDiceAnim(this.checked)"> Activer les animations de dés</label>
+  <button class="btn" style="margin-top:12px" onclick="playDiceRoll(20,[1+Math.floor(Math.random()*20)])">🎲 Tester l'animation</button>
+  </div>
+  ${mjSection}
+  </div>`;
+}
+function saveDiceImage(){
+  if(!isMJ())return;
+  if(!S.diceSettings)S.diceSettings={};
+  S.diceSettings.image=document.getElementById('dice_img_hidden').value.trim()||null;
+  saveState(); render();
+  toast('✅ Image du dé enregistrée.');
+}
+function clearDiceImage(){
+  if(!isMJ())return;
+  if(!S.diceSettings)S.diceSettings={};
+  S.diceSettings.image=null;
+  saveState(); render();
+}
 function roll(expr){
   expr=String(expr).replace(/\s+/g,''); let bonus=0;
   const b=expr.match(/([+-]\d+)$/); if(b){bonus=+b[1];expr=expr.slice(0,b.index);}
@@ -1019,6 +1088,7 @@ function render(){
   else if(currentPage==='characters')c.innerHTML=charactersPage();
   else if(currentPage==='abilities')c.innerHTML=abilitiesPage();
   else if(currentPage==='equipment')c.innerHTML=equipmentPage();
+  else if(currentPage==='dice')c.innerHTML=dicePage();
   else if(currentPage==='library')c.innerHTML=libraryPage();
   else if(currentPage==='mysheet')c.innerHTML=mySheetPage();
   updateTargetingBanner();
@@ -1649,7 +1719,7 @@ function parseDiceExpr(raw){
       const rolls=Array.from({length:n},()=>1+Math.floor(Math.random()*sides));
       const sum=rolls.reduce((a,x)=>a+x,0);
       total+=sign*sum;
-      parts.push({label:`${sign<0?'−':''}${n}d${sides}`,rolls,sum:sign*sum});
+      parts.push({label:`${sign<0?'−':''}${n}d${sides}`,rolls,sum:sign*sum,sides});
     }else{
       const v=sign*(+t[4]); total+=v; parts.push({label:null,rolls:null,sum:v});
     }
@@ -1665,6 +1735,7 @@ function sendChat(){
   if(m){
     const r=parseDiceExpr(m[1]);
     if(!r){toast('⚠️ Syntaxe : /r d100, /r 2d20+5 (max 50 dés, d1000).');return;}
+    r.parts.forEach(p=>{if(p.rolls&&p.rolls.length)playDiceRoll(p.sides,p.rolls);});
     const lines=r.parts.map(p=>p.rolls
       ?`🎲 ${p.label} : ${p.rolls.join(' + ')}${p.rolls.length>1?` = ${Math.abs(p.sum)}`:''}`
       :`➕ Bonus : ${p.sum>0?'+':''}${p.sum}`);
@@ -2262,6 +2333,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(w&&w.itemType==='weapon'&&w.damageFormula&&(w.weaponStat||'Force')===a.stat){weaponUsed=w;weaponFormula=w.damageFormula;}
   }
   const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
+  playDiceRoll(100,[atk]);
   broadcastCritical(casterInst.id,label);
   const targets=affected(a,start,explicitTargetInstId);
   playAbilityFX(a,casterInst,targets,start);
@@ -2287,6 +2359,7 @@ function resolveAbility(a,start,explicitTargetInstId){
       sharedUsedFormula=weaponFormula?combineFormula(a.formula,weaponFormula):a.formula;
       sharedRoll=roll(sharedUsedFormula);
     }
+    playDiceRoll(formulaSides(sharedUsedFormula),sharedRoll.rolls);
     lines.push(`🎲 ${esc(sharedUsedFormula)}${weaponUsed?` (${esc(a.formula)} + arme « ${esc(weaponUsed.name)} » ${esc(weaponFormula)})`:''} : ${sharedRoll.rolls.join(' + ')}${sharedRoll.bonus?` + ${sharedRoll.bonus}`:''} = ${sharedRoll.total} <span class="tiny muted">(zone, jet unique)</span>`);
   }
 
@@ -2294,6 +2367,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     const tTpl=instTemplate(t);
     if(a.type==='Soin'){
       const r=isAoE?sharedRoll:roll(a.formula);
+      if(!isAoE)playDiceRoll(formulaSides(a.formula),r.rolls);
       const amount=applyMult(Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
       t.hp=Math.min(t.hpMax,t.hp+amount);
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
@@ -2304,6 +2378,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     }
     if(a.type==='Bouclier'){
       const r=isAoE?sharedRoll:roll(a.formula);
+      if(!isAoE)playDiceRoll(formulaSides(a.formula),r.rolls);
       const amount=applyMult(Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
       t.shield=(t.shield||0)+amount;
       if(t.shield>t.shieldMax)t.shieldMax=t.shield;
@@ -2316,6 +2391,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);continue;}
     const usedFormula=isAoE?sharedUsedFormula:(weaponFormula?combineFormula(a.formula,weaponFormula):a.formula);
     const r=isAoE?sharedRoll:roll(usedFormula); const raw=r.total;
+    if(!isAoE)playDiceRoll(formulaSides(usedFormula),r.rolls);
     let damage=applyMult(Math.ceil(raw*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
     const def=(a.defense!=='none')?(effectiveDef(tTpl)[a.defense]||0):0;
     damage=Math.max(0,damage-def);
@@ -2373,6 +2449,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   const casterTpl=instTemplate(casterInst);
   const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
+  playDiceRoll(100,[atk]);
   broadcastCritical(casterInst.id,label);
   t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
   t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
@@ -2395,6 +2472,7 @@ function resolveBuffZone(a,casterInst,start){
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   const casterTpl=instTemplate(casterInst);
   const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
+  playDiceRoll(100,[atk]);
   broadcastCritical(casterInst.id,label);
   const targets=affected(a,start);
   const lines=[`🌀 <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b> en zone (🎲 d100 : ${atk} → ${label})`];
