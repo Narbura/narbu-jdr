@@ -1533,6 +1533,12 @@ function fxAddConeImage(cx, cy, angle, range, halfWStart, halfWEnd, imgSrc, dura
   }
   var img = fxConeImageCache[imgSrc];
 
+  // Attend que l'image soit chargée (important pour les autres joueurs qui ne l'ont pas encore en cache)
+  if (!(img.complete && img.naturalWidth)) {
+    img.onload = function(){ fxAddConeImage(cx, cy, angle, range, halfWStart, halfWEnd, imgSrc, duration); };
+    return;
+  }
+
   fxStart({
     duration: duration,
     draw: function(ctx, elapsed) {
