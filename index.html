@@ -2472,7 +2472,7 @@ function resolveOpportunityAttack(attackerInst,targetInst){
   }
   const r=roll(usedFormula);
   playDiceRoll(formulaSides(usedFormula),r.rolls);
-  let damage=Math.ceil(r.total*mult);
+  let damage=Math.ceil(r.total*mult*(attackerTpl.stats[statKey]||0)/100);
   const def=isPhys?(effectiveDef(targetTpl).CA||0):(effectiveDef(targetTpl).DM||0);
   damage=Math.max(0,damage-def);
   if(oa.element&&oa.element!=='Neutre'){
