@@ -370,6 +370,7 @@ function normalizeState(){
     if(a.transformCharId===undefined)a.transformCharId=null;
     if(a.triggerOnDeath===undefined)a.triggerOnDeath=false;
     if(a.hotkey===undefined)a.hotkey=null;
+    if(a.atkDice===undefined)a.atkDice='1d100';
     if(a.coneStart===undefined)a.coneStart=1;
     if(a.coneEnd===undefined)a.coneEnd=3;
     if(a.zoneRange===undefined)a.zoneRange=a.range||3;
@@ -944,7 +945,7 @@ function combineFormula(abilityFormula,weaponFormula){
   return `${n}d${sides}${bonus?(bonus>0?'+':'')+bonus:''}`;
 }
 function outcome(d){
-  if(d===100)return ['Échec ultime',0]; if(d>=95)return ['Échec critique',0]; if(d>=90)return ['Échec',0];
+  if(d>=100)return ['Échec ultime',0]; if(d>=95)return ['Échec critique',0]; if(d>=90)return ['Échec',0];
   if(d>=75)return ['Légère réussite',.5]; if(d>=50)return ['Légère réussite',.75]; if(d>=25)return ['Réussite',1];
   if(d>=5)return ['Grande réussite',1.5]; if(d>=2)return ['Réussite critique',2]; return ['Réussite ultime',4];
 }
@@ -2535,15 +2536,15 @@ function resolveAbility(a,start,explicitTargetInstId){
     const w=equip(casterTpl.equipmentSlots['arme']);
     if(w&&w.itemType==='weapon'&&w.damageFormula&&(w.weaponStat||'Force')===a.stat){weaponUsed=w;weaponFormula=w.damageFormula;}
   }
-  const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
-  playDiceRoll(100,[atk]);
+  const atkExpr=a.atkDice||'1d100'; const atkRoll=roll(atkExpr); const atk=atkRoll.total; const [label,mult]=outcome(atk);
+  playDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   const targets=affected(a,start,explicitTargetInstId);
   playAbilityFX(a,casterInst,targets,start);
   gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,casterId:casterInst.id,targetIds:targets.map(t=>t.id),start}});
   const lines=[`⚔ <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b>`];
   if(a.manaCost>0)lines.push(`💧 Coût en mana : ${a.manaCost} (reste ${casterInst.mana}/${casterInst.manaMax})`);
-  lines.push(`🎲 d100 : <b>${atk}</b> → ${label}`);
+  lines.push(`🎲 ${esc(atkExpr)} : <b>${atk}</b> → ${label}`);
 
   if(!targets.length){
     lines.push('<span class="muted">Aucune cible valide dans la zone.</span>');
@@ -2651,12 +2652,12 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   }
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   const casterTpl=instTemplate(casterInst);
-  const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
-  playDiceRoll(100,[atk]);
+  const atkExpr=a.atkDice||'1d100'; const atkRoll=roll(atkExpr); const atk=atkRoll.total; const [label,mult]=outcome(atk);
+  playDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
   t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
-  addLog(`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${a.duration} tour(s), 🎲 d100 : ${atk} → ${label}).`);
+  addLog(`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${a.duration} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`);
   activeAbility=null; hoverCell=null;
   if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
   saveState(); render();
@@ -2674,11 +2675,11 @@ function resolveBuffZone(a,casterInst,start){
   }
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   const casterTpl=instTemplate(casterInst);
-  const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
-  playDiceRoll(100,[atk]);
+  const atkExpr=a.atkDice||'1d100'; const atkRoll=roll(atkExpr); const atk=atkRoll.total; const [label,mult]=outcome(atk);
+  playDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   const targets=affected(a,start);
-  const lines=[`🌀 <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b> en zone (🎲 d100 : ${atk} → ${label})`];
+  const lines=[`🌀 <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b> en zone (🎲 ${esc(atkExpr)} : ${atk} → ${label})`];
   if(!targets.length){
     lines.push('<span class="muted">Aucune cible valide dans la zone.</span>');
   }else{
@@ -3306,6 +3307,7 @@ function openAbility(id){
   <div id="ability_normal_fields" style="display:${isTransfo?'none':'contents'}">
   <div class="field"><label>Formule de dégâts / soin</label><input id="a_formula" value="${esc(a.formula)}"></div>
   <div class="field"><label>Multiplicateur (ex : /2, X2 — vide = aucun)</label><input id="a_dmgmult" value="${esc(a.dmgMult||'')}" placeholder="/2 ou X2"></div>
+  <div class="field"><label>Dé du jet de réussite (défaut 1d100)</label><input id="a_atkdice" value="${esc(a.atkDice||'1d100')}" placeholder="1d100, 49, 1d20, 2d100-1…"></div>
   <div class="field"><label>Statistique</label><select id="a_stat">${statOpts}</select></div>
   <div class="field"><label>Défense ciblée</label><select id="a_def">${defOpts}</select></div>
   <div class="field"><label>Élément</label><select id="a_element">${elementOpts}</select></div>
@@ -3418,10 +3420,11 @@ function saveAbility(id){
     target.transformCharId=document.getElementById('a_transformchar').value||null;
     target.triggerOnDeath=document.getElementById('a_triggerondeath').checked;
     target.formula='0'; target.stat='Force'; target.defense='none'; target.element='Neutre';
-    target.area='single'; target.areaSize=1; target.range=0; target.desc=''; target.effect=''; target.dmgMult='';
+    target.area='single'; target.areaSize=1; target.range=0; target.desc=''; target.effect=''; target.dmgMult=''; target.atkDice='1d100';
   }else{
     target.formula=document.getElementById('a_formula').value||'1d20';
     target.dmgMult=document.getElementById('a_dmgmult').value.trim();
+    target.atkDice=document.getElementById('a_atkdice').value.trim()||'1d100';
     target.stat=document.getElementById('a_stat').value;
     target.defense=document.getElementById('a_def').value;
     target.element=document.getElementById('a_element').value;
