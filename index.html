@@ -1497,7 +1497,7 @@ function fxAddImpact(img,frames,rows,cx,cy,w,h,fps,clip){
 }
 function fxAddProjectile(img,frames,rows,fromX,fromY,toX,toY,size,fps,onArrive){
   const dist=Math.hypot(toX-fromX,toY-fromY);
-  const speed=900; // px/s
+  const speed=600; // px/s
   const duration=Math.max(120,dist/speed*1000);
   const angle=Math.atan2(toY-fromY,toX-fromX);
   fxStart({duration,draw(ctx,elapsed){
@@ -1523,6 +1523,64 @@ function fxAddConeFill(cx,cy,angle,range,halfWStart,halfWEnd,color,duration){
     ctx.lineTo(cx+px*w+dx*curRange,cy+py*w+dy*curRange);
     ctx.closePath(); ctx.fillStyle=color; ctx.fill();
   }});
+}
+const fxConeImageCache = {};
+
+function fxAddConeImage(cx, cy, angle, range, halfWStart, halfWEnd, imgSrc, duration) {
+  if (!fxConeImageCache[imgSrc]) {
+    fxConeImageCache[imgSrc] = new Image();
+    fxConeImageCache[imgSrc].src = imgSrc;
+  }
+  var img = fxConeImageCache[imgSrc];
+
+  fxStart({
+    duration: duration,
+    draw: function(ctx, elapsed) {
+      var t = Math.min(1, elapsed / duration);
+      var curRange = range * t;
+      var dx = Math.cos(angle);
+      var dy = Math.sin(angle);
+      var px = -dy;
+      var py = dx;
+      var w = halfWStart + (halfWEnd - halfWStart) * t;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(cx + px * halfWStart, cy + py * halfWStart);
+      ctx.lineTo(cx - px * halfWStart, cy - py * halfWStart);
+      ctx.lineTo(cx - px * w + dx * curRange, cy - py * w + dy * curRange);
+      ctx.lineTo(cx + px * w + dx * curRange, cy + py * w + dy * curRange);
+      ctx.closePath();
+
+      ctx.clip();
+
+      if (img.complete && img.naturalWidth !== 0) {
+        var pattern = ctx.createPattern(img, 'repeat');
+        if (pattern) {
+          // ========================================================
+          // CORRECTION DU ZOOM : On adapte l'image à la taille des cases
+          // ========================================================
+          var matrix = new DOMMatrix();
+          
+          // Exemple : On veut que l'image fasse la taille de 2 cases de la grille (cell * 2)
+          var targetSize = (S.map?.cell ?? 32) * 1; 
+          var scaleX = targetSize / img.naturalWidth;
+          var scaleY = targetSize / img.naturalHeight;
+          
+          // On applique l'échelle (le dé-zoom) à la texture
+          matrix = matrix.scale(scaleX, scaleY);
+		  matrix = matrix.translate(-elapsed * 1.2, 0); 
+          pattern.setTransform(matrix);
+          // ========================================================
+
+          ctx.fillStyle = pattern;
+          ctx.globalAlpha = 0.6; // Opacité (60%) pour voir la grille à travers
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+  });
 }
 const FX_ELEMENT_COLORS={Feu:'#ff6a3c',Eau:'#3ca0ff',Terre:'#8a6b3c',Air:'#c9e6ff',Glace:'#7fd8ff',Foudre:'#ffe066',Lumière:'#fff3b0',Ténèbres:'#8b5cf6',Neutre:'#c084fc',Physique:'#e0e0e0'};
 function fxElementColor(el){return (FX_ELEMENT_COLORS[el]||'#c084fc')+'99';}
@@ -1584,17 +1642,18 @@ function playAbilityFX(a,casterInst,targets,start){
   if(a.area==='cone'){
     const axis=zoneAxis(a,start); if(!axis)return;
     const c=cell;
-    const sw=(a.coneStart||1)*c/2;
+    const sw=((a.coneStart||1)*c/2)*0.2;
     const ew=(a.coneEnd||3)*c/2;
-    const duration=Math.max(200,(axis.range/700)*1000);
-    let color=fxElementColor(a.element);
-    if(a.zoneImage){
-      if(fxAvgColorCache[a.zoneImage])color=fxAvgColorCache[a.zoneImage]+'99';
-      else getAvgColorFromImage(a.zoneImage,()=>{});
+    const duration=Math.max(200,(axis.range/500)*1000);
+    if (a.zoneImage) {
+      // Lance l'affichage du cône avec l'image (flammes)
+      fxAddConeImage(axis.cx, axis.cy, axis.angle, axis.range, sw, ew, a.zoneImage, duration);
+    } else {
+      let color=fxElementColor(a.element);
+      fxAddConeFill(axis.cx, axis.cy, axis.angle, axis.range, sw, ew, color, duration);
     }
-    fxAddConeFill(axis.cx,axis.cy,axis.angle,axis.range,sw,ew,color,duration);
   }
-}
+  }
 
 /* ---- Panneau latéral : Bibliothèque / Chat + combat ---- */
 function sidePanelHtml(){
