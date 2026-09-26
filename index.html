@@ -1567,12 +1567,10 @@ function fxAddConeImage(cx, cy, angle, range, halfWStart, halfWEnd, imgSrc, dura
           // ========================================================
           var matrix = new DOMMatrix();
           
-          // Exemple : On veut que l'image fasse la taille de 2 cases de la grille (cell * 2)
-          var targetSize = (S.map?.cell ?? 32) * 2; 
+          var targetSize = (S.map?.cell ?? 32) * 1; 
           var scaleX = targetSize / img.naturalWidth;
           var scaleY = targetSize / img.naturalHeight;
-          
-          // On applique l'échelle (le dé-zoom) à la texture
+        
           matrix = matrix.scale(scaleX, scaleY);
           pattern.setTransform(matrix);
           // ========================================================
