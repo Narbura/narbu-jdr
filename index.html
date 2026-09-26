@@ -849,7 +849,7 @@ function playDiceRoll(sides,values){
       const die=document.createElement('div');
       die.className='dice-die-simple';
       die.style.animationDelay=(i*80)+'ms';
-      die.innerHTML=`${ds.image?`<img src="${esc(ds.image)}">`:'🎲'}<span class="dice-number">${v}</span>`;
+      die.innerHTML=`🎲<span class="dice-number">${v}</span>`;
       overlay.appendChild(die);
       setTimeout(()=>die.classList.add('landed'),700+i*80);
       setTimeout(()=>die.remove(),2200+i*80);
