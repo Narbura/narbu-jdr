@@ -874,23 +874,62 @@ function broadcastHud(instId,deltas){
   gameChannel?.send({type:'broadcast',event:'hud',payload:{instId,deltas}});
   showHudFloating(instId,deltas);
 }
-function showHudFloating(instId,deltas){
-  if(!S.hudEnabled||currentPage!=='table')return;
-  setTimeout(()=>{
-    const el=document.querySelector(`[data-token="${instId}"]`);
-    if(!el)return;
-    const dur=S.hudSettings?.resourceDurationMs??1000;
-    const lines=[];
+function showHudFloating(instId, deltas) {
+  if (!S.hudEnabled || currentPage !== 'table') return;
+  
+  // Réduit à 100ms ou 0ms pour une réactivité instantanée !
+  setTimeout(() => {
+    const el = document.querySelector(`[data-token="${instId}"]`);
+    if (!el) return;
+    
+    const dur = S.hudSettings?.resourceDurationMs ?? 1000;
+    
+    // 1. On cherche si un texte existe DEJÀ sur ce token
+    let wrap = el.querySelector('.hud-floating-text');
+    
+    if (wrap) {
+      // Si un texte existe déjà, on annule sa disparition programmée pour prolonger sa vie
+      if (wrap.timeoutId) clearTimeout(wrap.timeoutId);
+      
+      // On récupère les anciennes valeurs ou on démarre à 0
+      const currentHp = wrap.dataset.hp ? parseInt(wrap.dataset.hp) : 0;
+      const currentMana = wrap.dataset.mana ? parseInt(wrap.dataset.mana) : 0;
+      const currentShield = wrap.dataset.shield ? parseInt(wrap.dataset.shield) : 0;
+      
+      // On AJOUTE les nouveaux dégâts/soins aux anciens
+      deltas.hp = (deltas.hp ?? 0) + currentHp;
+      deltas.mana = (deltas.mana ?? 0) + currentMana;
+      deltas.shield = (deltas.shield ?? 0) + currentShield;
+    } else {
+      // Sinon, on crée le conteneur pour la première fois
+      wrap = document.createElement('div');
+      wrap.className = 'hud-floating-text';
+      wrap.style.cssText = 'position:absolute;left:50%;bottom:calc(var(--tok-h,var(--cell-size,32px))/2 + 4px);transform:translateX(-50%);pointer-events:none;z-index:85;text-align:center;white-space:nowrap;font-size:12px;font-weight:800;text-shadow:0 1px 3px #000,0 0 4px #000';
+      el.appendChild(wrap);
+    }
+    
+    // 2. On sauvegarde les valeurs cumulées dans le HTML pour le prochain clic rapide
+    wrap.dataset.hp = deltas.hp || 0;
+    wrap.dataset.mana = deltas.mana || 0;
+    wrap.dataset.shield = deltas.shield || 0;
+    
+    // 3. On génère le rendu visuel (avec votre logique de couleur Vert/Rouge)
+    const lines = [];
     if (deltas.hp) lines.push(`<div style="color:${deltas.hp > 0 ? '#2ecc71' : '#ef6262'}">${deltas.hp > 0 ? '+' : ''}${deltas.hp} PV</div>`);
-    if(deltas.mana)lines.push(`<div style="color:#5da5ff">${deltas.mana>0?'+':''}${deltas.mana} Mana</div>`);
-    if(deltas.shield)lines.push(`<div style="color:#e7b85c">${deltas.shield>0?'+':''}${deltas.shield} Bouclier</div>`);
-    if(!lines.length)return;
-    const wrap=document.createElement('div');
-    wrap.style.cssText='position:absolute;left:50%;bottom:calc(var(--tok-h,var(--cell-size,32px))/2 + 4px);transform:translateX(-50%);pointer-events:none;z-index:85;text-align:center;white-space:nowrap;font-size:12px;font-weight:800;text-shadow:0 1px 3px #000,0 0 4px #000';
-    wrap.innerHTML=lines.join('');
-    el.appendChild(wrap);
-    setTimeout(()=>wrap.remove(),dur);
-  },500);
+    if (deltas.mana) lines.push(`<div style="color:${deltas.mana > 0 ? '#2ecc71' : '#5da5ff'}">${deltas.mana > 0 ? '+' : ''}${deltas.mana} Mana</div>`);
+    if (deltas.shield) lines.push(`<div style="color:${deltas.shield > 0 ? '#2ecc71' : '#e7b85c'}">${deltas.shield > 0 ? '+' : ''}${deltas.shield} Bouclier</div>`);
+    
+    if (!lines.length) {
+      wrap.remove();
+      return;
+    }
+    
+    wrap.innerHTML = lines.join('');
+    
+    // 4. On relance le chrono de disparition à zéro (durée complète)
+    wrap.timeoutId = setTimeout(() => wrap.remove(), dur);
+    
+  }, 100); // Délai d'attente de 100ms seulement
 }
 /* ---- Pop-ups de réussite/échec critique ---- */
 const CRITICAL_KEYS = {
