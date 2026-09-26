@@ -1562,8 +1562,23 @@ function fxAddConeImage(cx, cy, angle, range, halfWStart, halfWEnd, imgSrc, dura
       if (img.complete && img.naturalWidth !== 0) {
         var pattern = ctx.createPattern(img, 'repeat');
         if (pattern) {
+          // ========================================================
+          // CORRECTION DU ZOOM : On adapte l'image à la taille des cases
+          // ========================================================
+          var matrix = new DOMMatrix();
+          
+          // Exemple : On veut que l'image fasse la taille de 2 cases de la grille (cell * 2)
+          var targetSize = (S.map?.cell ?? 32) * 2; 
+          var scaleX = targetSize / img.naturalWidth;
+          var scaleY = targetSize / img.naturalHeight;
+          
+          // On applique l'échelle (le dé-zoom) à la texture
+          matrix = matrix.scale(scaleX, scaleY);
+          pattern.setTransform(matrix);
+          // ========================================================
+
           ctx.fillStyle = pattern;
-          ctx.globalAlpha = 0.6;
+          ctx.globalAlpha = 0.6; // Opacité (60%) pour voir la grille à travers
           ctx.fill();
         }
       }
@@ -1571,6 +1586,7 @@ function fxAddConeImage(cx, cy, angle, range, halfWStart, halfWEnd, imgSrc, dura
     }
   });
 }
+
 
 // ==========================================
 
