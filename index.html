@@ -2163,6 +2163,12 @@ function setupMapInteractions(){
       selectedToken=created.id;
       addLog(`➕ ${esc(created.label)} apparaît sur la carte.`);
       if(free[0]!==pt[0]||free[1]!==pt[1])toast(`⚠️ Case occupée — ${created.label} placé sur la case libre la plus proche.`);
+      if(S.combat.active){
+        const initVal=roll('1d20').total+(tpl?.stats?.Vitesse||0);
+        S.combat.order.push(created.id);
+        S.combat.initiatives[created.id]=initVal;
+        addLog(`⚔ ${esc(created.label)} rejoint le combat en dernière position (initiative ${initVal}).`);
+      }
     }
     saveState(); render();
   };
