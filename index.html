@@ -946,55 +946,24 @@ function broadcastCritical(instId, label) {
   showCriticalPopup(instId, key);
 }
 
-function showCriticalPopup(instId, key) {
-  if (!S.hudEnabled || currentPage !== 'table') return;
-  const cfg = (S.hudSettings?.critical || {})[key];
-  if (!cfg) return;
-  
-  const el = document.querySelector(`[data-token="${instId}"]`);
-  const t = typeof inst === 'function' ? inst(instId) : null;
-  const dur = S.hudSettings?.criticalDurationMs ?? 1000;
-  
-  setTimeout(() => {
-    // Code audio d'origine (inchangé)
-    if (cfg.audio) {
-      try {
-        const au = new Audio(cfg.audio);
-        au.play().catch(() => {});
-      } catch (e) {}
-    }
-    
-    // CORRECTION IMAGE : Positionnement absolu basé sur l'écran de l'utilisateur
-    if (cfg.image && el) {
-      const cell = S.map?.cell ?? 32;
-      const sw = t?.sizeW || 1;
-      const sh = t?.sizeH || 1;
-      
-      // On prend les coordonnées exactes du token à l'écran
-      const rect = el.getBoundingClientRect();
-      
-      const img = document.createElement('img');
-      img.src = cfg.image;
-      
-      // On l'ancre au 'fixed' (par rapport à la fenêtre de navigation)
-      // pour contourner les propriétés "overflow: hidden" du conteneur du token
-      img.style.cssText = `
-        position: fixed;
-        left: ${rect.left + rect.width / 2}px;
-        top: ${rect.top}px;
-        transform: translate(-50%, -100%);
-        width: ${cell * sw}px;
-        height: ${cell * sh}px;
-        object-fit: contain;
-        z-index: 9999;
-        pointer-events: none;
-      `;
-      
-      document.body.appendChild(img);
-      
-      setTimeout(() => img.remove(), dur);
-    }
-  }, 500);
+function showCriticalPopup(instId,key){
+  if(!S.hudEnabled||currentPage!=='table')return;
+  const cfg=(S.hudSettings?.critical||{})[key]; if(!cfg)return;
+  const dur=S.hudSettings?.criticalDurationMs??1000;
+  if(cfg.audio){ try{ const au=new Audio(cfg.audio); au.play().catch(()=>{}); }catch(e){} }
+  if(!cfg.image)return;
+  setTimeout(()=>{
+    const el=document.querySelector(`[data-token="${instId}"]`);
+    const t=inst(instId);
+    if(!el||!t)return;
+    const cell=S.map.cell, sw=t.sizeW||1, sh=t.sizeH||1;
+    const rect=el.getBoundingClientRect();
+    const img=document.createElement('img');
+    img.src=cfg.image;
+    img.style.cssText=`position:fixed;left:${rect.left+rect.width/2}px;top:${rect.top}px;transform:translate(-50%,-100%);width:${cell*sw}px;height:${cell*sh}px;object-fit:contain;z-index:9999;pointer-events:none`;
+    document.body.appendChild(img);
+    setTimeout(()=>img.remove(),dur);
+  },500);
 }
 function findFreeCell(x,y,excludeId){
   if(!isOccupied(x,y,excludeId))return [x,y];
