@@ -1569,7 +1569,7 @@ function fxAddConeImage(cx, cy, angle, range, halfWStart, halfWEnd, imgSrc, dura
           var scaleY = targetSize / img.naturalHeight;
         
           matrix = matrix.scale(scaleX, scaleY);
-          matrix = matrix.translate(-elapsed * 0.5, 0);
+          matrix = matrix.translate(-elapsed * 1.5, 0);
           pattern.setTransform(matrix);
           // ========================================================
 
@@ -1648,7 +1648,7 @@ function playAbilityFX(a,casterInst,targets,start){
     const c=cell;
     const sw=((a.coneStart||1)*c/2)*0.2;
     const ew=(a.coneEnd||3)*c/2;
-    const duration=Math.max(200,(axis.range/700)*1000);
+    const duration=1500;
     if (a.zoneImage) {
       // Lance l'affichage du cône avec l'image (flammes)
       fxAddConeImage(axis.cx, axis.cy, axis.angle, axis.range, sw, ew, a.zoneImage, duration);
