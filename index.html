@@ -156,6 +156,7 @@ body.stage-fullscreen .targeting-banner{top:64px}
   <button class="nav" data-page="equipment">🎒 <span>Équipement</span></button>
   <button class="nav" data-page="dice">🎲 <span>Dés</span></button>
   <button class="nav" data-page="mysheet">🪪 <span>Ma fiche</span></button>
+  <button class="nav" data-page="hotbar">🎯 <span>Mes Compétences</span></button>
   <div class="spacer"></div>
   <div class="server" id="serverInfo">Connexion en cours…</div>
   <button class="btn ghost" style="width:100%" onclick="openNicknameModal()">✏️ Changer de pseudo</button>
@@ -272,6 +273,7 @@ const DEFAULT={
   diceSettings:{image:null,frames:20,rows:4,fps:24}
 };
 const ELEMENT_RES_KEYS=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres'];
+const STAT_TESTS=['Social','Artisanat','Endurance','Force','Agilité','Constitution','Vitesse','Magie'];
 const EQUIP_SLOTS=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['amulette','Amulette'],['anneau1','Anneau 1'],['anneau2','Anneau 2'],['arme','Arme']];
 const EQUIP_CATEGORIES=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['amulette','Amulette'],['anneau','Anneau'],['arme','Arme']];
 function equipSlotCategory(slotKey){return (slotKey==='anneau1'||slotKey==='anneau2')?'anneau':slotKey;}
@@ -301,6 +303,8 @@ function normalizeState(){
   S.notes.forEach(n=>{ if(n.categoryId===undefined)n.categoryId=null; });
   if(S.notesReveal===undefined)S.notesReveal=null;
   if(!S.afflictionDefs)S.afflictionDefs=[];
+  if(!S.statTestIcons)S.statTestIcons={};
+  STAT_TESTS.forEach(k=>{ if(!S.statTestIcons[k])S.statTestIcons[k]={icon:'🎲',iconImage:null}; });
   if(!S.diceSettings)S.diceSettings={image:null,frames:20,rows:4,fps:24};
   if(S.diceSettings.frames===undefined)S.diceSettings.frames=20;
   if(S.diceSettings.rows===undefined)S.diceSettings.rows=4;
@@ -393,7 +397,7 @@ function normalizeState(){
 let S=JSON.parse(localStorage.getItem('arcanum-vtt')||'null')||structuredClone(DEFAULT);
 normalizeState();
 
-const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',equipment:'Équipement',dice:'Dés',library:'Bibliothèque',mysheet:'Ma fiche'};
+const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',equipment:'Équipement',dice:'Dés',library:'Bibliothèque',mysheet:'Ma fiche',hotbar:'Mes Compétences'};
 
 let currentPage='table';
 let selectedToken=null;
@@ -603,8 +607,14 @@ function updateUserBadge(){
   if(libNav) libNav.style.display=isMJ()?'':'none';
   const eqNav=document.querySelector('.nav[data-page="equipment"]');
   if(eqNav) eqNav.style.display=isMJ()?'':'none';
+  const abNav=document.querySelector('.nav[data-page="abilities"]');
+  if(abNav) abNav.style.display=isMJ()?'':'none';
+  const hbNav=document.querySelector('.nav[data-page="hotbar"]');
+  if(hbNav) hbNav.style.display=isMJ()?'none':'';
   if(!isMJ()&&currentPage==='library'){currentPage='table';}
   if(!isMJ()&&currentPage==='equipment'){currentPage='table';}
+  if(!isMJ()&&currentPage==='abilities'){currentPage='table';}
+  if(isMJ()&&currentPage==='hotbar'){currentPage='table';}
   if(!isMJ()&&sidePanelTab==='library'){sidePanelTab='chat';}
   if(!isMJ()&&sidePanelTab==='images'){sidePanelTab='chat';}
 }
@@ -960,6 +970,77 @@ function outcome(d){
   if(d>=5)return ['Grande réussite',1.5]; if(d>=2)return ['Réussite critique',2]; return ['Réussite ultime',4];
 }
 function addLog(html){S.chat.push(html);if(S.chat.length>120)S.chat.shift();}
+function statTestLabel(stat){return (stat==='Artisanat'||stat==='Agilité')?`jet d'${stat}`:`jet de ${stat}`;}
+function statTestIcon(stat){const cfg=(S.statTestIcons||{})[stat]||{icon:'🎲',iconImage:null};return {icon:cfg.icon||'🎲',iconImage:cfg.iconImage||null};}
+function rollStatTest(stat){
+  if(!selectedToken){toast('Sélectionne d’abord un personnage.');return;}
+  const casterInst=inst(selectedToken); if(!casterInst)return;
+  if(!canControlInstance(casterInst.id)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
+  if(casterInst.isKO){toast('💀 Ce personnage est inconscient.');return;}
+  const tpl=instTemplate(casterInst); if(!tpl)return;
+  const value=tpl.stats?.[stat]||0;
+  const r=roll('1d100'); const d=r.total;
+  broadcastDiceRoll(100,[d]);
+  const success=d<=value;
+  addLog(`🎲 <b>${esc(casterInst.label)}</b> — ${statTestLabel(stat)} : d100 = <b>${d}</b> vs ${value} → ${success?'<span style="color:#62d394">✅ Réussite</span>':'<span style="color:#ef6262">❌ Échec</span>'}`);
+  saveState(); render();
+}
+/* ---- Hotbar (raccourcis grille, préférence locale par personnage) ---- */
+function getHotbarConfig(){try{return JSON.parse(localStorage.getItem('narbudr-hotbar')||'{}');}catch(e){return {};}}
+function setHotbarConfigAll(c){localStorage.setItem('narbudr-hotbar',JSON.stringify(c));}
+function charHotbar(charId){
+  const cfg=getHotbarConfig();
+  if(!cfg[charId])cfg[charId]={bars:Array.from({length:9},()=>Array(9).fill(null)),activeBar:0};
+  if(!cfg[charId].bars)cfg[charId].bars=Array.from({length:9},()=>Array(9).fill(null));
+  if(cfg[charId].activeBar===undefined)cfg[charId].activeBar=0;
+  return cfg[charId];
+}
+function saveCharHotbar(charId,data){const cfg=getHotbarConfig();cfg[charId]=data;setHotbarConfigAll(cfg);}
+function hotbarIconOnly(){return localStorage.getItem('narbudr-hotbar-icononly')==='1';}
+function setHotbarIconOnly(v){localStorage.setItem('narbudr-hotbar-icononly',v?'1':'0');}
+function hotbarItemLookup(charId,itemId){
+  if(itemId.startsWith('stat_')){
+    const st=itemId.slice(5);
+    return {icon:statTestIcon(st),label:statTestLabel(st),onclick:`rollStatTest('${st}')`};
+  }
+  const a=S.abilities.find(x=>x.id===itemId);
+  if(a)return {icon:a,label:a.name,onclick:a.type==='Passif'?`toggleAuraForCaster('${a.id}')`:`startAbility('${a.id}')`};
+  const c=char(charId);
+  const owned=(c?.consumablesOwned||[]).find(o=>o.id===itemId);
+  if(owned){
+    const def=(S.consumables||[]).find(x=>x.id===itemId);
+    if(def)return {icon:def,label:def.name,onclick:`useConsumable('${charId}','${itemId}')`};
+  }
+  return null;
+}
+function hotbarBarHtml(selInst){
+  const charId=selInst.charId;
+  const cfg=charHotbar(charId);
+  const bars=cfg.bars;
+  const nonEmptyIdx=bars.map((b,i)=>b.some(x=>x)?i:-1).filter(i=>i>=0);
+  if(!nonEmptyIdx.length)return '<span class="tiny muted">Aucun raccourci configuré — utilise l’onglet 🎯 Mes Compétences.</span>';
+  if(!nonEmptyIdx.includes(cfg.activeBar)){cfg.activeBar=nonEmptyIdx[0];saveCharHotbar(charId,cfg);}
+  const curIdx=cfg.activeBar;
+  const cells=bars[curIdx].map(itemId=>{
+    if(!itemId)return `<div class="btn ghost" style="width:38px;height:38px;padding:0;opacity:.25"></div>`;
+    const it=hotbarItemLookup(charId,itemId);
+    if(!it)return `<div class="btn ghost" style="width:38px;height:38px;padding:0;opacity:.25"></div>`;
+    return `<button class="btn" style="width:38px;height:38px;padding:0" onclick="${it.onclick}" title="${esc(it.label)}">${iconInlineHtml(it.icon,26)}</button>`;
+  }).join('');
+  return `<button class="btn ghost" onclick="cycleHotbar('${charId}',-1)" title="Barre précédente">▲</button>
+  <div class="row" style="gap:4px">${cells}</div>
+  <button class="btn ghost" onclick="cycleHotbar('${charId}',1)" title="Barre suivante">▼</button>`;
+}
+function cycleHotbar(charId,dir){
+  const cfg=charHotbar(charId);
+  const nonEmptyIdx=cfg.bars.map((b,i)=>b.some(x=>x)?i:-1).filter(i=>i>=0);
+  if(!nonEmptyIdx.length)return;
+  let pos=nonEmptyIdx.indexOf(cfg.activeBar); if(pos===-1)pos=0;
+  pos=(pos+dir+nonEmptyIdx.length)%nonEmptyIdx.length;
+  cfg.activeBar=nonEmptyIdx[pos];
+  saveCharHotbar(charId,cfg);
+  render();
+}
 function pct(v,m){return m?Math.max(0,Math.min(100,v/m*100)):0;}
 
 /* ============================= INSTANCES (TOKENS) ============================= */
@@ -1161,6 +1242,7 @@ function render(){
   else if(currentPage==='dice')c.innerHTML=dicePage();
   else if(currentPage==='library')c.innerHTML=libraryPage();
   else if(currentPage==='mysheet')c.innerHTML=mySheetPage();
+  else if(currentPage==='hotbar')c.innerHTML=hotbarPage();
   updateTargetingBanner();
   updateUserBadge();
   syncSheetInputs();
@@ -1227,6 +1309,9 @@ function tablePage(){
       if(selInst.isKO){
         abilitiesHtml='<span class="tiny muted">💀 Ce personnage est inconscient.</span>';
       }else if(canControlInstance(selInst.id)){
+        if(hotbarIconOnly()){
+          abilitiesHtml=hotbarBarHtml(selInst);
+        }else{
         const known=characterAbilities(selInst.charId);
         abilitiesHtml=known.length?known.map(a=>{
           if(a.type==='Passif'){
@@ -1236,7 +1321,10 @@ function tablePage(){
           const hk=myHotkeyFor(selInst.charId,a.id);
           return `<button class="btn ${activeAbility===a.id?'primary':''}" onclick="startAbility('${a.id}')" oncontextmenu="event.preventDefault();promptSetHotkey('${selInst.charId}','${a.id}')" title="${a.type==='Transformation'?`Transformation immédiate · Mana : ${a.manaCost||0}`:`Portée : ${a.range?a.range+' cases':'illimitée'} · Mana : ${a.manaCost||0}`}${hk?` · Raccourci : ${hk}`:''} · Clic droit : assigner un raccourci">${hk?`<b>[${esc(hk)}]</b> `:''}${iconInlineHtml(a)} ${esc(a.name)}</button>`;
         }).join(''):'<span class="tiny muted">Ce personnage ne connaît aucune capacité (à assigner dans sa fiche).</span>';
+        const statTpl=instTemplate(selInst);
+        abilitiesHtml+=STAT_TESTS.map(st=>`<button class="btn" onclick="rollStatTest('${st}')" title="${esc(statTestLabel(st))} (${statTpl?.stats?.[st]||0})">${iconInlineHtml(statTestIcon(st))} ${esc(st)}</button>`).join('');
         abilitiesHtml+=consumablesButtonsHtml(selInst);
+        }
       }else{
         abilitiesHtml='<span class="tiny muted">Vous ne contrôlez pas ce personnage.</span>';
       }
@@ -3015,9 +3103,10 @@ function handleInstanceDeath(t){
 /* ============================= PERSONNAGES / FICHES (édition réservée au MJ) ============================= */
 function charactersPage(){
   const mj=isMJ();
+  const charList=mj?S.characters:S.characters.filter(c=>c.type==='player');
   return `<div class="grid2">
   <div class="card"><div class="row between"><h2>Personnages &amp; créatures</h2>${mj?`<button class="btn primary" onclick="openCharacter()">＋ Nouveau</button>`:''}</div>
-  ${S.characters.map(c=>{
+  ${charList.map(c=>{
     const count=S.instances.filter(i=>i.charId===c.id).length;
     const nbAb=characterAbilities(c.id).length;
     const ownerLabel=c.ownerId?(displayNameOf(profiles.find(p=>p.id===c.ownerId))||'Joueur inconnu'):(c.type==='player'?'Non assigné':'MJ / PNJ');
@@ -3268,6 +3357,10 @@ function abilitiesPage(){
   </div>
   <div id="abilityResultsContainer">${abilityResultsHtml()}</div>
   </div>
+  <div class="card" style="margin-bottom:16px"><h2>🎲 Tests de caractéristiques (universels)</h2>
+  <p class="tiny muted">Disponibles automatiquement pour tous les personnages. Modifie ici uniquement leur icône.</p>
+  ${STAT_TESTS.map(st=>{const ic=statTestIcon(st);return `<div class="ability"><div class="icon">${iconBoxHtml(ic,'9px')}</div><div class="ability-info"><b>${esc(statTestLabel(st))}</b></div>${mj?`<button class="btn" onclick="openStatTestIconModal('${st}')">Modifier l’icône</button>`:''}</div>`;}).join('')}
+  </div>
   <div class="card"><h2>Deux modes de création</h2><div class="statgrid"><div class="stat"><label>🟢 Mode simple</label><strong>Visuel</strong><p class="tiny muted">Type, formule, statistique, défense, élément, zone et effet — indépendants pour chaque capacité.</p></div><div class="stat"><label>🔴 Mode avancé</label><strong>Macro</strong><p class="tiny muted">Aperçu de la logique, en lecture seule pour l'instant.</p></div></div><p class="muted">Le moteur gère le jet d100, le multiplicateur de réussite, la formule de dégâts, la défense, la résistance élémentaire, le bouclier puis les PV. Aucune règle D&D n'est imposée : tout est configurable.</p></div></div>`;
 }
 function onAbilitySearchInput(v){abilitySearchQuery=v;const c=document.getElementById('abilityResultsContainer');if(c)c.innerHTML=abilityResultsHtml();}
@@ -3484,6 +3577,30 @@ function saveAbility(id){
   target.characterIds=[...document.querySelectorAll('.ac-check:checked')].map(el=>el.value);
   if(!id)S.abilities.push(target);
   if(target.type==='Transformation'&&!target.transformCharId){toast('⚠️ Choisis un personnage vers lequel se transformer.');}
+  saveState(); closeModal(); render();
+}
+function openStatTestIconModal(stat){
+  if(!isMJ())return;
+  const cfg=statTestIcon(stat);
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>Icône — ${esc(statTestLabel(stat))}</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+  <div class="field"><label>Emoji</label><input id="st_icon" value="${esc(cfg.icon)}"></div>
+  <div class="field full">
+    <div class="icon-dropzone" onclick="document.getElementById('st_icon_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'st_iconimage','st_icon_preview')">
+      <div id="st_icon_preview" class="icon-preview">${cfg.iconImage?`<img src="${esc(cfg.iconImage)}">`:`<span>${esc(cfg.icon)}</span>`}</div>
+      <p class="tiny muted">Glisse une image ici, ou clique pour parcourir</p>
+      <input type="file" id="st_icon_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'st_iconimage','st_icon_preview')">
+    </div>
+    <input type="hidden" id="st_iconimage" value="${esc(cfg.iconImage||'')}">
+    ${cfg.iconImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('st_iconimage','st_icon_preview',document.getElementById('st_icon').value)">↺ Revenir à l'emoji</button>`:''}
+    ${imagePickerHtml('st_iconimage','st_icon_preview')}
+  </div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveStatTestIcon('${stat}')">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function saveStatTestIcon(stat){
+  if(!isMJ())return;
+  if(!S.statTestIcons)S.statTestIcons={};
+  S.statTestIcons[stat]={icon:document.getElementById('st_icon').value||'🎲',iconImage:document.getElementById('st_iconimage').value.trim()||null};
   saveState(); closeModal(); render();
 }
 function openAdvancedAbility(id){
@@ -3920,6 +4037,52 @@ function myCharacterCard(c){
 }
 
 
+let hotbarEditChar=null;
+function hotbarPage(){
+  if(!currentUser)return `<div class="card"><p class="muted">Connectez-vous.</p></div>`;
+  const mine=S.characters.filter(c=>c.ownerId===currentUser.id);
+  if(!mine.length)return `<div class="card"><p class="muted">Aucun personnage ne vous a été assigné.</p></div>`;
+  if(!hotbarEditChar||!mine.some(c=>c.id===hotbarEditChar))hotbarEditChar=mine[0].id;
+  const c=char(hotbarEditChar);
+  const cfg=charHotbar(hotbarEditChar);
+  const abilities=characterAbilities(hotbarEditChar);
+  const consumables=(c.consumablesOwned||[]).filter(o=>o.qty>0).map(o=>({id:o.id,def:(S.consumables||[]).find(x=>x.id===o.id)})).filter(x=>x.def);
+  const poolHtml=[
+    ...STAT_TESTS.map(st=>`<div class="asset-item" draggable="true" ondragstart="hotbarDragStart(event,'stat_${st}')"><div class="asset-icon">${iconInlineHtml(statTestIcon(st),20)}</div><div class="asset-info"><b>${esc(statTestLabel(st))}</b></div></div>`),
+    ...abilities.map(a=>`<div class="asset-item" draggable="true" ondragstart="hotbarDragStart(event,'${a.id}')"><div class="asset-icon">${iconInlineHtml(a,20)}</div><div class="asset-info"><b>${esc(a.name)}</b></div></div>`),
+    ...consumables.map(o=>`<div class="asset-item" draggable="true" ondragstart="hotbarDragStart(event,'${o.id}')"><div class="asset-icon">${iconInlineHtml(o.def,20)}</div><div class="asset-info"><b>${esc(o.def.name)}</b></div></div>`)
+  ].join('');
+  const barsHtml=cfg.bars.map((bar,bi)=>`<div class="row" style="gap:4px;margin-bottom:6px;flex-wrap:wrap"><span class="tiny muted" style="width:60px">Barre ${bi+1}</span>${bar.map((itemId,ci)=>{
+    const it=itemId?hotbarItemLookup(hotbarEditChar,itemId):null;
+    return `<div class="btn ghost" style="width:34px;height:34px;padding:0" ondragover="event.preventDefault()" ondrop="hotbarDrop(event,${bi},${ci})" oncontextmenu="event.preventDefault();hotbarClear(${bi},${ci})" title="${it?esc(it.label):'Vide (clic droit pour vider)'}">${it?iconInlineHtml(it.icon,26):''}</div>`;
+  }).join('')}</div>`).join('');
+  return `<div class="grid2">
+  <div class="card"><h2>🎯 Mes Compétences</h2>
+  <div class="field"><label>Personnage</label><select onchange="hotbarEditChar=this.value;render()">${mine.map(m=>`<option value="${m.id}" ${m.id===hotbarEditChar?'selected':''}>${esc(m.name)}</option>`).join('')}</select></div>
+  <label class="row" style="gap:8px;margin:10px 0"><input type="checkbox" ${hotbarIconOnly()?'checked':''} onchange="setHotbarIconOnly(this.checked);render()"> Afficher uniquement les icônes sur la table de jeu (grille de raccourcis)</label>
+  <p class="tiny muted">Glisse une capacité vers une case. Clic droit sur une case pour la vider.</p>
+  ${barsHtml}
+  </div>
+  <div class="card"><h2>Capacités disponibles</h2><div class="asset-list">${poolHtml}</div></div>
+  </div>`;
+}
+let hotbarDragItem=null;
+function hotbarDragStart(ev,itemId){hotbarDragItem=itemId;ev.dataTransfer.setData('text/plain',itemId);}
+function hotbarDrop(ev,bi,ci){
+  ev.preventDefault();
+  const itemId=hotbarDragItem||ev.dataTransfer.getData('text/plain'); if(!itemId)return;
+  const cfg=charHotbar(hotbarEditChar);
+  cfg.bars[bi][ci]=itemId;
+  saveCharHotbar(hotbarEditChar,cfg);
+  hotbarDragItem=null;
+  render();
+}
+function hotbarClear(bi,ci){
+  const cfg=charHotbar(hotbarEditChar);
+  cfg.bars[bi][ci]=null;
+  saveCharHotbar(hotbarEditChar,cfg);
+  render();
+}
 function assetDragStart(ev,charId){
   if(!isMJ()){ev.preventDefault();return;}
   ev.dataTransfer.setData('text/plain',charId);
