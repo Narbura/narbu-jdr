@@ -544,6 +544,10 @@ function subscribeRealtime(){
       const d=payload.payload||{};
       if(currentPage==='table')playOppImpactAt(d.targetId,d.image,d.frames,d.rows,d.fps);
     })
+    .on('broadcast',{event:'dice'},payload=>{
+      const d=payload.payload||{};
+      playDiceRoll(d.sides,d.values);
+    })
     .subscribe();
 }
 async function initApp(){
@@ -866,6 +870,11 @@ function playDiceRoll(sides,values){
       setTimeout(()=>die.remove(),2200+i*80);
     }
   });
+}
+function broadcastDiceRoll(sides,values){
+  if(!values||!values.length)return;
+  gameChannel?.send({type:'broadcast',event:'dice',payload:{sides,values}});
+  playDiceRoll(sides,values);
 }
 function dicePage(){
   const mj=isMJ();
@@ -1863,7 +1872,7 @@ function sendChat(){
   if(m){
     const r=parseDiceExpr(m[1]);
     if(!r){toast('⚠️ Syntaxe : /r d100, /r 2d20+5 (max 50 dés, d1000).');return;}
-    r.parts.forEach(p=>{if(p.rolls&&p.rolls.length)playDiceRoll(p.sides,p.rolls);});
+    r.parts.forEach(p=>{if(p.rolls&&p.rolls.length)broadcastDiceRoll(p.sides,p.rolls);});
     const lines=r.parts.map(p=>p.rolls
       ?`🎲 ${p.label} : ${p.rolls.join(' + ')}${p.rolls.length>1?` = ${Math.abs(p.sum)}`:''}`
       :`➕ Bonus : ${p.sum>0?'+':''}${p.sum}`);
@@ -2478,7 +2487,7 @@ function resolveOpportunityAttack(attackerInst,targetInst){
   }
   const usedFormula=weaponFormula?combineFormula(oa.formula,weaponFormula):oa.formula;
   const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
-  playDiceRoll(100,[atk]);
+  broadcastDiceRoll(100,[atk]);
   broadcastCritical(attackerInst.id,label);
   const lines=[`⚡ <b>${esc(attackerInst.label)}</b> effectue une <b>attaque d'opportunité</b> sur <b>${esc(targetInst.label)}</b> !`];
   lines.push(`🎲 d100 : <b>${atk}</b> → ${label}`);
@@ -2488,7 +2497,7 @@ function resolveOpportunityAttack(attackerInst,targetInst){
     return;
   }
   const r=roll(usedFormula);
-  playDiceRoll(formulaSides(usedFormula),r.rolls);
+  broadcastDiceRoll(formulaSides(usedFormula),r.rolls);
   let damage=Math.ceil(r.total*mult*(attackerTpl.stats[statKey]||0)/100);
   const def=isPhys?(effectiveDef(targetTpl).CA||0):(effectiveDef(targetTpl).DM||0);
   damage=Math.max(0,damage-def);
@@ -2541,7 +2550,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(w&&w.itemType==='weapon'&&w.damageFormula&&(w.weaponStat||'Force')===a.stat){weaponUsed=w;weaponFormula=w.damageFormula;}
   }
   const atkExpr=a.atkDice||'1d100'; const atkRoll=roll(atkExpr); const atk=atkRoll.total; const [label,mult]=outcome(atk);
-  playDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
+  broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   const targets=affected(a,start,explicitTargetInstId);
   playAbilityFX(a,casterInst,targets,start);
@@ -2567,7 +2576,7 @@ function resolveAbility(a,start,explicitTargetInstId){
       sharedUsedFormula=weaponFormula?combineFormula(a.formula,weaponFormula):a.formula;
       sharedRoll=roll(sharedUsedFormula);
     }
-    playDiceRoll(formulaSides(sharedUsedFormula),sharedRoll.rolls);
+    broadcastDiceRoll(formulaSides(sharedUsedFormula),sharedRoll.rolls);
     lines.push(`🎲 ${esc(sharedUsedFormula)}${weaponUsed?` (${esc(a.formula)} + arme « ${esc(weaponUsed.name)} » ${esc(weaponFormula)})`:''} : ${sharedRoll.rolls.join(' + ')}${sharedRoll.bonus?` + ${sharedRoll.bonus}`:''} = ${sharedRoll.total} <span class="tiny muted">(zone, jet unique)</span>`);
   }
 
@@ -2575,7 +2584,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     const tTpl=instTemplate(t);
     if(a.type==='Soin'){
       const r=isAoE?sharedRoll:roll(a.formula);
-      if(!isAoE)playDiceRoll(formulaSides(a.formula),r.rolls);
+      if(!isAoE)broadcastDiceRoll(formulaSides(a.formula),r.rolls);
       const amount=applyMult(Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
       t.hp=Math.min(t.hpMax,t.hp+amount);
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
@@ -2586,7 +2595,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     }
     if(a.type==='Bouclier'){
       const r=isAoE?sharedRoll:roll(a.formula);
-      if(!isAoE)playDiceRoll(formulaSides(a.formula),r.rolls);
+      if(!isAoE)broadcastDiceRoll(formulaSides(a.formula),r.rolls);
       const amount=applyMult(Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
       t.shield=(t.shield||0)+amount;
       if(t.shield>t.shieldMax)t.shieldMax=t.shield;
@@ -2599,7 +2608,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);continue;}
     const usedFormula=isAoE?sharedUsedFormula:(weaponFormula?combineFormula(a.formula,weaponFormula):a.formula);
     const r=isAoE?sharedRoll:roll(usedFormula); const raw=r.total;
-    if(!isAoE)playDiceRoll(formulaSides(usedFormula),r.rolls);
+    if(!isAoE)broadcastDiceRoll(formulaSides(usedFormula),r.rolls);
     let damage=applyMult(Math.ceil(raw*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
     const def=(a.defense!=='none')?(effectiveDef(tTpl)[a.defense]||0):0;
     damage=Math.max(0,damage-def);
@@ -2657,7 +2666,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   const casterTpl=instTemplate(casterInst);
   const atkExpr=a.atkDice||'1d100'; const atkRoll=roll(atkExpr); const atk=atkRoll.total; const [label,mult]=outcome(atk);
-  playDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
+  broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
   t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
@@ -2680,7 +2689,7 @@ function resolveBuffZone(a,casterInst,start){
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   const casterTpl=instTemplate(casterInst);
   const atkExpr=a.atkDice||'1d100'; const atkRoll=roll(atkExpr); const atk=atkRoll.total; const [label,mult]=outcome(atk);
-  playDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
+  broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   const targets=affected(a,start);
   const lines=[`🌀 <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b> en zone (🎲 ${esc(atkExpr)} : ${atk} → ${label})`];
