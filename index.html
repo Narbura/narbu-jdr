@@ -434,9 +434,10 @@ let pendingPersistentOrigin=null; // {abilityId,origin:[x,y]} : sort persistant 
 /* ============================= SYNCHRONISATION SUPABASE ============================= */
 async function loadProfiles(){
   try{
-    const { data, error } = await supabaseClient.from('profiles').select('id,email,display_name');
+    const { data, error } = await supabaseClient.from('profiles').select('id,email,display_name,ui_prefs');
     if(!error && data) profiles=data;
   }catch(e){ console.error('loadProfiles', e); }
+  loadUiPrefsFromProfile();
 }
 async function loadGameState(){
   try{
@@ -840,8 +841,11 @@ function effectiveMove(c){
   if(!c)return 0;
   const base=c.move??6;
   if(c.type!=='player')return base;
-  const over=characterTotalWeight(c)>(c.stats?.Force||0);
-  return over?Math.max(0,base-1):base;
+  const w=characterTotalWeight(c), force=c.stats?.Force||0;
+  if(w>force*3)return 0;
+  if(w>force*2)return Math.max(0,base-2);
+  if(w>force)return Math.max(0,base-1);
+  return base;
 }
 
 /* ============================= ANIMATION VISUELLE DES DÉS (spritesheet, façon FX de sorts) ============================= */
@@ -1004,7 +1008,23 @@ function rollStatTest(stat){
 }
 /* ---- Hotbar (raccourcis grille, préférence locale par personnage) ---- */
 function getHotbarConfig(){try{return JSON.parse(localStorage.getItem('narbudr-hotbar')||'{}');}catch(e){return {};}}
-function setHotbarConfigAll(c){localStorage.setItem('narbudr-hotbar',JSON.stringify(c));}
+function setHotbarConfigAll(c){localStorage.setItem('narbudr-hotbar',JSON.stringify(c));saveUiPrefsToProfile();}
+function loadUiPrefsFromProfile(){
+  const p=myProfile();
+  if(p&&p.ui_prefs){
+    if(p.ui_prefs.hotbar)localStorage.setItem('narbudr-hotbar',JSON.stringify(p.ui_prefs.hotbar));
+    if(p.ui_prefs.hotkeys)localStorage.setItem('narbudr-my-hotkeys',JSON.stringify(p.ui_prefs.hotkeys));
+  }
+}
+let uiPrefsSaveTimer=null;
+function saveUiPrefsToProfile(){
+  if(!currentUser)return;
+  clearTimeout(uiPrefsSaveTimer);
+  uiPrefsSaveTimer=setTimeout(async()=>{
+    try{ await supabaseClient.from('profiles').update({ui_prefs:{hotbar:getHotbarConfig(),hotkeys:getHotkeyMap()}}).eq('id',currentUser.id); }
+    catch(e){ console.error('saveUiPrefsToProfile',e); }
+  },800);
+}
 function charHotbar(charId){
   const cfg=getHotbarConfig();
   if(!cfg[charId])cfg[charId]={bars:Array.from({length:9},()=>Array(9).fill(null)),activeBar:0};
@@ -2340,6 +2360,7 @@ function setupMapInteractions(){
       }
       const c=inst(id);
       if(c.movementBlocked){toast('🚫 Ce personnage est immobilisé.');render();return;}
+      if(effectiveMove(instTemplate(c))<=0&&characterTotalWeight(instTemplate(c))>0){toast('🚫 Trop lourd pour se déplacer !');render();return;}
       dragCandidate={id,startX:e.clientX,startY:e.clientY,origX:c.x,origY:c.y,moved:false};
       render(); return;
     }
@@ -3026,7 +3047,7 @@ function removeAffliction(instId,defId){
 }
 /* ============================= RACCOURCIS PERSONNELS (par joueur, stockés en local) ============================= */
 function getHotkeyMap(){try{return JSON.parse(localStorage.getItem('narbudr-my-hotkeys')||'{}');}catch(e){return {};}}
-function setHotkeyMap(m){localStorage.setItem('narbudr-my-hotkeys',JSON.stringify(m));}
+function setHotkeyMap(m){localStorage.setItem('narbudr-my-hotkeys',JSON.stringify(m));saveUiPrefsToProfile();}
 function myHotkeyFor(charId,abilityId){return (getHotkeyMap()[charId]||{})[abilityId]||null;}
 function promptSetHotkey(charId,abilityId){
   const key=prompt('Touche pour ce raccourci (1-9, lettre, ou symbole comme & é " \' ( § è ! ç à) — laisse vide pour retirer :','');
@@ -5059,6 +5080,7 @@ function moveSelectedTokenBy(dx,dy){
   if(!canControlInstance(id)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
   if(S.combat.active&&S.combat.order[S.combat.turn]!==id){toast('⏳ Ce n’est pas le tour de ce personnage.');return;}
   if(t.movementBlocked){toast('🚫 Ce personnage est immobilisé.');return;}
+  if(effectiveMove(instTemplate(t))<=0&&characterTotalWeight(instTemplate(t))>0){toast('🚫 Trop lourd pour se déplacer !');return;}
   const sw=t.sizeW||1, sh=t.sizeH||1;
   const nx=t.x+dx, ny=t.y+dy;
   if(nx<0||ny<0||nx+sw>S.map.cols||ny+sh>S.map.rows)return;
@@ -5114,7 +5136,6 @@ document.addEventListener('keydown',e=>{
 
 /* ============================= NAVIGATION / INIT ============================= */
 document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>{currentPage=n.dataset.page;activeAbility=null;hoverCell=null;render();});
-render();
 </script>
 </body>
 </html>
