@@ -838,9 +838,9 @@ function characterTotalWeight(c){
   return w;
 }
 function weightMalusText(w,force){
-  if(w>force*3)return ' ⚠️ Immobilisé (équipement trop lourd)';
-  if(w>force*2)return ' ⚠️ -4 déplacement';
-  if(w>force)return ' ⚠️ -1 déplacement';
+  if(w>force*3)return ' ⚠️ il vous semble impossible de vous déplacer correctement avec un équipement aussi lourd';
+  if(w>force*2)return ' ⚠️ Votre équipement est très lourd pour vous, malus de -4 de déplacement';
+  if(w>force)return ' ⚠️ Votre équipement est lourd pour vous, malus de -1 de déplacement';
   return '';
 }
 function effectiveMove(c){
