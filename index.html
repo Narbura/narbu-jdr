@@ -323,6 +323,7 @@ function normalizeState(){
     if(!Array.isArray(t.activeAuras))t.activeAuras=[];
     if(!Array.isArray(t.statusEffects))t.statusEffects=[];
     if(t.movementBlocked===undefined)t.movementBlocked=false;
+    if(t.isKO===undefined)t.isKO=false;
   });
   S.characters.forEach(c=>{
     if(!c.res)c.res={};
@@ -1214,7 +1215,9 @@ function tablePage(){
       const selInst=selectedToken?inst(selectedToken):null;
       if(!selInst)return '<span class="tiny muted">Sélectionne un personnage sur la carte pour voir ses capacités.</span>';
       let abilitiesHtml='';
-      if(canControlInstance(selInst.id)){
+      if(selInst.isKO){
+        abilitiesHtml='<span class="tiny muted">💀 Ce personnage est inconscient.</span>';
+      }else if(canControlInstance(selInst.id)){
         const known=characterAbilities(selInst.charId);
         abilitiesHtml=known.length?known.map(a=>{
           if(a.type==='Passif'){
@@ -1281,7 +1284,7 @@ function tokensHtml(){
     const hasAura=t.activeAuras&&t.activeAuras.length;
     return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''} ${multiSel.includes(t.id)?'multi':''} ${hasAura?'has-aura':''}" data-token="${t.id}" style="left:${px}px;top:${py}px;--cell-size:${S.map.cell}px;--tok-w:${tokW}px;--tok-h:${tokH}px;--tok-min:${Math.min(tokW,tokH)}px">
       <div class="token-hud">${hud}</div>
-      <div class="token ${tpl.type}" title="${esc(t.label)}">${iconBoxHtml(tpl,'0')}${mj?`<div class="token-resize-handle" onmousedown="startTokenResize(event,'${t.id}')" title="Glisser pour redimensionner"></div>`:''}</div>
+      <div class="token ${tpl.type}" title="${esc(t.label)}${t.isKO?' (KO)':''}">${t.isKO?'💀':iconBoxHtml(tpl,'0')}${mj?`<div class="token-resize-handle" onmousedown="startTokenResize(event,'${t.id}')" title="Glisser pour redimensionner"></div>`:''}</div>
       <div class="token-label">${esc(t.label)}</div>
       ${afflictionIconsHtml}
     </div>`;
@@ -2090,15 +2093,15 @@ function advanceTurn(){
     const nt=inst(S.combat.order[S.combat.turn]);
     if(nt){
       const tpl=instTemplate(nt);
-      nt.remainingMove=tpl?.move??6;
-      nt.movementBlocked=false;
+      nt.remainingMove=nt.isKO?0:(tpl?.move??6);
+      nt.movementBlocked=nt.isKO?true:false;
       triggerAuras(nt);
       tickStatusEffects(nt);
       tickPersistentZones(nt);
       const res=tickAfflictions(nt);
-      nt.movementBlocked=res.blockMove;
-      if(res.skip){
-        addLog(`⏭ <b>${esc(nt.label)}</b> passe son tour (affliction).`);
+      nt.movementBlocked=nt.isKO?true:res.blockMove;
+      if(res.skip||nt.isKO){
+        addLog(`⏭ <b>${esc(nt.label)}</b> passe son tour (${nt.isKO?'inconscient':'affliction'}).`);
         safety++;
         if(safety>S.combat.order.length+2)break;
         continue;
@@ -2444,6 +2447,7 @@ function checkOpportunityAttacks(moverId,oldBox){
   const moverTpl=instTemplate(mover); if(!moverTpl)return;
   S.instances.forEach(ot=>{
     if(ot.id===moverId)return;
+    if(ot.isKO)return;
     const otTpl=instTemplate(ot); if(!otTpl)return;
     if(otTpl.type===moverTpl.type)return; // uniquement les camps opposés
     const oa=otTpl.oppAttack; if(!oa||!oa.formula)return;
@@ -2931,8 +2935,9 @@ function startAbility(id){
   if(!selectedToken){toast('Sélectionne d’abord un personnage sur la carte.');return;}
   if(!canControlInstance(selectedToken)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
   if(S.combat.active&&S.combat.order[S.combat.turn]!==selectedToken){toast('⏳ Ce n’est pas le tour de ce personnage.');return;}
-  const a=S.abilities.find(x=>x.id===id); if(!a)return;
   const caster=inst(selectedToken);
+  if(caster?.isKO){toast('💀 Ce personnage est inconscient.');return;}
+  const a=S.abilities.find(x=>x.id===id); if(!a)return;
   if(a.type==='Passif'){ toggleAuraForCaster(id); return; }
   if(a.manaCost>0&&caster&&(caster.mana||0)<a.manaCost){
     toast(`🚫 Mana insuffisant (${caster.mana}/${a.manaCost}) pour lancer ${a.name} — choisis une autre action.`);
@@ -2957,6 +2962,7 @@ function transformInstance(instId,targetCharId){
   t.hpMax=newChar.resourcesMax?.Vie||1; t.hp=t.hpMax;
   t.manaMax=newChar.resourcesMax?.Mana||0; t.mana=t.manaMax;
   t.shieldMax=newChar.resourcesMax?.Bouclier||0; t.shield=t.shieldMax;
+  t.isKO=false; t.movementBlocked=false;
   return true;
 }
 function castTransformation(a){
@@ -2979,6 +2985,16 @@ function handleInstanceDeath(t){
     if(usable.manaCost>0)t.mana=Math.max(0,(t.mana||0)-usable.manaCost);
     transformInstance(t.id,usable.transformCharId);
     addLog(`💀➡️🔄 <b>${esc(fromName)}</b> tombe à 0 PV et se transforme automatiquement en <b>${esc(t.label)}</b> (${esc(usable.name)}).`);
+  }else if(tpl&&tpl.type==='player'){
+    if(t.isKO){
+      addLog(`💀 <b>${esc(t.label)}</b> succombe définitivement et est retiré de la carte.`);
+      removeInstance(t.id);
+    }else{
+      t.isKO=true;
+      t.movementBlocked=true;
+      t.hp=t.hpMax;
+      addLog(`💀 <b>${esc(t.label)}</b> tombe inconscient (KO).`);
+    }
   }else{
     removeInstance(t.id);
   }
