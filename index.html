@@ -839,7 +839,7 @@ function characterTotalWeight(c){
 }
 function weightMalusText(w,force){
   if(w>force*3)return ' ⚠️ Immobilisé (trop lourd)';
-  if(w>force*2)return ' ⚠️ -2 déplacement';
+  if(w>force*2)return ' ⚠️ -3 déplacement';
   if(w>force)return ' ⚠️ -1 déplacement';
   return '';
 }
@@ -849,7 +849,7 @@ function effectiveMove(c){
   if(c.type!=='player')return base;
   const w=characterTotalWeight(c), force=c.stats?.Force||0;
   if(w>force*3)return 0;
-  if(w>force*2)return Math.max(0,base-2);
+  if(w>force*2)return Math.max(0,base-3);
   if(w>force)return Math.max(0,base-1);
   return base;
 }
