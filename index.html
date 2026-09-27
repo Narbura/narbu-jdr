@@ -275,7 +275,7 @@ const DEFAULT={
 const ELEMENT_RES_KEYS=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres'];
 const STAT_TESTS=['Social','Artisanat','Endurance','Force','Agilité','Constitution','Vitesse','Magie'];
 const EQUIP_SLOTS=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['amulette','Amulette'],['anneau1','Anneau 1'],['anneau2','Anneau 2'],['arme','Arme']];
-const EQUIP_CATEGORIES=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['amulette','Amulette'],['anneau','Anneau'],['arme','Arme']];
+const EQUIP_CATEGORIES=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['amulette','Amulette'],['anneau','Anneau'],['arme','Arme'],['divers','Divers']];
 function equipSlotCategory(slotKey){return (slotKey==='anneau1'||slotKey==='anneau2')?'anneau':slotKey;}
 
 function normalizeState(){
@@ -354,6 +354,7 @@ function normalizeState(){
     if(c.type==='player'){
       if(!c.equipmentSlots)c.equipmentSlots={};
       EQUIP_SLOTS.forEach(([k])=>{if(c.equipmentSlots[k]===undefined)c.equipmentSlots[k]=null;});
+      if(!Array.isArray(c.equipmentSlots.diversIds))c.equipmentSlots.diversIds=[];
     }
   });
   if(!S.equipment)S.equipment=[];
@@ -368,6 +369,8 @@ function normalizeState(){
     if(e.category===undefined)e.category=e.itemType==='weapon'?'arme':'torse';
     if(e.damageFormula===undefined)e.damageFormula='';
     if(e.weaponStat===undefined)e.weaponStat='Force';
+    if(e.poids===undefined)e.poids=0;
+    if(e.description===undefined)e.description='';
   });
   S.abilities.forEach(a=>{
     if(a.element==='Gel')a.element='Glace';
@@ -826,6 +829,20 @@ function effectiveRes(c){
   }
   return out;
 }
+function characterTotalWeight(c){
+  if(!c||c.type!=='player'||!c.equipmentSlots)return 0;
+  let w=0;
+  EQUIP_SLOTS.forEach(([k])=>{const e=equip(c.equipmentSlots[k]);if(e)w+=e.poids||0;});
+  (c.equipmentSlots.diversIds||[]).forEach(id=>{const e=equip(id);if(e)w+=e.poids||0;});
+  return w;
+}
+function effectiveMove(c){
+  if(!c)return 0;
+  const base=c.move??6;
+  if(c.type!=='player')return base;
+  const over=characterTotalWeight(c)>(c.stats?.Force||0);
+  return over?Math.max(0,base-1):base;
+}
 
 /* ============================= ANIMATION VISUELLE DES DÉS (spritesheet, façon FX de sorts) ============================= */
 function diceAnimEnabled(){return localStorage.getItem('narbudr-dice-anim-enabled')!=='0';}
@@ -1025,7 +1042,8 @@ function hotbarBarHtml(selInst){
     if(!itemId)return `<div class="btn ghost" style="width:38px;height:38px;padding:0;opacity:.25"></div>`;
     const it=hotbarItemLookup(charId,itemId);
     if(!it)return `<div class="btn ghost" style="width:38px;height:38px;padding:0;opacity:.25"></div>`;
-    return `<button class="btn" style="width:38px;height:38px;padding:0" onclick="${it.onclick}" title="${esc(it.label)}">${iconInlineHtml(it.icon,26)}</button>`;
+    const hk=myHotkeyFor(charId,itemId);
+    return `<button class="btn" style="width:38px;height:38px;padding:0;position:relative" onclick="${it.onclick}" oncontextmenu="event.preventDefault();promptSetHotkey('${charId}','${itemId}')" title="${esc(it.label)}${hk?` · Raccourci : ${hk}`:''} · Clic droit : assigner un raccourci">${hk?`<b style="position:absolute;top:-3px;left:1px;font-size:9px;background:#111318cc;border-radius:3px;padding:0 2px">${esc(hk)}</b>`:''}${iconInlineHtml(it.icon,26)}</button>`;
   }).join('');
   return `<button class="btn ghost" onclick="cycleHotbar('${charId}',-1)" title="Barre précédente">▲</button>
   <div class="row" style="gap:4px">${cells}</div>
@@ -1210,7 +1228,7 @@ function spawnInstance(charId,x,y){
   const rm=t.resourcesMax||{Vie:10,Mana:0,Bouclier:0};
   const newInst={id:'i'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),charId,label,x,y,px:null,py:null,
     hp:rm.Vie||0,hpMax:rm.Vie||0,mana:rm.Mana||0,manaMax:rm.Mana||0,shield:rm.Bouclier||0,shieldMax:rm.Bouclier||0,
-    remainingMove:t.move??6};
+    remainingMove:effectiveMove(t)};
   S.instances.push(newInst); return newInst;
 }
 function removeInstance(id){
@@ -2193,7 +2211,7 @@ function advanceTurn(){
     const nt=inst(S.combat.order[S.combat.turn]);
     if(nt){
       const tpl=instTemplate(nt);
-      nt.remainingMove=nt.isKO?0:(tpl?.move??6);
+      nt.remainingMove=nt.isKO?0:effectiveMove(tpl);
       nt.movementBlocked=nt.isKO?true:false;
       triggerAuras(nt);
       tickStatusEffects(nt);
@@ -2440,7 +2458,7 @@ function setupMapInteractions(){
           }else if(S.combat.active&&S.combat.order[S.combat.turn]===id){
             const tpl=instTemplate(t);
             const dist=Math.abs(t.x-origX)+Math.abs(t.y-origY);
-            const remaining=t.remainingMove??(tpl?.move??6);
+            const remaining=t.remainingMove??effectiveMove(tpl);
             if(dist>remaining){
               t.x=origX; t.y=origY;
               toast('🚫 Déplacement maximal atteint pour ce tour.');
@@ -3134,13 +3152,31 @@ function equipmentSlotsHtml(base){
     return `<option value="">— Aucun —</option>`+items.map(e=>`<option value="${esc(e.id)}" ${cur===e.id?'selected':''}>${esc(e.icon)} ${esc(e.name)}</option>`).join('');
   };
   const nat=naturalRes(base);
+  const diversItems=(S.equipment||[]).filter(e=>e.itemType==='divers');
+  const diversIds=slots.diversIds||[];
+  const diversListHtml=diversItems.length?diversItems.map(e=>`<label class="ability-char-item"><input type="checkbox" class="eq-divers-check" value="${esc(e.id)}" ${diversIds.includes(e.id)?'checked':''} onchange="updateWeightPreview()"> <span>${iconInlineHtml(e)} ${esc(e.name)} <small class="muted">(${e.poids||0} kg)</small></span></label>`).join(''):'<p class="tiny muted">Aucun équipement "Divers" créé (page 🎒 Équipement).</p>';
+  const w=characterTotalWeight(base), force=base.stats?.Force||0;
   return `<div class="field full"><label>🎒 Équipement (seul le MJ peut équiper)</label>
   <div class="statgrid" style="grid-template-columns:repeat(3,1fr)">
-  ${EQUIP_SLOTS.map(([k,label])=>`<div class="field"><label>${esc(label)}</label><select id="eqslot_${k}">${eqOpts(slots[k],k)}</select></div>`).join('')}
+  ${EQUIP_SLOTS.map(([k,label])=>`<div class="field"><label>${esc(label)}</label><select id="eqslot_${k}" onchange="updateWeightPreview()">${eqOpts(slots[k],k)}</select></div>`).join('')}
   <div class="field"><label>Résistance Naturelle (auto)</label><input value="CA +${nat.ca} · DM +${nat.dm}" readonly style="opacity:.6"></div>
   </div>
   <p class="tiny muted">La Résistance Naturelle n'est pas un équipement : elle se recalcule automatiquement (Constitution/10 et Magie/10, arrondis au supérieur).</p>
+  <label>🎒 Divers (poids uniquement, plusieurs possibles)</label>
+  <div style="max-height:150px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px;margin-bottom:8px">${diversListHtml}</div>
+  <div class="field"><label>⚖ Poids total porté</label><input id="c_weight_display" value="${w.toFixed(1)} kg / Force ${force} kg${w>force?' ⚠️ -1 déplacement':''}" readonly style="opacity:.6"></div>
   </div>`;
+}
+function updateWeightPreview(){
+  let w=0;
+  EQUIP_SLOTS.forEach(([k])=>{
+    const el=document.getElementById('eqslot_'+k);
+    if(el&&el.value){const e=equip(el.value);if(e)w+=e.poids||0;}
+  });
+  document.querySelectorAll('.eq-divers-check:checked').forEach(cb=>{const e=equip(cb.value);if(e)w+=e.poids||0;});
+  const force=parseNum(document.getElementById('s_force')?.value||0);
+  const disp=document.getElementById('c_weight_display');
+  if(disp)disp.value=`${w.toFixed(1)} kg / Force ${force} kg${w>force?' ⚠️ -1 déplacement':''}`;
 }
 function switchCharModalTab(tab){
   const g=document.getElementById('charTabGeneral'), o=document.getElementById('charTabOpp');
@@ -3237,7 +3273,7 @@ function openCharacter(id){
   <div class="field"><label>PV maximum (automatique : Constitution × 2,5)</label><input id="c_hpmax" type="number" value="${maxHpFromCon(base.stats.Constitution)}" readonly style="opacity:.6"></div>
   <div class="field"><label>Mana maximum</label><input id="c_manamax" type="number" value="${base.resourcesMax.Mana??0}"></div>
   <div class="field"><label>Bouclier maximum</label><input id="c_shieldmax" type="number" value="${base.resourcesMax.Bouclier??0}"></div>
-  <div class="field"><label>Force</label><input id="s_force" type="number" value="${base.stats.Force??0}"></div>
+  <div class="field"><label>Force</label><input id="s_force" type="number" value="${base.stats.Force??0}" oninput="updateWeightPreview()"></div>
   <div class="field"><label>Magie</label><input id="s_magic" type="number" value="${base.stats.Magie??0}"></div>
   <div class="field"><label>Agilité</label><input id="s_agi" type="number" value="${base.stats.Agilité??0}"></div>
   <div class="field"><label>Vitesse</label><input id="s_speed" type="number" value="${base.stats.Vitesse??0}"></div>
@@ -3296,6 +3332,7 @@ function saveCharacter(id){
   if(c.type==='player'){
     c.equipmentSlots=c.equipmentSlots||{};
     EQUIP_SLOTS.forEach(([k])=>{const el=document.getElementById('eqslot_'+k);if(el)c.equipmentSlots[k]=el.value||null;});
+    c.equipmentSlots.diversIds=[...document.querySelectorAll('.eq-divers-check:checked')].map(el=>el.value);
   }
   if(!id)S.characters.push(c);
   S.instances.filter(i=>i.charId===c.id).forEach(i=>{
@@ -3854,8 +3891,10 @@ function equipResultsHtml(){
   return items.map(e=>{
     const catLabel=(EQUIP_CATEGORIES.find(c=>c[0]===e.category)||['','?'])[1];
     const desc=e.itemType==='weapon'
-      ? `⚔ Arme · ${esc(catLabel)} · Dégâts : ${esc(e.damageFormula||'—')} · Stat : ${esc(e.weaponStat||'Force')}`
-      : (()=>{const resTxt=ELEMENT_RES_KEYS.filter(k=>e.res[k]).map(k=>`${k} +${e.res[k]}%`).join(', ')||'Aucune résistance';return `🛡 Armure · ${esc(catLabel)} · CA +${e.ca||0} · DM +${e.dm||0} · ${resTxt}`;})();
+      ? `⚔ Arme · ${esc(catLabel)} · Dégâts : ${esc(e.damageFormula||'—')} · Stat : ${esc(e.weaponStat||'Force')} · ${e.poids||0} kg`
+      : e.itemType==='divers'
+      ? `🎒 Divers · ${e.poids||0} kg${e.description?` · ${esc(e.description).slice(0,60)}`:''}`
+      : (()=>{const resTxt=ELEMENT_RES_KEYS.filter(k=>e.res[k]).map(k=>`${k} +${e.res[k]}%`).join(', ')||'Aucune résistance';return `🛡 Armure · ${esc(catLabel)} · CA +${e.ca||0} · DM +${e.dm||0} · ${resTxt} · ${e.poids||0} kg`;})();
     return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b><small>${desc}</small></div><button class="btn" onclick="openEquipment('${e.id}')">Modifier</button><button class="btn ghost" onclick="confirmDeleteEquipment('${e.id}')" title="Supprimer">🗑️</button></div>`;
   }).join('');
 }
@@ -3863,16 +3902,19 @@ function openEquipment(id){
   if(!isMJ())return;
   const e=id?(S.equipment||[]).find(x=>x.id===id):{id:'eq'+Date.now(),name:'Nouvel équipement',icon:'🎽',iconImage:null,image:null,itemType:'armor',category:'torse',damageFormula:'',ca:0,dm:0,res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0}};
   const isWeapon=e.itemType==='weapon';
-  const catOpts=EQUIP_CATEGORIES.filter(([k])=>k!=='arme').map(([k,l])=>opt(k,l,e.category)).join('');
+  const isDivers=e.itemType==='divers';
+  const catOpts=EQUIP_CATEGORIES.filter(([k])=>k!=='arme'&&k!=='divers').map(([k,l])=>opt(k,l,e.category)).join('');
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} un équipement</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
   <div class="form">
   <div class="field"><label>Nom</label><input id="eq_name" value="${esc(e.name)}"></div>
   <div class="field"><label>Icône (emoji)</label><input id="eq_icon" value="${esc(e.icon)}"></div>
   <div class="field"><label>Type d'équipement</label><select id="eq_itemtype" onchange="toggleEquipTypeFields()">
-    <option value="armor" ${!isWeapon?'selected':''}>🛡 Armure</option>
+    <option value="armor" ${(!isWeapon&&!isDivers)?'selected':''}>🛡 Armure</option>
     <option value="weapon" ${isWeapon?'selected':''}>⚔ Arme</option>
+    <option value="divers" ${isDivers?'selected':''}>🎒 Divers</option>
   </select></div>
-  <div class="field" id="eq_category_field" style="display:${isWeapon?'none':''}"><label>Catégorie (emplacement)</label><select id="eq_category">${catOpts}</select></div>
+  <div class="field"><label>Poids (kg)</label><input id="eq_poids" type="number" min="0" step="0.1" value="${e.poids||0}"></div>
+  <div class="field" id="eq_category_field" style="display:${(isWeapon||isDivers)?'none':''}"><label>Catégorie (emplacement)</label><select id="eq_category">${catOpts}</select></div>
   <div class="field full">
     <label>Icône personnalisée (petite, listes)</label>
     <div class="icon-dropzone" onclick="document.getElementById('eq_icon_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'eq_iconimage','eq_icon_preview')">
@@ -3892,6 +3934,10 @@ function openEquipment(id){
     </div>
     <input type="hidden" id="eq_image" value="${esc(e.image||'')}">
     ${imagePickerHtml('eq_image','eq_image_preview')}
+  </div>
+  <div class="field full" id="eq_desc_field" style="display:${isDivers?'':'none'}">
+    <label>Description</label>
+    <textarea id="eq_description" style="min-height:100px">${esc(e.description||'')}</textarea>
   </div>
   <div class="field full" id="eq_weapon_fields" style="display:${isWeapon?'':'none'}">
     <label>Dégâts de l'arme (ex : 2d20) — s'ajoutent uniquement aux capacités utilisant la même statistique que l'arme</label>
@@ -3919,11 +3965,14 @@ function openEquipment(id){
   document.getElementById('modalBg').classList.add('open');
 }
 function toggleEquipTypeFields(){
-  const isWeapon=document.getElementById('eq_itemtype').value==='weapon';
+  const val=document.getElementById('eq_itemtype').value;
+  const isWeapon=val==='weapon';
+  const isDivers=val==='divers';
   document.getElementById('eq_weapon_fields').style.display=isWeapon?'':'none';
   document.getElementById('eq_weaponstat_field').style.display=isWeapon?'':'none';
-  document.getElementById('eq_armor_fields').style.display=isWeapon?'none':'contents';
-  document.getElementById('eq_category_field').style.display=isWeapon?'none':'';
+  document.getElementById('eq_armor_fields').style.display=(!isWeapon&&!isDivers)?'contents':'none';
+  document.getElementById('eq_category_field').style.display=(isWeapon||isDivers)?'none':'';
+  document.getElementById('eq_desc_field').style.display=isDivers?'':'none';
 }
 function saveEquipment(id){
   if(!isMJ())return;
@@ -3934,15 +3983,24 @@ function saveEquipment(id){
   target.iconImage=document.getElementById('eq_iconimage').value.trim()||null;
   target.image=document.getElementById('eq_image').value.trim()||null;
   target.itemType=document.getElementById('eq_itemtype').value;
+  target.poids=Math.max(0,parseFloat(document.getElementById('eq_poids').value)||0);
   if(target.itemType==='weapon'){
     target.category='arme';
     target.damageFormula=document.getElementById('eq_damage').value.trim()||'1d20';
     target.weaponStat=document.getElementById('eq_weaponstat').value||'Force';
     target.ca=0; target.dm=0;
+    target.description='';
+    target.res={Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0};
+  }else if(target.itemType==='divers'){
+    target.category='divers';
+    target.damageFormula='';
+    target.ca=0; target.dm=0;
+    target.description=document.getElementById('eq_description').value||'';
     target.res={Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0};
   }else{
     target.category=document.getElementById('eq_category').value||'torse';
     target.damageFormula='';
+    target.description='';
     target.ca=parseNum(document.getElementById('eq_ca').value);
     target.dm=parseNum(document.getElementById('eq_dm').value);
     target.res={
@@ -3996,6 +4054,14 @@ function myCharacterCard(c){
       <div><b>${esc(label)} :</b> ${esc(item.name)}<br><span class="tiny muted">${statsLine}</span></div>
     </div>`;
   }).join(''):'';
+  const diversHtml=(c.type==='player'&&c.equipmentSlots?.diversIds?.length)?c.equipmentSlots.diversIds.map(id=>{
+    const item=equip(id); if(!item)return '';
+    return `<div class="row" style="gap:10px;margin-bottom:8px;padding:6px;background:#20232a;border-radius:8px;align-items:center;flex-wrap:wrap">
+      ${item.image?`<img src="${esc(item.image)}" style="max-width:100%;border-radius:8px;flex-shrink:0">`:`<div class="icon-preview" style="width:40px;height:40px;font-size:20px;flex-shrink:0">${iconInlineHtml(item,20)}</div>`}
+      <div><b>${esc(item.name)}</b> <small class="muted">(${item.poids||0} kg)</small>${item.description?`<br><span class="tiny muted">${esc(item.description)}</span>`:''}</div>
+    </div>`;
+  }).join(''):'';
+  const totalWeight=characterTotalWeight(c), forceVal=c.stats?.Force||0, overWeight=totalWeight>forceVal;
   const abilitiesHtml=abilities.length
     ? abilities.map(a=>`<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${esc(a.type)} · ${esc(a.formula)} · ${esc(a.element)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}</small></div></div>`).join('')
     : `<p class="tiny muted">Aucune capacité connue.</p>`;
@@ -4015,7 +4081,9 @@ function myCharacterCard(c){
     <div class="stat" style="margin-bottom:8px"><label>Description</label><div class="tiny rte-view" style="margin-top:4px">${c.bio||'Aucune description.'}</div></div>
     <div class="stat" style="margin-bottom:8px"><label>Inventaire</label><div class="tiny rte-view">${c.inventory||'Vide.'}</div></div>
     <div class="stat" style="margin-bottom:8px"><label>🧪 Consommables</label><div style="margin-top:6px">${consumablesHtml}</div></div>
-    ${c.type==='player'?`<div class="stat"><label>🎒 Équipement équipé</label><div style="margin-top:6px">${equippedHtml||'<p class="tiny muted">Aucun équipement.</p>'}</div><p class="tiny muted" style="margin-top:4px">🛡 Résistance naturelle (auto) : CA +${nat.ca} · DM +${nat.dm}</p></div>`:''}`;
+    ${c.type==='player'?`<div class="stat"><label>🎒 Équipement équipé</label><div style="margin-top:6px">${equippedHtml||'<p class="tiny muted">Aucun équipement.</p>'}</div><p class="tiny muted" style="margin-top:4px">🛡 Résistance naturelle (auto) : CA +${nat.ca} · DM +${nat.dm}</p></div>
+    <div class="stat" style="margin-top:8px"><label>🎒 Divers</label><div style="margin-top:6px">${diversHtml||'<p class="tiny muted">Aucun.</p>'}</div></div>
+    <div class="stat" style="margin-top:8px"><label>⚖ Poids porté</label><strong>${totalWeight.toFixed(1)} kg</strong> / Force ${forceVal} kg${overWeight?'<span style="color:var(--danger)"> ⚠️ -1 déplacement</span>':''}</div>`:''}`;
   const statsTabHtml=`
     <h3 style="font-size:13px;margin:0 0 8px">Sur la carte</h3>
     ${instancesHtml}
@@ -4028,7 +4096,7 @@ function myCharacterCard(c){
   return `<div class="card">
     <div class="row between" style="margin-bottom:14px">
       <div class="row"><div class="icon" style="width:44px;height:44px;font-size:22px;border-radius:12px;background:#2b1d3b;display:grid;place-items:center;overflow:hidden">${iconBoxHtml(c,'12px')}</div>
-      <div><h2 style="margin:0">${esc(c.name)}</h2><span class="tiny muted">${c.type==='player'?'Joueur':'Monstre'} · Déplacement ${c.move??6} case(s)/tour</span></div></div>
+      <div><h2 style="margin:0">${esc(c.name)}</h2><span class="tiny muted">${c.type==='player'?'Joueur':'Monstre'} · Déplacement ${effectiveMove(c)} case(s)/tour${overWeight?' ⚠️':''}</span></div></div>
       <span class="pill">🔒 Lecture seule</span>
     </div>
     <div class="tabs">
@@ -4997,7 +5065,7 @@ function moveSelectedTokenBy(dx,dy){
   if(footprintOverlap(id,nx,ny,sw,sh)){toast('🚫 Case(s) déjà occupée(s).');return;}
   const oldX=t.x, oldY=t.y;
   if(S.combat.active){
-    const remaining=t.remainingMove??(instTemplate(t)?.move??6);
+    const remaining=t.remainingMove??effectiveMove(instTemplate(t));
     if(remaining<1){toast('🚫 Déplacement maximal atteint pour ce tour.');return;}
     t.remainingMove=remaining-1;
   }
