@@ -837,6 +837,12 @@ function characterTotalWeight(c){
   (c.equipmentSlots.diversIds||[]).forEach(id=>{const e=equip(id);if(e)w+=e.poids||0;});
   return w;
 }
+function weightMalusText(w,force){
+  if(w>force*3)return ' ⚠️ Immobilisé (trop lourd)';
+  if(w>force*2)return ' ⚠️ -2 déplacement';
+  if(w>force)return ' ⚠️ -1 déplacement';
+  return '';
+}
 function effectiveMove(c){
   if(!c)return 0;
   const base=c.move??6;
@@ -3185,7 +3191,7 @@ function equipmentSlotsHtml(base){
   <p class="tiny muted">La Résistance Naturelle n'est pas un équipement : elle se recalcule automatiquement (Constitution/10 et Magie/10, arrondis au supérieur).</p>
   <label>🎒 Divers (poids uniquement, plusieurs possibles)</label>
   <div style="max-height:150px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px;margin-bottom:8px">${diversListHtml}</div>
-  <div class="field"><label>⚖ Poids total porté</label><input id="c_weight_display" value="${w.toFixed(1)} kg / Force ${force} kg${w>force?' ⚠️ -1 déplacement':''}" readonly style="opacity:.6"></div>
+  <div class="field"><label>⚖ Poids total porté</label><input id="c_weight_display" value="${w.toFixed(1)} kg / Force ${force} kg${weightMalusText(w,force)}" readonly style="opacity:.6"></div>
   </div>`;
 }
 function updateWeightPreview(){
@@ -3197,7 +3203,7 @@ function updateWeightPreview(){
   document.querySelectorAll('.eq-divers-check:checked').forEach(cb=>{const e=equip(cb.value);if(e)w+=e.poids||0;});
   const force=parseNum(document.getElementById('s_force')?.value||0);
   const disp=document.getElementById('c_weight_display');
-  if(disp)disp.value=`${w.toFixed(1)} kg / Force ${force} kg${w>force?' ⚠️ -1 déplacement':''}`;
+  if(disp)disp.value=`${w.toFixed(1)} kg / Force ${force} kg${weightMalusText(w,force)}`;
 }
 function switchCharModalTab(tab){
   const g=document.getElementById('charTabGeneral'), o=document.getElementById('charTabOpp');
@@ -4104,7 +4110,7 @@ function myCharacterCard(c){
     <div class="stat" style="margin-bottom:8px"><label>🧪 Consommables</label><div style="margin-top:6px">${consumablesHtml}</div></div>
     ${c.type==='player'?`<div class="stat"><label>🎒 Équipement équipé</label><div style="margin-top:6px">${equippedHtml||'<p class="tiny muted">Aucun équipement.</p>'}</div><p class="tiny muted" style="margin-top:4px">🛡 Résistance naturelle (auto) : CA +${nat.ca} · DM +${nat.dm}</p></div>
     <div class="stat" style="margin-top:8px"><label>🎒 Divers</label><div style="margin-top:6px">${diversHtml||'<p class="tiny muted">Aucun.</p>'}</div></div>
-    <div class="stat" style="margin-top:8px"><label>⚖ Poids porté</label><strong>${totalWeight.toFixed(1)} kg</strong> / Force ${forceVal} kg${overWeight?'<span style="color:var(--danger)"> ⚠️ -1 déplacement</span>':''}</div>`:''}`;
+    <div class="stat" style="margin-top:8px"><label>⚖ Poids porté</label><strong>${totalWeight.toFixed(1)} kg</strong> / Force ${forceVal} kg${overWeight?`<span style="color:var(--danger)">${weightMalusText(totalWeight,forceVal)}</span>`:''}</div>`:''}`;
   const statsTabHtml=`
     <h3 style="font-size:13px;margin:0 0 8px">Sur la carte</h3>
     ${instancesHtml}
