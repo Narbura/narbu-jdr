@@ -2918,16 +2918,16 @@ function getHotkeyMap(){try{return JSON.parse(localStorage.getItem('narbudr-my-h
 function setHotkeyMap(m){localStorage.setItem('narbudr-my-hotkeys',JSON.stringify(m));}
 function myHotkeyFor(charId,abilityId){return (getHotkeyMap()[charId]||{})[abilityId]||null;}
 function promptSetHotkey(charId,abilityId){
-  const key=prompt('Touche (1-9) pour ce sort — laisse vide pour retirer :','');
+  const key=prompt('Touche pour ce raccourci (1-9, lettre, ou symbole comme & é " \' ( § è ! ç à) — laisse vide pour retirer :','');
   if(key===null)return;
   const m=getHotkeyMap();
   if(!m[charId])m[charId]={};
-  const trimmed=key.trim();
+  const trimmed=key;
   if(!trimmed){delete m[charId][abilityId];}
-  else if(/^[1-9]$/.test(trimmed)){
+  else if(/^\S$/.test(trimmed)){
     Object.keys(m[charId]).forEach(aid=>{if(m[charId][aid]===trimmed)delete m[charId][aid];});
     m[charId][abilityId]=trimmed;
-  }else{toast('⚠️ Touche invalide (1 à 9 uniquement).');return;}
+  }else{toast('⚠️ Touche invalide (un seul caractère, sans espace).');return;}
   setHotkeyMap(m);
   render();
 }
@@ -2937,7 +2937,8 @@ function consumablesButtonsHtml(selInst){
   if(!owned.length)return '';
   return owned.map(o=>{
     const def=(S.consumables||[]).find(x=>x.id===o.id); if(!def)return '';
-    return `<button class="btn" onclick="useConsumable('${tpl.id}','${o.id}')" title="Utiliser (${o.qty} restant(s))">${iconInlineHtml(def)} ${esc(def.name)} ×${o.qty}</button>`;
+    const hk=myHotkeyFor(tpl.id,o.id);
+    return `<button class="btn" onclick="useConsumable('${tpl.id}','${o.id}')" oncontextmenu="event.preventDefault();promptSetHotkey('${tpl.id}','${o.id}')" title="Utiliser (${o.qty} restant(s))${hk?` · Raccourci : ${hk}`:''} · Clic droit : assigner un raccourci">${hk?`<b>[${esc(hk)}]</b> `:''}${iconInlineHtml(def)} ${esc(def.name)} ×${o.qty}</button>`;
   }).join('');
 }
 function startAbility(id){
@@ -3648,6 +3649,17 @@ function openConsumableDef(id){
   <div class="form">
   <div class="field"><label>Nom</label><input id="cn_name" value="${esc(cn.name)}"></div>
   <div class="field"><label>Icône (emoji)</label><input id="cn_icon" value="${esc(cn.icon)}"></div>
+  <div class="field full">
+    <label>Icône personnalisée (remplace l'emoji)</label>
+    <div class="icon-dropzone" onclick="document.getElementById('cn_icon_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'cn_iconimage','cn_icon_preview')">
+      <div id="cn_icon_preview" class="icon-preview">${cn.iconImage?`<img src="${esc(cn.iconImage)}">`:`<span>${esc(cn.icon)}</span>`}</div>
+      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir</p>
+      <input type="file" id="cn_icon_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'cn_iconimage','cn_icon_preview')">
+    </div>
+    <input type="hidden" id="cn_iconimage" value="${esc(cn.iconImage||'')}">
+    ${cn.iconImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('cn_iconimage','cn_icon_preview',document.getElementById('cn_icon').value)">↺ Revenir à l'emoji</button>`:''}
+    ${imagePickerHtml('cn_iconimage','cn_icon_preview')}
+  </div>
   <div class="field"><label>Ressource restaurée</label><select id="cn_resource">${opt('Vie','❤️ PV',cn.resource)}${opt('Mana','💧 Mana',cn.resource)}</select></div>
   <div class="field"><label>Valeur fixe restaurée</label><input id="cn_amount" type="number" min="1" value="${cn.amount}"></div>
   </div>
@@ -3660,6 +3672,7 @@ function saveConsumableDef(id){
   const target=id?S.consumables.find(x=>x.id===id):{id:'cs'+Date.now()};
   target.name=document.getElementById('cn_name').value||'Consommable';
   target.icon=document.getElementById('cn_icon').value||'🧪';
+  target.iconImage=document.getElementById('cn_iconimage').value.trim()||null;
   target.resource=document.getElementById('cn_resource').value;
   target.amount=Math.max(1,parseNum(document.getElementById('cn_amount').value)||10);
   if(!id)S.consumables.push(target);
@@ -4798,18 +4811,27 @@ function moveSelectedTokenBy(dx,dy){
   saveState(); render();
 }
 document.addEventListener('keydown',e=>{
-  if(!/^[1-9]$/.test(e.key))return;
+  if(e.key.length!==1||/\s/.test(e.key))return;
   if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)||e.target.isContentEditable)return;
   if(document.getElementById('modalBg')?.classList.contains('open'))return;
   if(currentPage!=='table'||!selectedToken)return;
   const selInst=inst(selectedToken); if(!selInst||!canControlInstance(selInst.id))return;
   const hkMap=getHotkeyMap()[selInst.charId]||{};
-  const abilityId=Object.keys(hkMap).find(aid=>hkMap[aid]===e.key);
-  const a=abilityId?S.abilities.find(x=>x.id===abilityId):null;
-  if(!a)return;
-  e.preventDefault();
-  if(activeAbility){activeAbility=null;hoverCell=null;}
-  startAbility(a.id);
+  const itemId=Object.keys(hkMap).find(aid=>hkMap[aid]===e.key);
+  if(!itemId)return;
+  const a=S.abilities.find(x=>x.id===itemId);
+  if(a){
+    e.preventDefault();
+    if(activeAbility){activeAbility=null;hoverCell=null;}
+    startAbility(a.id);
+    return;
+  }
+  const tpl=instTemplate(selInst);
+  const owns=tpl&&(tpl.consumablesOwned||[]).find(o=>o.id===itemId&&o.qty>0);
+  if(owns){
+    e.preventDefault();
+    useConsumable(tpl.id,itemId);
+  }
 });
 document.addEventListener('keydown',e=>{
   if(!ARROW_DELTAS[e.key])return;
