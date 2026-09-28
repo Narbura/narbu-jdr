@@ -349,6 +349,8 @@ function normalizeState(){
     if(c.profileImage===undefined)c.profileImage=null;
     if(!(c.level>=1))c.level=1; if(!(c.xp>=0))c.xp=0; if(!(c.xpValue>=0))c.xpValue=0;
     if(c.bio===undefined)c.bio='';
+    if(!Array.isArray(c.statHistory))c.statHistory=[];
+    if(!(c.statPointsSpent>=0))c.statPointsSpent=0;
     if(c.inventory===undefined)c.inventory='';
     if(!c.eqDur)c.eqDur={};
     if(c.critDurabilityDmg===undefined)c.critDurabilityDmg=0;
@@ -824,6 +826,60 @@ function syncSheetInputs(){
   });
 }
 function xpNeeded(level){let n=10;for(let i=1;i<(level||1);i++)n=Math.floor(n*1.5);return n;}
+/* ---- Points de caractéristique gagnés par niveau ---- */
+function levelPointsEarned(lvl){let n=0;for(let l=2;l<=(lvl||1);l++)n+=(l%5===0)?20:5;return n;}
+function statPointsAvailable(c){return Math.max(0,levelPointsEarned(c.level||1)-(c.statPointsSpent||0));}
+function statStep(val){return val<50?{gain:2,cost:1}:val<100?{gain:1,cost:1}:{gain:1,cost:2};}
+let pendingStats={};
+function pendingSim(c){
+  const vals={...(c.stats||{})}; let cost=0;
+  (pendingStats[c.id]||[]).forEach(s=>{const st=statStep(vals[s]||0);vals[s]=(vals[s]||0)+st.gain;cost+=st.cost;});
+  return {vals,cost};
+}
+function refreshSheet(cid){if(sheetModalChar===cid)refreshSheetModal();else render();}
+function statPointUp(cid,stat){
+  const c=char(cid); if(!c||!canControlChar(cid))return;
+  const sim=pendingSim(c), st=statStep(sim.vals[stat]||0);
+  if(statPointsAvailable(c)-sim.cost<st.cost){toast('⚠️ Pas assez de points.');return;}
+  (pendingStats[cid]=pendingStats[cid]||[]).push(stat);
+  refreshSheet(cid);
+}
+function statPointDown(cid,stat){
+  const arr=pendingStats[cid]||[]; const i=arr.lastIndexOf(stat); if(i<0)return;
+  arr.splice(i,1); refreshSheet(cid);
+}
+function cancelStatPoints(cid){pendingStats[cid]=[];refreshSheet(cid);}
+function confirmStatPoints(cid){
+  const c=char(cid); if(!c||!canControlChar(cid))return;
+  const steps=pendingStats[cid]||[]; if(!steps.length)return;
+  steps.forEach(s=>{
+    const st=statStep(c.stats[s]||0);
+    c.stats[s]=(c.stats[s]||0)+st.gain;
+    c.statPointsSpent=(c.statPointsSpent||0)+st.cost;
+    (c.statHistory=c.statHistory||[]).push({stat:s,gain:st.gain,cost:st.cost});
+  });
+  pendingStats[cid]=[];
+  syncConstitution(c);
+  addLog(`✨ <b>${esc(c.name)}</b> répartit ses points de caractéristique.`);
+  saveState(); refreshSheet(cid);
+}
+function syncConstitution(c){
+  c.resourcesMax=c.resourcesMax||{};
+  c.resourcesMax.Vie=maxHpFromCon(c.stats.Constitution);
+  S.instances.filter(i=>i.charId===c.id).forEach(i=>{i.hpMax=c.resourcesMax.Vie;i.hp=Math.min(i.hp,i.hpMax);});
+}
+/* Si le niveau baisse : annule les gains de stats (les plus récents d'abord) tant que les points dépensés dépassent ceux du niveau */
+function reconcileLevelPoints(c){
+  c.statHistory=c.statHistory||[]; c.statPointsSpent=c.statPointsSpent||0;
+  const earned=levelPointsEarned(c.level||1);
+  while(c.statPointsSpent>earned&&c.statHistory.length){
+    const h=c.statHistory.pop();
+    c.stats[h.stat]=Math.max(0,(c.stats[h.stat]||0)-h.gain);
+    c.statPointsSpent-=h.cost;
+  }
+  if(c.statPointsSpent>earned)c.statPointsSpent=earned;
+  pendingStats[c.id]=[];
+}
 function awardXp(killerInst,deadTpl){
   const k=killerInst?instTemplate(killerInst):null;
   if(!k||k.type!=='player'||!deadTpl||deadTpl.type!=='enemy')return;
@@ -3551,8 +3607,8 @@ function openCharacter(id){
   <div class="field"><label>PV maximum (automatique : Constitution × 2,5)</label><input id="c_hpmax" type="number" value="${maxHpFromCon(base.stats.Constitution)}" readonly style="opacity:.6"></div>
   <div class="field"><label>Mana maximum</label><input id="c_manamax" type="number" value="${base.resourcesMax.Mana??0}"></div>
   <div class="field"><label>Bouclier maximum</label><input id="c_shieldmax" type="number" value="${base.resourcesMax.Bouclier??0}"></div>
-  <div class="field"><label>Niveau</label><input id="c_level" type="number" min="1" value="${base.level||1}"></div>
-  <div class="field"><label>XP sur le niveau actuel</label><input id="c_xp" type="number" min="0" value="${base.xp||0}"></div>
+  <div class="field"><label>Niveau</label><input id="c_level" type="number" min="1" value="${base.level||1}" oninput="const m=xpNeeded(parseNum(this.value)||1)-1;const x=document.getElementById('c_xp');x.max=m;if(+x.value>m)x.value=m;document.getElementById('c_xp_label').textContent='XP sur le niveau actuel (max '+m+')'"></div>
+  <div class="field"><label id="c_xp_label">XP sur le niveau actuel (max ${xpNeeded(base.level||1)-1})</label><input id="c_xp" type="number" min="0" max="${xpNeeded(base.level||1)-1}" value="${base.xp||0}"></div>
   <div class="field"><label>Force</label><input id="s_force" type="number" value="${base.stats.Force??0}" oninput="updateWeightPreview()"></div>
   <div class="field"><label>Magie</label><input id="s_magic" type="number" value="${base.stats.Magie??0}"></div>
   <div class="field"><label>Agilité</label><input id="s_agi" type="number" value="${base.stats.Agilité??0}"></div>
@@ -3604,6 +3660,8 @@ function saveCharacter(id){
   c.inventory=rteHtml('c_inventory');
   c.resourcesMax={Vie:maxHpFromCon(document.getElementById('s_con').value),Mana:parseNum(document.getElementById('c_manamax').value),Bouclier:parseNum(document.getElementById('c_shieldmax').value)};
   c.stats={...(c.stats||{}),Constitution:parseNum(document.getElementById('s_con').value),Endurance:parseNum(document.getElementById('s_end').value),Social:parseNum(document.getElementById('s_soc').value),Artisanat:parseNum(document.getElementById('s_craft').value),Force:parseNum(document.getElementById('s_force').value),Magie:parseNum(document.getElementById('s_magic').value),Agilité:parseNum(document.getElementById('s_agi').value),Vitesse:parseNum(document.getElementById('s_speed').value)};
+  reconcileLevelPoints(c);
+  c.resourcesMax.Vie=maxHpFromCon(c.stats.Constitution);
   c.def={CA:parseNum(document.getElementById('d_ca').value),DM:parseNum(document.getElementById('d_dm').value),'CA naturelle':parseNum(document.getElementById('d_ca').value)};
   c.res={
     Feu:parseNum(document.getElementById('r_fire').value),
@@ -4403,7 +4461,15 @@ function myCharacterCard(c){
   const tab=mySheetTabs[c.id]||'bio';
   const abilities=characterAbilities(c.id);
   const instances=S.instances.filter(i=>i.charId===c.id);
-  const statsHtml=Object.entries(c.stats||{}).map(([k,v])=>`<div class="stat"><label>${esc(k)}</label><strong>${v}</strong></div>`).join('');
+  const canAlloc=c.type==='player'&&canControlChar(c.id);
+  const sim=pendingSim(c), availPts=statPointsAvailable(c), leftPts=availPts-sim.cost, pendSteps=pendingStats[c.id]||[];
+  const showArrows=canAlloc&&(availPts>0||pendSteps.length>0);
+  const statsHtml=Object.entries(c.stats||{}).map(([k,v])=>{
+    const nv=sim.vals[k]??v;
+    const arrows=showArrows?`<span style="display:inline-flex;gap:2px"><button class="btn ghost" style="padding:0 6px" onclick="statPointUp('${c.id}','${esc(k)}')">▲</button><button class="btn ghost" style="padding:0 6px" onclick="statPointDown('${c.id}','${esc(k)}')">▼</button></span>`:'';
+    return `<div class="stat"><label>${esc(k)}</label><div class="row between"><strong>${nv}${nv!==v?` <small style="color:var(--success)">(+${nv-v})</small>`:''}</strong>${arrows}</div></div>`;
+  }).join('');
+  const pointsBanner=showArrows?`<div class="stat" style="margin-bottom:8px"><label>✨ Points de caractéristique à répartir</label><div class="row between"><strong>${leftPts} / ${availPts}</strong>${pendSteps.length?`<span class="row" style="gap:6px"><button class="btn" onclick="cancelStatPoints('${c.id}')">Annuler</button><button class="btn primary" onclick="confirmStatPoints('${c.id}')">✔ Confirmer</button></span>`:''}</div></div>`:'';
   const myInst=S.instances.find(i=>i.charId===c.id);
   const eDef=effectiveDef(c,myInst), eRes=effectiveRes(c,myInst);
   const defHtml=`<div class="stat"><label>Classe d'armure</label><strong>${eDef.CA??0}</strong></div><div class="stat"><label>Défense magique</label><strong>${eDef.DM??0}</strong></div>`;
@@ -4466,6 +4532,7 @@ function myCharacterCard(c){
     <h3 style="font-size:13px;margin:0 0 8px">Sur la carte</h3>
     ${instancesHtml}
     <h3 style="font-size:13px;margin:14px 0 8px">Statistiques</h3>
+    ${pointsBanner}
     <div class="statgrid">${statsHtml}${defHtml}</div>
     <h3 style="font-size:13px;margin:14px 0 8px">Résistances élémentaires</h3>
     <div class="statgrid">${resHtml}</div>
