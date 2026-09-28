@@ -74,6 +74,9 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .mini-hp i{background:#58cf83}.mini-mana i{background:#5da5ff}.mini-shield i{background:#d4ad57}
 .token-label{position:absolute;left:50%;top:calc(var(--tok-h,var(--cell-size,32px))/2 + 10px);transform:translateX(-50%);width:90px;text-align:center;font-size:10px;color:#c8cdd6;text-shadow:0 1px 2px #000c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;display:none}
 .token-wrap.selected .token-label{display:block}
+.xp-display{position:absolute;left:50%;transform:translateX(-50%);text-align:center;font-size:9px;line-height:1.2;color:#e7b85c;text-shadow:0 1px 2px #000c;pointer-events:none;z-index:31;white-space:nowrap}
+.token-menu{position:fixed;z-index:300;background:#191b20;border:1px solid #414550;border-radius:10px;padding:4px;display:flex;flex-direction:column;box-shadow:0 10px 30px #000a}
+.token-menu .btn{text-align:left;white-space:nowrap}
 .affliction-icons{position:absolute;left:50%;top:calc(var(--tok-h,var(--cell-size,32px))/2 + 4px);transform:translateX(-50%);display:flex;gap:2px;z-index:31;pointer-events:none}
 .affliction-icon{width:15px;height:15px;border-radius:4px;overflow:hidden;background:#111318dd;display:flex;align-items:center;justify-content:center;font-size:10px;border:1px solid #3a3e48}
 .affliction-icon img{width:100%;height:100%;object-fit:cover}
@@ -344,6 +347,7 @@ function normalizeState(){
     if(c.stats.Constitution===undefined)c.stats.Constitution=Math.max(1,Math.ceil((c.resourcesMax?.Vie||1)/2.5));
     ['Endurance','Social','Artisanat'].forEach(k=>{if(c.stats[k]===undefined)c.stats[k]=0;});
     if(c.profileImage===undefined)c.profileImage=null;
+    if(!(c.level>=1))c.level=1; if(!(c.xp>=0))c.xp=0; if(!(c.xpValue>=0))c.xpValue=0;
     if(c.bio===undefined)c.bio='';
     if(c.inventory===undefined)c.inventory='';
     if(!c.eqDur)c.eqDur={};
@@ -814,6 +818,15 @@ function syncSheetInputs(){
     const v=map[el.dataset.field];
     if(v!==undefined&&String(v)!==el.value)el.value=v;
   });
+}
+function xpNeeded(level){let n=10;for(let i=1;i<(level||1);i++)n=Math.floor(n*1.5);return n;}
+function awardXp(killerInst,deadTpl){
+  const k=killerInst?instTemplate(killerInst):null;
+  if(!k||k.type!=='player'||!deadTpl||deadTpl.type!=='enemy')return;
+  const amt=deadTpl.xpValue||0; if(!amt)return;
+  k.level=k.level||1; k.xp=(k.xp||0)+amt;
+  addLog(`⭐ <b>${esc(k.name)}</b> gagne ${amt} XP.`);
+  while(k.xp>=xpNeeded(k.level)){k.xp-=xpNeeded(k.level);k.level++;addLog(`🎉 <b>${esc(k.name)}</b> passe niveau ${k.level} !`);}
 }
 function char(id){return S.characters.find(c=>c.id===id);}
 function inst(id){return S.instances.find(i=>i.id===id);}
@@ -1514,10 +1527,13 @@ function tokensHtml(){
          ${t.shieldMax>0?`<div class="hud-row">🛡 ${t.shield}/${t.shieldMax}</div><div class="mini-bar mini-shield"><i style="width:${pct(t.shield,t.shieldMax)}%"></i></div>`:''}`;
     const afflictionIconsHtml=(t.afflictions&&t.afflictions.length)?`<div class="affliction-icons">${t.afflictions.map(af=>{const def=(S.afflictionDefs||[]).find(d=>d.id===af.defId);if(!def)return '';return `<span class="affliction-icon" title="${esc(def.name)}">${def.iconImage?`<img src="${esc(def.iconImage)}">`:esc(def.icon||'❓')}</span>`;}).join('')}</div>`:'';
     const hasAura=t.activeAuras&&t.activeAuras.length;
+    const xpTop=(t.afflictions&&t.afflictions.length)?21:2;
+    const showXp=tpl.type==='player'&&getShowXpSet().includes(tpl.id);
+    const xpHtml=showXp?`<div class="xp-display" style="top:calc(var(--tok-h,32px)/2 + ${xpTop}px)">Niv. ${tpl.level||1}<div class="mini-bar" style="width:40px"><i style="width:${pct(tpl.xp||0,xpNeeded(tpl.level||1))}%;background:#e7b85c"></i></div></div>`:'';
     return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''} ${multiSel.includes(t.id)?'multi':''} ${hasAura?'has-aura':''}" data-token="${t.id}" style="left:${px}px;top:${py}px;--cell-size:${S.map.cell}px;--tok-w:${tokW}px;--tok-h:${tokH}px;--tok-min:${Math.min(tokW,tokH)}px">
       <div class="token-hud">${hud}</div>
       <div class="token ${tpl.type}" title="${esc(t.label)}${t.isKO?' (KO)':''}">${t.isKO?'💀':iconBoxHtml(tpl,'0')}${mj?`<div class="token-resize-handle" onmousedown="startTokenResize(event,'${t.id}')" title="Glisser pour redimensionner"></div>`:''}</div>
-      <div class="token-label">${esc(t.label)}</div>
+      <div class="token-label" ${showXp?`style="top:calc(var(--tok-h,32px)/2 + ${xpTop+22}px)"`:''}>${esc(t.label)}</div>${xpHtml}
       ${afflictionIconsHtml}
     </div>`;
   }).join('');
@@ -2251,7 +2267,7 @@ function triggerAuras(casterInst){
         t.hp=Math.max(0,t.hp-hpDmg);
         lines.push(`✨ ${esc(t.label)} : -${hpDmg} PV`);
         broadcastHud(t.id,{hp:-hpDmg,shield:absorbed>0?-absorbed:0});
-        if(t.hp<=0){lines.push(`💀 <b>${esc(t.label)} est KO</b>.`);handleInstanceDeath(t);}
+        if(t.hp<=0){lines.push(`💀 <b>${esc(t.label)} est KO</b>.`);handleInstanceDeath(t,casterInst);}
       }
     });
     addLog(lines.join('<br>'));
@@ -2414,7 +2430,11 @@ function setupMapInteractions(){
     }
     saveState(); render();
   };
-  wrap.oncontextmenu=e=>e.preventDefault();
+  wrap.oncontextmenu=e=>{
+    e.preventDefault();
+    const tw=e.target.closest('.token-wrap');
+    if(tw)showTokenMenu(e.clientX,e.clientY,tw.dataset.token);
+  };
 
   wrap.onmousedown=e=>{
     if(e.button===2){
@@ -2740,7 +2760,7 @@ function resolveOpportunityAttack(attackerInst,targetInst){
     playOppImpactAt(targetInst.id,oa.impactImage,oa.impactFrames,oa.impactRows,oa.animFps);
     gameChannel?.send({type:'broadcast',event:'oppfx',payload:{targetId:targetInst.id,image:oa.impactImage,frames:oa.impactFrames,rows:oa.impactRows,fps:oa.animFps}});
   }
-  if(targetInst.hp<=0){lines.push(`💀 <b>${esc(targetInst.label)} est KO</b>.`);handleInstanceDeath(targetInst);}
+  if(targetInst.hp<=0){lines.push(`💀 <b>${esc(targetInst.label)} est KO</b>.`);handleInstanceDeath(targetInst,attackerInst);}
   addLog(lines.join('<br>'));
 }
 function resolveAbility(a,start,explicitTargetInstId){
@@ -2850,7 +2870,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     applyMonsterDurabilityHit(casterTpl,t,tTpl,label,lines);
     if(t.hp<=0){
       lines.push(`💀 <b>${esc(t.label)} est KO</b>.`);
-      handleInstanceDeath(t);
+      handleInstanceDeath(t,casterInst);
     }
   }
 
@@ -3246,7 +3266,7 @@ function castTransformation(a){
   if(S.combat.active&&S.combat.order[S.combat.turn]===caster.id)advanceTurn();
   saveState(); render();
 }
-function handleInstanceDeath(t){
+function handleInstanceDeath(t,killer){
   const tpl=instTemplate(t);
   const options=tpl?characterAbilities(tpl.id).filter(a=>a.type==='Transformation'&&a.triggerOnDeath):[];
   const usable=options.find(a=>a.transformCharId&&char(a.transformCharId)&&(t.mana||0)>=(a.manaCost||0));
@@ -3266,6 +3286,7 @@ function handleInstanceDeath(t){
       addLog(`💀 <b>${esc(t.label)}</b> tombe inconscient (KO).`);
     }
   }else{
+    awardXp(killer,tpl);
     removeInstance(t.id);
   }
 }
@@ -3447,12 +3468,15 @@ function openCharacter(id){
     <div class="row" style="gap:10px;flex-wrap:wrap">
       <div class="field"><label>Durabilité critique (dégâts sur l'équipement en cas de coup critique)</label><input id="c_critdur" type="number" min="0" value="${base.critDurabilityDmg||0}"></div>
       <div class="field"><label>Durabilité ultime (dégâts sur l'équipement en cas de coup ultime)</label><input id="c_ultdur" type="number" min="0" value="${base.ultimateDurabilityDmg||0}"></div>
+      <div class="field"><label>Valeur d'XP (donnée au joueur qui le tue)</label><input id="c_xpvalue" type="number" min="0" value="${base.xpValue||0}"></div>
     </div>
     <p class="tiny muted">0 = n'abîme pas l'équipement.</p>
   </div>
   <div class="field"><label>PV maximum (automatique : Constitution × 2,5)</label><input id="c_hpmax" type="number" value="${maxHpFromCon(base.stats.Constitution)}" readonly style="opacity:.6"></div>
   <div class="field"><label>Mana maximum</label><input id="c_manamax" type="number" value="${base.resourcesMax.Mana??0}"></div>
   <div class="field"><label>Bouclier maximum</label><input id="c_shieldmax" type="number" value="${base.resourcesMax.Bouclier??0}"></div>
+  <div class="field"><label>Niveau</label><input id="c_level" type="number" min="1" value="${base.level||1}"></div>
+  <div class="field"><label>XP sur le niveau actuel</label><input id="c_xp" type="number" min="0" value="${base.xp||0}"></div>
   <div class="field"><label>Force</label><input id="s_force" type="number" value="${base.stats.Force??0}" oninput="updateWeightPreview()"></div>
   <div class="field"><label>Magie</label><input id="s_magic" type="number" value="${base.stats.Magie??0}"></div>
   <div class="field"><label>Agilité</label><input id="s_agi" type="number" value="${base.stats.Agilité??0}"></div>
@@ -3495,6 +3519,10 @@ function saveCharacter(id){
   c.critDurabilityDmg=Math.max(0,parseNum(document.getElementById('c_critdur').value)||0);
   c.ultimateDurabilityDmg=Math.max(0,parseNum(document.getElementById('c_ultdur').value)||0);
   c.profileImage=document.getElementById('c_profileimage').value.trim()||null;
+  c.level=Math.max(1,Math.round(parseNum(document.getElementById('c_level').value))||1);
+  c.xp=Math.max(0,Math.round(parseNum(document.getElementById('c_xp').value)));
+  c.xp=Math.min(c.xp,xpNeeded(c.level)-1);
+  c.xpValue=Math.max(0,Math.round(parseNum(document.getElementById('c_xpvalue').value)));
   c.bio=rteHtml('c_bio');
   c.inventory=rteHtml('c_inventory');
   c.resourcesMax={Vie:maxHpFromCon(document.getElementById('s_con').value),Mana:parseNum(document.getElementById('c_manamax').value),Bouclier:parseNum(document.getElementById('c_shieldmax').value)};
@@ -3541,7 +3569,7 @@ function saveCharacter(id){
   });
   saveState(); closeModal(); render();
 }
-function closeModal(){document.getElementById('modalBg').classList.remove('open');const m=document.getElementById('modal');m.classList.remove('modal-fullscreen');m.classList.remove('note-focus-mode');noteFocusMode=false;m.style.position='';m.style.left='';m.style.top='';m.style.margin='';}
+function closeModal(){document.getElementById('modalBg').classList.remove('open');const m=document.getElementById('modal');m.classList.remove('modal-fullscreen');m.classList.remove('note-focus-mode');noteFocusMode=false;sheetModalChar=null;m.style.position='';m.style.left='';m.style.top='';m.style.margin='';}
 /* Déplacer / agrandir la fenêtre modale à la souris */
 let modalDrag=null;
 document.addEventListener('mousedown',e=>{
@@ -4243,7 +4271,32 @@ function mySheetPage(){
   }
   return `<div style="display:flex;flex-direction:column;gap:16px">${mine.map(myCharacterCard).join('')}</div>`;
 }
-function switchMySheetTab(charId,tab){mySheetTabs[charId]=tab;render();}
+let sheetModalChar=null;
+function switchMySheetTab(charId,tab){mySheetTabs[charId]=tab;if(sheetModalChar===charId)refreshSheetModal();else render();}
+function refreshSheetModal(){
+  const c=char(sheetModalChar); if(!c)return;
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>🪪 Fiche de ${esc(c.name)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>${myCharacterCard(c)}`;
+}
+function openSheetModal(charId){
+  if(!isMJ())return;
+  sheetModalChar=charId; refreshSheetModal();
+  document.getElementById('modalBg').classList.add('open');
+}
+function getShowXpSet(){try{return JSON.parse(localStorage.getItem('narbudr-show-xp')||'[]');}catch(e){return [];}}
+function toggleShowXp(charId){const s=getShowXpSet();const i=s.indexOf(charId);if(i>=0)s.splice(i,1);else s.push(charId);localStorage.setItem('narbudr-show-xp',JSON.stringify(s));render();}
+function closeTokenMenu(){document.getElementById('tokenMenu')?.remove();}
+function showTokenMenu(x,y,instId){
+  closeTokenMenu();
+  const t=inst(instId); const tpl=t&&instTemplate(t); if(!tpl)return;
+  let items='';
+  if(isMJ())items+=`<button class="btn ghost" onclick="openSheetModal('${tpl.id}')">📄 Consulter la fiche du personnage</button>`;
+  if(tpl.type==='player'){const on=getShowXpSet().includes(tpl.id);items+=`<button class="btn ghost" onclick="toggleShowXp('${tpl.id}')">${on?'🙈 Cacher l’expérience':'⭐ Afficher l’expérience'}</button>`;}
+  if(!items)return;
+  const m=document.createElement('div'); m.id='tokenMenu'; m.className='token-menu';
+  m.style.left=x+'px'; m.style.top=y+'px'; m.innerHTML=items; document.body.appendChild(m);
+}
+document.addEventListener('mousedown',e=>{if(!e.target.closest('#tokenMenu'))closeTokenMenu();});
+document.addEventListener('click',()=>closeTokenMenu());
 function myCharacterCard(c){
   const tab=mySheetTabs[c.id]||'bio';
   const abilities=characterAbilities(c.id);
@@ -4294,7 +4347,10 @@ function myCharacterCard(c){
     const def=(S.consumables||[]).find(x=>x.id===o.id); if(!def)return '';
     return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px"><span>${iconInlineHtml(def)} ${esc(def.name)} × ${o.qty} <small class="muted">(+${def.amount} ${def.resource==='Mana'?'💧 Mana':'❤️ PV'})</small></span><button class="btn" style="padding:4px 8px" onclick="useConsumable('${c.id}','${o.id}')">Utiliser</button></div>`;
   }).join(''):'<p class="tiny muted">Aucun consommable.</p>';
+  const lvl=c.level||1, xpNow=c.xp||0, xpNeed=xpNeeded(lvl);
+  const xpBlock=c.type==='player'?`<div class="stat" style="margin-bottom:8px"><label>⭐ Niveau ${lvl}</label><div class="mini-bar" style="width:100%;height:8px"><i style="width:${pct(xpNow,xpNeed)}%;background:#e7b85c"></i></div><div class="tiny muted" style="margin-top:4px">XP : ${xpNow} / ${xpNeed} · Reste ${xpNeed-xpNow} pour le niveau ${lvl+1}</div></div>`:'';
   const bioTabHtml=`
+    ${xpBlock}
     <div style="margin-bottom:12px">${c.profileImage?`<img src="${esc(c.profileImage)}" style="max-width:100%;border-radius:10px;display:block">`:'<p class="tiny muted">Aucune image.</p>'}</div>
     <div class="stat" style="margin-bottom:8px"><label>Description</label><div class="tiny rte-view" style="margin-top:4px">${c.bio||'Aucune description.'}</div></div>
     <div class="stat" style="margin-bottom:8px"><label>Inventaire</label><div class="tiny rte-view">${c.inventory||'Vide.'}</div></div>
