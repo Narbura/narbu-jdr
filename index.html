@@ -1742,6 +1742,43 @@ function occRuns(a,n){
   while(r.length>n){let bi=0,bg=1e9;for(let i=0;i<r.length-1;i++){const g=r[i+1][0]-r[i][1];if(g<bg){bg=g;bi=i;}}r.splice(bi,2,[r[bi][0],r[bi+1][1]]);}
   return r.length===n?r:null;
 }
+/* Découpe en n zones : essaie des seuils croissants pour séparer même des sprites qui se frôlent ; renvoie les bornes de coupe */
+function splitCuts(counts,n,total){
+  const max=Math.max(...counts); if(!max)return null;
+  for(const f of [0,0.02,0.04,0.08,0.15]){
+    const r=occRuns(counts.map(v=>v>max*f),n);
+    if(r){
+      const cuts=[0];
+      for(let i=0;i<r.length-1;i++)cuts.push(Math.round((r[i][1]+r[i+1][0])/2));
+      cuts.push(total);
+      return cuts;
+    }
+  }
+  return null;
+}
+function spriteRectsFromAlpha(d,W,H,frames,rows){
+  const px=(x,y)=>d[(y*W+x)*4+3]>8;
+  const rowCnt=new Array(H).fill(0);
+  for(let y=0;y<H;y++){let c=0;for(let x=0;x<W;x++)if(px(x,y))c++;rowCnt[y]=c;}
+  const rc=splitCuts(rowCnt,rows,H); if(!rc)return null;
+  const cols=Math.ceil(frames/rows), list=[];
+  for(let b=0;b<rows;b++){
+    const y0=rc[b],y1=rc[b+1];
+    const count=Math.min(cols,frames-b*cols); if(count<=0)break;
+    const colCnt=new Array(W).fill(0);
+    for(let x=0;x<W;x++){let c=0;for(let y=y0;y<y1;y++)if(px(x,y))c++;colCnt[x]=c;}
+    const cc=splitCuts(colCnt,count,W); if(!cc)return null;
+    for(let i=0;i<count;i++){
+      const x0=cc[i],x1=cc[i+1];
+      let xmin=x1,xmax=x0,ymin=y1,ymax=y0;
+      for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++)if(px(x,y)){if(x<xmin)xmin=x;if(x>xmax)xmax=x;if(y<ymin)ymin=y;if(y>ymax)ymax=y;}
+      if(xmax<xmin)return null;
+      list.push({x:xmin,y:ymin,w:xmax-xmin+1,h:ymax-ymin+1});
+    }
+  }
+  if(list.length!==frames)return null;
+  return {list,maxW:Math.max(...list.map(r=>r.w)),maxH:Math.max(...list.map(r=>r.h))};
+}
 function detectSpriteRects(img,frames,rows){
   const key=frames+'x'+rows;
   img._rects=img._rects||{};
@@ -1751,30 +1788,8 @@ function detectSpriteRects(img,frames,rows){
     const W=img.naturalWidth,H=img.naturalHeight;
     const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
     const cx=cv.getContext('2d',{willReadFrequently:true}); cx.drawImage(img,0,0);
-    const d=cx.getImageData(0,0,W,H).data;
-    const px=(x,y)=>d[(y*W+x)*4+3]>8;
-    const rowOcc=new Array(H).fill(false);
-    for(let y=0;y<H;y++)for(let x=0;x<W;x++){if(px(x,y)){rowOcc[y]=true;break;}}
-    const bands=occRuns(rowOcc,rows);
-    if(bands){
-      const cols=Math.ceil(frames/rows), list=[];
-      let ok=true;
-      for(let b=0;b<bands.length&&ok;b++){
-        const [y0,y1]=bands[b];
-        const count=Math.min(cols,frames-b*cols); if(count<=0)break;
-        const colOcc=new Array(W).fill(false);
-        for(let x=0;x<W;x++)for(let y=y0;y<y1;y++){if(px(x,y)){colOcc[x]=true;break;}}
-        const cr=occRuns(colOcc,count);
-        if(!cr){ok=false;break;}
-        cr.forEach(([x0,x1])=>{
-          let ymin=y1,ymax=y0;
-          for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){if(px(x,y)){if(y<ymin)ymin=y;if(y>ymax)ymax=y;break;}}
-          list.push({x:x0,y:ymin,w:x1-x0,h:ymax-ymin+1});
-        });
-      }
-      if(ok&&list.length===frames)res={list,maxW:Math.max(...list.map(r=>r.w)),maxH:Math.max(...list.map(r=>r.h))};
-    }
-  }catch(e){ res=null; }
+    res=spriteRectsFromAlpha(cx.getImageData(0,0,W,H).data,W,H,frames,rows);
+  }catch(err){ res=null; }
   img._rects[key]=res;
   return res;
 }
@@ -1846,7 +1861,7 @@ function fxDrawFrame(ctx,img,frame,frames,rows,dx,dy,dw,dh){
   if(img._auto){
     const rc=detectSpriteRects(img,frames,rows);
     if(rc&&rc.list[frame]){
-      const r=rc.list[frame], w=r.w*dw/rc.maxW, h=r.h*dh/rc.maxH;
+      const r=rc.list[frame], k=Math.min(dw/rc.maxW,dh/rc.maxH), w=r.w*k, h=r.h*k;
       ctx.drawImage(img,r.x,r.y,r.w,r.h,dx+(dw-w)/2,dy+(dh-h)/2,w,h);
       return;
     }
