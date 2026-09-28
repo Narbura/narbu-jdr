@@ -859,7 +859,9 @@ function applyMonsterDurabilityHit(casterTpl,targetInst,targetTpl,label,lines){
   else if(label==='Réussite ultime')amount=casterTpl.ultimateDurabilityDmg||0;
   else return;
   if(!amount)return;
-  const d5=1+Math.floor(Math.random()*5);
+  const eligible=[1,2,3,4,5].filter(n=>{const k=DURABILITY_HIT_SLOTS[n];const it=equip(targetTpl.equipmentSlots?.[k]);return !(it&&it.durabilityMax&&getEqDurability(targetInst,k)<=0);});
+  if(!eligible.length)return; // toutes les pièces sont brisées : plus d'effet
+  const d5=eligible[Math.floor(Math.random()*eligible.length)];
   const slotKey=DURABILITY_HIT_SLOTS[d5];
   const item=equip(targetTpl.equipmentSlots?.[slotKey]);
   const slotLabel=(EQUIP_SLOTS.find(s=>s[0]===slotKey)||['',''])[1];
@@ -4205,7 +4207,15 @@ function myCharacterCard(c){
   const equippedHtml=(c.type==='player'&&c.equipmentSlots)?EQUIP_SLOTS.map(([k,label])=>{
     const item=equip(c.equipmentSlots[k]); if(!item)return '';
     const resTxt=ELEMENT_RES_KEYS.filter(rk=>item.res?.[rk]).map(rk=>`${rk} +${item.res[rk]}%`).join(', ');
-    const durTxt=item.durabilityMax?` · 🔧 ${myInst?getEqDurability(myInst,k):item.durabilityMax}/${item.durabilityMax}`:'';
+    let durTxt='';
+    if(item.durabilityMax){
+      const cur=getEqDurability(c,k), f=equipStatFactor(c,k);
+      durTxt=` · 🔧 ${cur}/${item.durabilityMax}`;
+      if(f<1){
+        const txt=item.itemType==='weapon'?`dégâts de l'arme ${f===0?'= 0':'÷2'}`:`CA ${Math.ceil((item.ca||0)*f)} · DM ${Math.ceil((item.dm||0)*f)}`;
+        durTxt+=` <b style="color:var(--danger)">${f===0?'💥 brisé':'⚠️ abîmé'} → ${txt}</b>`;
+      }
+    }
     const statsLine=(item.itemType==='weapon'?`⚔ Dégâts : ${esc(item.damageFormula||'—')} (s'ajoutent aux capacités liées à ${esc(item.weaponStat||'Force')})`:`CA +${item.ca||0} · DM +${item.dm||0}${resTxt?` · ${resTxt}`:''}`)+durTxt;
     return `<div class="row" style="gap:10px;margin-bottom:8px;padding:6px;background:#20232a;border-radius:8px;align-items:center;flex-wrap:wrap">
       ${item.image?`<img src="${esc(item.image)}" style="max-width:100%;border-radius:8px;flex-shrink:0">`:`<div class="icon-preview" style="width:40px;height:40px;font-size:20px;flex-shrink:0">${iconInlineHtml(item,20)}</div>`}
