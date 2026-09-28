@@ -328,7 +328,6 @@ function normalizeState(){
     if(!Array.isArray(t.statusEffects))t.statusEffects=[];
     if(t.movementBlocked===undefined)t.movementBlocked=false;
     if(t.isKO===undefined)t.isKO=false;
-    if(!t.eqDur)t.eqDur={};
   });
   S.characters.forEach(c=>{
     if(!c.res)c.res={};
@@ -345,6 +344,7 @@ function normalizeState(){
     if(c.profileImage===undefined)c.profileImage=null;
     if(c.bio===undefined)c.bio='';
     if(c.inventory===undefined)c.inventory='';
+    if(!c.eqDur)c.eqDur={};
     if(c.critDurabilityDmg===undefined)c.critDurabilityDmg=0;
     if(c.ultimateDurabilityDmg===undefined)c.ultimateDurabilityDmg=0;
     if(!c.oppAttack)c.oppAttack={formula:'',type:'Physique',element:'Neutre'};
@@ -360,6 +360,8 @@ function normalizeState(){
       if(!Array.isArray(c.equipmentSlots.diversIds))c.equipmentSlots.diversIds=[];
     }
   });
+  // Migration : ancienne durabilité stockée sur les jetons -> fiche du personnage
+  S.instances.forEach(t=>{ if(t.eqDur){ const c=char(t.charId); if(c){ Object.keys(t.eqDur).forEach(k=>{ if(c.eqDur[k]===undefined)c.eqDur[k]=t.eqDur[k]; }); } delete t.eqDur; } });
   if(!S.equipment)S.equipment=[];
   S.equipment.forEach(e=>{
     if(!e.res)e.res={};
@@ -618,11 +620,10 @@ function updateUserBadge(){
   const abNav=document.querySelector('.nav[data-page="abilities"]');
   if(abNav) abNav.style.display=isMJ()?'':'none';
   const hbNav=document.querySelector('.nav[data-page="hotbar"]');
-  if(hbNav) hbNav.style.display=isMJ()?'none':'';
+  if(hbNav) hbNav.style.display='';
   if(!isMJ()&&currentPage==='library'){currentPage='table';}
   if(!isMJ()&&currentPage==='equipment'){currentPage='table';}
   if(!isMJ()&&currentPage==='abilities'){currentPage='table';}
-  if(isMJ()&&currentPage==='hotbar'){currentPage='table';}
   if(!isMJ()&&sidePanelTab==='library'){sidePanelTab='chat';}
   if(!isMJ()&&sidePanelTab==='images'){sidePanelTab='chat';}
 }
@@ -819,19 +820,20 @@ function equip(id){return (S.equipment||[]).find(e=>e.id===id);}
 function naturalRes(c){return {ca:Math.ceil((c.stats?.Constitution||0)/10),dm:Math.ceil((c.stats?.Magie||0)/10)};}
 /* ---- Durabilité (armures hors anneaux/amulette, et armes) — suivie par jeton ---- */
 const DURABILITY_HIT_SLOTS={1:'torse',2:'jambes',3:'tete',4:'pieds',5:'main'};
-function slotItem(t,slotKey){const c=instTemplate(t);return c?equip(c.equipmentSlots?.[slotKey]):null;}
+function tplOf(x){return x&&x.charId?char(x.charId):x;}
+function slotItem(t,slotKey){const c=tplOf(t);return c?equip(c.equipmentSlots?.[slotKey]):null;}
 function getEqDurability(t,slotKey){
   const item=slotItem(t,slotKey);
   if(!item||!item.durabilityMax)return null;
-  if(!t.eqDur)t.eqDur={};
-  if(t.eqDur[slotKey]===undefined)t.eqDur[slotKey]=item.durabilityMax;
-  return t.eqDur[slotKey];
+  const c=tplOf(t); if(!c.eqDur)c.eqDur={};
+  if(c.eqDur[slotKey]===undefined)c.eqDur[slotKey]=item.durabilityMax;
+  return c.eqDur[slotKey];
 }
 function setEqDurability(t,slotKey,val){
   const item=slotItem(t,slotKey);
   if(!item||!item.durabilityMax)return;
-  if(!t.eqDur)t.eqDur={};
-  t.eqDur[slotKey]=Math.max(0,Math.min(item.durabilityMax,Math.round(val)));
+  const c=tplOf(t); if(!c.eqDur)c.eqDur={};
+  c.eqDur[slotKey]=Math.max(0,Math.min(item.durabilityMax,Math.round(val)));
 }
 function damageEqDurability(t,slotKey,amount){
   const cur=getEqDurability(t,slotKey);
@@ -3253,25 +3255,24 @@ function toggleHidden(id){
 }
 function equipmentDurabilityHtml(charId){
   const c=char(charId); if(!c||c.type!=='player')return '';
-  const insts=S.instances.filter(i=>i.charId===charId);
-  if(!insts.length)return '<p class="tiny muted">Aucun jeton sur la carte : la durabilité est suivie par jeton.</p>';
-  const out=insts.map(t=>{
-    const rows=EQUIP_SLOTS.map(([k,label])=>{
-      const item=equip(c.equipmentSlots?.[k]);
-      if(!item||!item.durabilityMax)return '';
-      const cur=getEqDurability(t,k);
-      const state=cur<=0?' 💥 brisé':(cur<item.durabilityMax/2?' ⚠️ abîmé':'');
-      return `<div class="row between" style="padding:4px 0"><span>${esc(label)} — ${esc(item.name)} : <b>${cur}/${item.durabilityMax}</b>${state}</span><button type="button" class="btn ghost" style="padding:3px 8px" onclick="repairEqDurabilitySlot('${t.id}','${k}')">🔧 Réparer</button></div>`;
-    }).join('');
-    return rows?`<div style="margin-bottom:6px"><b class="tiny">${esc(t.label)}</b>${rows}</div>`:'';
+  const rows=EQUIP_SLOTS.map(([k,label])=>{
+    const item=equip(c.equipmentSlots?.[k]);
+    if(!item||!item.durabilityMax)return '';
+    const cur=getEqDurability(c,k), f=equipStatFactor(c,k);
+    let state='';
+    if(f<1){
+      const txt=item.itemType==='weapon'?`dégâts de l'arme ${f===0?'= 0':'÷2'}`:`CA ${Math.ceil((item.ca||0)*f)} · DM ${Math.ceil((item.dm||0)*f)}`;
+      state=` ${f===0?'💥 brisé':'⚠️ abîmé'} → ${txt}`;
+    }
+    return `<div class="row between" style="padding:4px 0"><span>${esc(label)} — ${esc(item.name)} : <b>${cur}/${item.durabilityMax}</b>${state}</span><button type="button" class="btn ghost" style="padding:3px 8px" onclick="repairEqDurabilitySlot('${c.id}','${k}')">🔧 Réparer</button></div>`;
   }).join('');
-  return out||'<p class="tiny muted">Aucun équipement destructible équipé.</p>';
+  return rows||'<p class="tiny muted">Aucun équipement destructible équipé.</p>';
 }
-function repairEqDurabilitySlot(instId,slotKey){
+function repairEqDurabilitySlot(charId,slotKey){
   if(!isMJ())return;
-  const t=inst(instId); if(!t)return;
-  repairEqDurability(t,slotKey);
-  saveState(); openCharacter(t.charId);
+  const c=char(charId); if(!c)return;
+  repairEqDurability(c,slotKey);
+  saveState(); openCharacter(charId);
   toast('🔧 Équipement réparé.');
 }
 function equipmentSlotsHtml(base,charId){
@@ -3296,7 +3297,7 @@ function equipmentSlotsHtml(base,charId){
   <label>🎒 Divers (poids uniquement, plusieurs possibles)</label>
   <div style="max-height:150px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px;margin-bottom:8px">${diversListHtml}</div>
   <div class="field"><label>⚖ Poids total porté</label><input id="c_weight_display" value="${w.toFixed(1)} kg / Force ${force} kg${weightMalusText(w,force)}" readonly style="opacity:.6"></div>
-  ${charId?`<div class="field full"><label>🔧 Durabilité (par jeton sur la carte)</label>${equipmentDurabilityHtml(charId)}</div>`:''}
+  ${charId?`<div class="field full"><label>🔧 Durabilité de l'équipement</label>${equipmentDurabilityHtml(charId)}</div>`:''}
   </div>`;
 }
 function updateWeightPreview(){
@@ -3476,7 +3477,7 @@ function saveCharacter(id){
     const oldSlots={...c.equipmentSlots};
     EQUIP_SLOTS.forEach(([k])=>{const el=document.getElementById('eqslot_'+k);if(el)c.equipmentSlots[k]=el.value||null;});
     c.equipmentSlots.diversIds=[...document.querySelectorAll('.eq-divers-check:checked')].map(el=>el.value);
-    S.instances.filter(i=>i.charId===c.id).forEach(ii=>{EQUIP_SLOTS.forEach(([k])=>{if(oldSlots[k]!==c.equipmentSlots[k]&&ii.eqDur)delete ii.eqDur[k];});});
+    EQUIP_SLOTS.forEach(([k])=>{if(oldSlots[k]!==c.equipmentSlots[k]&&c.eqDur)delete c.eqDur[k];});
   }
   if(!id)S.characters.push(c);
   S.instances.filter(i=>i.charId===c.id).forEach(i=>{
@@ -4297,7 +4298,7 @@ function onHotbarPoolSearch(v){hotbarPoolSearch=v;const c=document.getElementByI
 function onHotbarPoolTypeFilter(v){hotbarPoolTypeFilter=v;const c=document.getElementById('hotbarPoolContainer');if(c)c.innerHTML=hotbarPoolHtml();}
 function hotbarPage(){
   if(!currentUser)return `<div class="card"><p class="muted">Connectez-vous.</p></div>`;
-  const mine=S.characters.filter(c=>c.ownerId===currentUser.id);
+  const mine=isMJ()?S.characters.slice():S.characters.filter(c=>c.ownerId===currentUser.id);
   if(!mine.length)return `<div class="card"><p class="muted">Aucun personnage ne vous a été assigné.</p></div>`;
   if(!hotbarEditChar||!mine.some(c=>c.id===hotbarEditChar))hotbarEditChar=mine[0].id;
   const cfg=charHotbar(hotbarEditChar);
@@ -4308,7 +4309,7 @@ function hotbarPage(){
   }).join('')}</div>`).join('');
   return `<div class="grid2">
   <div class="card"><h2>🎯 Mes Compétences</h2>
-  <div class="field"><label>Personnage</label><select onchange="hotbarEditChar=this.value;render()">${mine.map(m=>`<option value="${m.id}" ${m.id===hotbarEditChar?'selected':''}>${esc(m.name)}</option>`).join('')}</select></div>
+  <div class="field"><label>Personnage</label>${isMJ()?`<input placeholder="🔎 Rechercher un personnage / monstre…" value="${esc(hotbarCharSearch)}" oninput="onHotbarCharSearch(this.value)" style="margin-bottom:6px">`:''}<div id="hotbarCharContainer">${hotbarCharSelectHtml()}</div></div>
   <label class="row" style="gap:8px;margin:10px 0"><input type="checkbox" ${hotbarIconOnly()?'checked':''} onchange="setHotbarIconOnly(this.checked);render()"> Afficher uniquement les icônes sur la table de jeu (grille de raccourcis)</label>
   <p class="tiny muted">Glisse une capacité vers une case. Clic droit sur une case pour la vider.</p>
   ${barsHtml}
@@ -4322,6 +4323,14 @@ function hotbarPage(){
   <div class="asset-list" id="hotbarPoolContainer">${hotbarPoolHtml()}</div></div>
   </div>`;
 }
+let hotbarCharSearch='';
+function hotbarCharSelectHtml(){
+  const list=isMJ()?S.characters:S.characters.filter(c=>c.ownerId===currentUser.id);
+  const q=hotbarCharSearch.trim().toLowerCase();
+  const shown=list.filter(c=>c.id===hotbarEditChar||!q||c.name.toLowerCase().includes(q));
+  return `<select onchange="hotbarEditChar=this.value;render()">${shown.map(m=>`<option value="${m.id}" ${m.id===hotbarEditChar?'selected':''}>${esc(m.name)}</option>`).join('')}</select>`;
+}
+function onHotbarCharSearch(v){hotbarCharSearch=v;const c=document.getElementById('hotbarCharContainer');if(c)c.innerHTML=hotbarCharSelectHtml();}
 let hotbarDragItem=null;
 function hotbarDragStart(ev,itemId){hotbarDragItem=itemId;ev.dataTransfer.setData('text/plain',itemId);}
 function hotbarDrop(ev,bi,ci){
