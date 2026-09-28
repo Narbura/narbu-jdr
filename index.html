@@ -350,6 +350,7 @@ function normalizeState(){
     if(c.profileImage===undefined)c.profileImage=null;
     if(!(c.level>=1))c.level=1; if(!(c.xp>=0))c.xp=0; if(!(c.xpValue>=0))c.xpValue=0;
     if(c.bio===undefined)c.bio='';
+    if(!(c.sizeW>=1))c.sizeW=1; if(!(c.sizeH>=1))c.sizeH=1;
     if(!Array.isArray(c.statHistory))c.statHistory=[];
     if(!(c.statPointsSpent>=0))c.statPointsSpent=0;
     if(c.inventory===undefined)c.inventory='';
@@ -410,6 +411,9 @@ function normalizeState(){
     if(a.impactRows===undefined)a.impactRows=1;
     if(a.animFps===undefined)a.animFps=60;
     if(a.zoneImage===undefined)a.zoneImage=null;
+    if(a.spinImage===undefined)a.spinImage=null;
+    if(a.spinSpeed===undefined)a.spinSpeed=2;
+    if(a.spinDuration===undefined)a.spinDuration=1;
     if(a.impactPerToken===undefined)a.impactPerToken=false;
     if(!(a.level>=1))a.level=1;
     if(a.skillStat===undefined)a.skillStat='';
@@ -654,8 +658,8 @@ function resetDemo(){
 }
 function toast(t){const e=document.getElementById('toast');e.textContent=t;e.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>e.classList.remove('show'),1800);}
 function esc(x){return String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
-function iconBoxHtml(entity,radius){
-  if(entity&&entity.iconImage)return `<img src="${esc(entity.iconImage)}" style="width:100%;height:100%;object-fit:cover;border-radius:${radius||'0'}">`;
+function iconBoxHtml(entity,radius,fit){
+  if(entity&&entity.iconImage)return `<img src="${esc(entity.iconImage)}" style="width:100%;height:100%;object-fit:${fit||'cover'};border-radius:${radius||'0'}">`;
   return esc(entity?.icon||'❓');
 }
 function iconInlineHtml(entity,sizePx){
@@ -1423,10 +1427,14 @@ function findFreeCell(x,y,excludeId){
 }
 function spawnInstance(charId,x,y){
   const t=char(charId); if(!t)return null;
+  let sw=Math.max(1,t.sizeW||1), sh=Math.max(1,t.sizeH||1);
+  const ox=x, oy=y;
+  x=Math.max(0,Math.min(S.map.cols-sw,x)); y=Math.max(0,Math.min(S.map.rows-sh,y));
+  if(footprintOverlap('',x,y,sw,sh)){sw=1;sh=1;x=ox;y=oy;toast('⚠️ Pas la place pour la taille par défaut — token placé en 1×1.');}
   const count=S.instances.filter(i=>i.charId===charId).length+1;
   const label=t.type==='enemy'?`${t.name} #${count}`:t.name;
   const rm=t.resourcesMax||{Vie:10,Mana:0,Bouclier:0};
-  const newInst={id:'i'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),charId,label,x,y,px:null,py:null,
+  const newInst={id:'i'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),charId,label,x,y,sizeW:sw,sizeH:sh,px:null,py:null,
     hp:rm.Vie||0,hpMax:rm.Vie||0,mana:rm.Mana||0,manaMax:rm.Mana||0,shield:rm.Bouclier||0,shieldMax:rm.Bouclier||0,
     remainingMove:effectiveMove(t)};
   S.instances.push(newInst); return newInst;
@@ -1607,7 +1615,7 @@ function tokensHtml(){
     const xpHtml=showXp?`<div class="xp-display" style="top:calc(var(--tok-h,32px)/2 + ${xpTop}px)">Niv. ${tpl.level||1}<div class="mini-bar" style="width:40px"><i style="width:${pct(tpl.xp||0,xpNeeded(tpl.level||1))}%;background:#e7b85c"></i></div></div>`:'';
     return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''} ${multiSel.includes(t.id)?'multi':''} ${hasAura?'has-aura':''}" data-token="${t.id}" style="left:${px}px;top:${py}px;--cell-size:${S.map.cell}px;--tok-w:${tokW}px;--tok-h:${tokH}px;--tok-min:${Math.min(tokW,tokH)}px">
       <div class="token-hud">${hud}</div>
-      <div class="token ${tpl.type}" title="${esc(t.label)}${t.isKO?' (KO)':''}">${t.isKO?'💀':iconBoxHtml(tpl,'0')}${mj?`<div class="token-resize-handle" onmousedown="startTokenResize(event,'${t.id}')" title="Glisser pour redimensionner"></div>`:''}</div>
+      <div class="token ${tpl.type}" title="${esc(t.label)}${t.isKO?' (KO)':''}">${t.isKO?'💀':iconBoxHtml(tpl,'0','fill')}${mj?`<div class="token-resize-handle" onmousedown="startTokenResize(event,'${t.id}')" title="Glisser pour redimensionner"></div>`:''}</div>
       <div class="token-label" ${showXp?`style="top:calc(var(--tok-h,32px)/2 + ${xpTop+22}px)"`:''}>${esc(t.label)}</div>${xpHtml}
       ${afflictionIconsHtml}
     </div>`;
@@ -1901,6 +1909,17 @@ function fxAddImpact(img,frames,rows,cx,cy,w,h,fps,clip){
     ctx.restore();
   }});
 }
+function fxAddSpin(img,cx,cy,size,turnsPerSec,duration){
+  if(!img)return;
+  fxStart({duration,draw(ctx,elapsed){
+    if(!img.complete||!img.naturalWidth)return;
+    const fade=Math.min(1,(duration-elapsed)/(duration*0.2));
+    ctx.save(); ctx.globalAlpha=Math.max(0,fade);
+    ctx.translate(cx,cy); ctx.rotate(Math.PI*2*turnsPerSec*elapsed/1000);
+    ctx.drawImage(img,-size/2,-size/2,size,size);
+    ctx.restore();
+  }});
+}
 function fxAddProjectile(img,frames,rows,fromX,fromY,toX,toY,size,fps,onArrive){
   const dist=Math.hypot(toX-fromX,toY-fromY);
   const speed=600; // px/s
@@ -2039,6 +2058,7 @@ function playAbilityFX(a,casterInst,targets,start){
   if(a.area==='self'){
     const sw=casterInst.sizeW||1, sh=casterInst.sizeH||1;
     const size=((a.areaSize||1)*2+Math.max(sw,sh))*cell;
+    if(a.spinImage)fxAddSpin(getFxImg(a.spinImage),fromX,fromY,size,a.spinSpeed||2,(a.spinDuration||1)*1000);
     doImpactZoneOrPerToken(fromX,fromY,size);
     return;
   }
@@ -3638,6 +3658,7 @@ function openCharacter(id){
   </div>
   <div class="field"><label>Type</label><select id="c_type" onchange="toggleCharMonsterFields()">${typeOpts}</select></div>
   <div class="field"><label>Déplacement (cases/tour)</label><input id="c_move" type="number" value="${base.move??6}"></div>
+  <div class="field"><label>Taille par défaut du token (largeur × hauteur, en cases)</label><div class="row"><input id="c_sizew" type="number" min="1" max="20" value="${base.sizeW||1}"><span>×</span><input id="c_sizeh" type="number" min="1" max="20" value="${base.sizeH||1}"></div></div>
   <div class="field full"><label>Joueur propriétaire (peut déplacer / lancer les sorts de ce personnage)</label><select id="c_owner">${ownerOpts}</select></div>
   <div class="field full"><label>Catégorie (dossier dans la bibliothèque)</label><select id="c_category">${catOpts}</select></div>
   <div class="field full"><label>Visibilité des PV / mana / bouclier</label><select id="c_hidden">
@@ -3694,6 +3715,10 @@ function saveCharacter(id){
   c.iconImage=document.getElementById('c_iconimage').value.trim()||null;
   c.type=document.getElementById('c_type').value;
   c.move=parseNum(document.getElementById('c_move').value)||6;
+  const oldSW=c.sizeW||1, oldSH=c.sizeH||1;
+  c.sizeW=Math.max(1,Math.min(20,Math.round(parseNum(document.getElementById('c_sizew').value))||1));
+  c.sizeH=Math.max(1,Math.min(20,Math.round(parseNum(document.getElementById('c_sizeh').value))||1));
+  const tplSizeChanged=(c.sizeW!==oldSW||c.sizeH!==oldSH);
   c.ownerId=document.getElementById('c_owner').value||null;
   c.categoryId=document.getElementById('c_category').value||null;
   c.hidden=document.getElementById('c_hidden').value==='true';
@@ -3743,11 +3768,13 @@ function saveCharacter(id){
       else if(el.dataset.field==='sizew'){newW=Math.max(1,Math.min(20,v));sizeDirty=true;}
       else if(el.dataset.field==='sizeh'){newH=Math.max(1,Math.min(20,v));sizeDirty=true;}
     });
+    if(!sizeDirty&&tplSizeChanged){newW=c.sizeW;newH=c.sizeH;sizeDirty=true;}
     if(sizeDirty){
       if(footprintOverlap(i.id,i.x,i.y,newW,newH)){
         toast(`🚫 Taille de ${i.label} inchangée — chevauche un autre jeton ou dépasse la carte.`);
       }else{
         i.sizeW=newW; i.sizeH=newH;
+        c.sizeW=newW; c.sizeH=newH;
       }
     }
     if(i.hp<=0){addLog(`💀 <b>${esc(i.label)}</b> tombe à 0 PV.`);handleInstanceDeath(i);}
@@ -3907,6 +3934,21 @@ function openAbility(id){
     ${a.zoneImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('a_zoneimage','a_zoneimage_preview','🖼️')">↺ Retirer</button>`:''}
     ${imagePickerHtml('a_zoneimage','a_zoneimage_preview')}
   </div>
+<div class="field full" id="a_spin_field" style="display:${a.area==='self'?'':'none'}">
+    <label>🌀 Image tournoyante (« Autour de soi » uniquement — remplit la zone et tourne autour du personnage)</label>
+    <div class="icon-dropzone" onclick="document.getElementById('a_spin_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'a_spin','a_spin_preview')">
+      <div id="a_spin_preview" class="icon-preview">${a.spinImage?`<img src="${esc(a.spinImage)}">`:'<span>🌀</span>'}</div>
+      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir. Vide = pas de rotation.</p>
+      <input type="file" id="a_spin_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'a_spin','a_spin_preview')">
+    </div>
+    <input type="hidden" id="a_spin" value="${esc(a.spinImage||'')}">
+    ${a.spinImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('a_spin','a_spin_preview','🌀')">↺ Retirer</button>`:''}
+    ${imagePickerHtml('a_spin','a_spin_preview')}
+    <div class="row" style="gap:10px;margin-top:6px;flex-wrap:wrap">
+      <div class="field" style="max-width:220px"><label>Vitesse (tours par seconde)</label><input id="a_spinspeed" type="number" step="0.1" min="0.1" value="${a.spinSpeed??2}"></div>
+      <div class="field" style="max-width:220px"><label>Durée (secondes)</label><input id="a_spindur" type="number" step="0.1" min="0.2" value="${a.spinDuration??1}"></div>
+    </div>
+  </div>
 ${spriteAutoSelect('a_spriteauto',a.spriteAuto)}
   <div class="field full">
     <label>🎯 Image du projectile (optionnelle — spritesheet horizontale possible)</label>
@@ -3971,6 +4013,8 @@ function toggleAreaFields(){
   document.getElementById('a_coneend_field').style.display=v==='cone'?'':'none';
   const zf=document.getElementById('a_zonerange_field');
   if(zf)zf.style.display=((v==='line'||v==='cone')&&type==='Persistant')?'':'none';
+  const spf=document.getElementById('a_spin_field');
+  if(spf)spf.style.display=(v==='self')?'':'none';
   const zif=document.getElementById('a_zoneimage_field');
   if(zif)zif.style.display=(v==='single')?'none':'';
 }
@@ -4039,6 +4083,9 @@ function saveAbility(id){
     target.impactRows=Math.max(1,+document.getElementById('a_impact_rows').value||1);
     target.animFps=Math.max(1,Math.min(60,+document.getElementById('a_animfps').value||60));
     target.spriteAuto=document.getElementById('a_spriteauto')?.value||false;
+    target.spinImage=(target.area==='self'?document.getElementById('a_spin')?.value.trim():'')||null;
+    target.spinSpeed=Math.max(0.1,parseFloat(document.getElementById('a_spinspeed')?.value)||2);
+    target.spinDuration=Math.max(0.2,parseFloat(document.getElementById('a_spindur')?.value)||1);
     target.transformCharId=null; target.triggerOnDeath=false; target.allowRevert=false;
     target.auraEffect=document.getElementById('a_auraeffect')?document.getElementById('a_auraeffect').value:'damage';
     target.duration=Math.max(1,+(document.getElementById('a_duration')?.value)||3);
