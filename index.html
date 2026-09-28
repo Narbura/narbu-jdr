@@ -359,6 +359,7 @@ function normalizeState(){
     if(c.oppAttack.impactRows===undefined)c.oppAttack.impactRows=1;
     if(c.oppAttack.animFps===undefined)c.oppAttack.animFps=60;
     if(!Array.isArray(c.transformationIds))c.transformationIds=[];
+    if(!Array.isArray(c.inactiveSkills))c.inactiveSkills=[];
     if(!Array.isArray(c.consumablesOwned))c.consumablesOwned=[];
     if(c.type==='player'){
       if(!c.equipmentSlots)c.equipmentSlots={};
@@ -407,6 +408,9 @@ function normalizeState(){
     if(a.animFps===undefined)a.animFps=60;
     if(a.zoneImage===undefined)a.zoneImage=null;
     if(a.impactPerToken===undefined)a.impactPerToken=false;
+    if(!(a.level>=1))a.level=1;
+    if(a.skillStat===undefined)a.skillStat='';
+    if(a.skillMod===undefined)a.skillMod=0;
   });
 }
 
@@ -1099,6 +1103,10 @@ function outcome(d){
 function addLog(html){S.chat.push(html);if(S.chat.length>120)S.chat.shift();}
 function statTestLabel(stat){return (stat==='Artisanat'||stat==='Agilité')?`jet d'${stat}`:`jet de ${stat}`;}
 function statTestIcon(stat){const cfg=(S.statTestIcons||{})[stat]||{icon:'🎲',iconImage:null};return {icon:cfg.icon||'🎲',iconImage:cfg.iconImage||null};}
+function skillStatMod(tpl,stat){
+  if(!tpl)return 0;
+  return characterAbilities(tpl.id).filter(a=>a.type==='Compétence'&&a.skillStat===stat&&!(tpl.inactiveSkills||[]).includes(a.id)).reduce((n,a)=>n+(+a.skillMod||0),0);
+}
 function rollStatTest(stat){
   if(!selectedToken){toast('Sélectionne d’abord un personnage.');return;}
   const casterInst=inst(selectedToken); if(!casterInst)return;
@@ -1106,10 +1114,11 @@ function rollStatTest(stat){
   if(casterInst.isKO){toast('💀 Ce personnage est inconscient.');return;}
   const tpl=instTemplate(casterInst); if(!tpl)return;
   const value=tpl.stats?.[stat]||0;
-  const r=roll('1d100'); const d=r.total;
-  broadcastDiceRoll(100,[d]);
+  const r=roll('1d100'); const raw=r.total;
+  const mod=skillStatMod(tpl,stat); const d=Math.max(1,raw+mod);
+  broadcastDiceRoll(100,[raw]);
   const success=d<=value;
-  addLog(`🎲 <b>${esc(casterInst.label)}</b> — ${statTestLabel(stat)} : d100 = <b>${d}</b> vs ${value} → ${success?'<span style="color:#62d394">✅ Réussite</span>':'<span style="color:#ef6262">❌ Échec</span>'}`);
+  addLog(`🎲 <b>${esc(casterInst.label)}</b> — ${statTestLabel(stat)} : d100 = <b>${d}</b>${mod?` (jet ${raw}, compétence ${mod>0?'+':''}${mod})`:''} vs ${value} → ${success?'<span style="color:#62d394">✅ Réussite</span>':'<span style="color:#ef6262">❌ Échec</span>'}`);
   saveState(); render();
 }
 /* ---- Hotbar (raccourcis grille, préférence locale par personnage) ---- */
@@ -1456,7 +1465,7 @@ function tablePage(){
         if(hotbarIconOnly()){
           abilitiesHtml=hotbarBarHtml(selInst);
         }else{
-        const known=characterAbilities(selInst.charId);
+        const known=characterAbilities(selInst.charId).filter(a=>a.type!=='Compétence');
         abilitiesHtml=known.length?known.map(a=>{
           if(a.type==='Passif'){
             const active=(selInst.activeAuras||[]).includes(a.id);
@@ -2222,6 +2231,8 @@ function endCombat(){
   S.combat={active:false,order:[],turn:0,initiatives:{}};
   lastTurnCombatant=null;
   addLog('⏹ Fin du combat.');
+  S.freeMovement=true;
+  addLog('🎯 Placement libre activé automatiquement.');
   saveState(); render();
 }
 /* ---- Effets automatiques de début de tour : auras (Passif), buffs/débuffs, afflictions ---- */
@@ -2606,6 +2617,7 @@ function setupMapInteractions(){
             addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
           }
         }
+        if(S.freeMovement||t.x!==origX||t.y!==origY)applyZoneDamageOnMove(t);
         saveState();
       }
       dragCandidate=null; render();
@@ -3041,10 +3053,14 @@ function tokenInPersistentZone(t,z){
   const size=z.areaSize||1;
   return (t.x+sw>z.x)&&(t.x<z.x+size)&&(t.y+sh>z.y)&&(t.y<z.y+size);
 }
-function tickPersistentZones(nt){
+function tickPersistentZones(nt){applyPersistentZones(nt,false);}
+function applyZoneDamageOnMove(nt){applyPersistentZones(nt,true);}
+function applyPersistentZones(nt,onlyDamage){
   if(!S.persistentZones||!S.persistentZones.length)return;
   const tTpl=instTemplate(nt);
   S.persistentZones.forEach(z=>{
+    if(!inst(nt.id)||nt.isKO)return;
+    if(onlyDamage&&(z.element==='Soin'||z.element==='Bouclier'))return;
     if(!tokenInPersistentZone(nt,z))return;
     const r=roll(z.formula);
     const raw=applyMult(Math.max(0,Math.ceil(r.total*(z.statValue||0)/100)),z.dmgMult);
@@ -3195,6 +3211,7 @@ function startAbility(id){
   const caster=inst(selectedToken);
   if(caster?.isKO){toast('💀 Ce personnage est inconscient.');return;}
   const a=S.abilities.find(x=>x.id===id); if(!a)return;
+  if(a.type==='Compétence'){toast('🎓 Les compétences sont passives.');return;}
   if(a.type==='Passif'){ toggleAuraForCaster(id); return; }
   if(a.manaCost>0&&caster&&(caster.mana||0)<a.manaCost){
     toast(`🚫 Mana insuffisant (${caster.mana}/${a.manaCost}) pour lancer ${a.name} — choisis une autre action.`);
@@ -3228,7 +3245,7 @@ function transformInstance(instId,targetCharId,allowRevert){
     t.manaMax=newChar.resourcesMax?.Mana||0; t.mana=t.manaMax;
     t.shieldMax=newChar.resourcesMax?.Bouclier||0; t.shield=t.shieldMax;
   }
-  t.isKO=false; t.movementBlocked=false;
+  t.isKO=false; t.movementBlocked=false; t.transformedByKO=false;
   return true;
 }
 function revertButtonHtml(selInst){
@@ -3236,6 +3253,7 @@ function revertButtonHtml(selInst){
   return `<button class="btn" onclick="revertTransformation()" title="Reprendre ta forme d'origine (PV / mana / bouclier d'avant la transformation)">↩️ Détransformer</button>`;
 }
 function revertTransformation(){
+  {const tk=selectedToken?inst(selectedToken):null; if(tk&&tk.transformedByKO&&S.combat.active){toast('💀 Vous êtes dans un état trop critique pour reprendre votre forme précédente.');return;}}
   if(!selectedToken){toast('Sélectionne d’abord un personnage.');return;}
   if(!canControlInstance(selectedToken)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
   if(S.combat.active&&S.combat.order[S.combat.turn]!==selectedToken){toast('⏳ Ce n’est pas le tour de ce personnage.');return;}
@@ -3246,10 +3264,10 @@ function revertTransformation(){
   t.savedForms=t.savedForms||{};
   t.savedForms[t.charId]={hp:t.hp,hpMax:t.hpMax,mana:t.mana,manaMax:t.manaMax,shield:t.shield,shieldMax:t.shieldMax};
   t.charId=o.charId; t.label=o.label;
-  t.hpMax=o.hpMax; t.hp=Math.max(1,o.hp);
+  t.hpMax=o.hpMax; t.hp=t.transformedByKO?1:Math.max(1,o.hp);
   t.manaMax=o.manaMax; t.mana=o.mana;
   t.shieldMax=o.shieldMax; t.shield=o.shield;
-  t.origForm=null; t.isKO=false; t.movementBlocked=false;
+  t.origForm=null; t.isKO=false; t.movementBlocked=false; t.transformedByKO=false;
   addLog(`↩️ <b>${esc(fromName)}</b> reprend sa forme d'origine : <b>${esc(t.label)}</b>.`);
   activeAbility=null; hoverCell=null;
   if(S.combat.active&&S.combat.order[S.combat.turn]===t.id)advanceTurn();
@@ -3274,6 +3292,7 @@ function handleInstanceDeath(t,killer){
     const fromName=t.label;
     if(usable.manaCost>0)t.mana=Math.max(0,(t.mana||0)-usable.manaCost);
     transformInstance(t.id,usable.transformCharId,usable.allowRevert);
+    t.transformedByKO=!!usable.allowRevert;
     addLog(`💀➡️🔄 <b>${esc(fromName)}</b> tombe à 0 PV et se transforme automatiquement en <b>${esc(t.label)}</b> (${esc(usable.name)}).`);
   }else if(tpl&&tpl.type==='player'){
     if(t.isKO){
@@ -3422,6 +3441,7 @@ function openCharacter(id){
   </div>
   ${!(S.consumables||[]).length?'<p class="tiny muted">Aucun consommable défini (page 🎒 Équipement).</p>':''}
   </div>`:'';
+  const skillsMgmtHtml=id?(()=>{const sk=known.filter(a=>a.type==='Compétence');if(!sk.length)return '';return `<div class="field full"><label>🎓 Compétences (coché = active)</label>${sk.map(a=>`<label class="ability-char-item"><input type="checkbox" class="skill-active-check" value="${esc(a.id)}" ${(base.inactiveSkills||[]).includes(a.id)?'':'checked'}> <span>${iconInlineHtml(a)} ${esc(a.name)} <small class="muted">(Niv. ${a.level||1}${a.skillStat&&a.skillMod?' · '+esc(a.skillStat)+' '+(a.skillMod>0?'+':'')+a.skillMod:''})</small></span></label>`).join('')}</div>`;})():'';
   const knownLine=id?(known.length?`<p class="tiny muted">Capacités liées : ${known.map(a=>`${iconInlineHtml(a)} ${esc(a.name)}`).join(', ')} <span style="opacity:.7">(à gérer depuis la page ✨ Capacités)</span></p>`:'<p class="tiny muted">Aucune capacité liée à ce personnage pour l’instant (page ✨ Capacités).</p>'):'';
   const bioHtml=`
   <div class="field full">
@@ -3487,6 +3507,7 @@ function openCharacter(id){
   <div class="field"><label>Artisanat</label><input id="s_craft" type="number" value="${base.stats.Artisanat??0}"></div>
   ${curResHtml}
   ${consumablesMgmtHtml}
+  ${skillsMgmtHtml}
   <div class="field"><label>Classe d'armure</label><input id="d_ca" type="number" value="${base.def.CA??0}"></div>
   <div class="field"><label>Défense magique</label><input id="d_dm" type="number" value="${base.def.DM??0}"></div>
   <div class="field"><label>Résistance Feu (%)</label><input id="r_fire" type="number" value="${base.res.Feu??0}"></div>
@@ -3539,6 +3560,8 @@ function saveCharacter(id){
     Ténèbres:parseNum(document.getElementById('r_tenebres').value)
   };
   c.oppAttack={formula:document.getElementById('oa_formula').value.trim(),type:document.getElementById('oa_type').value,element:document.getElementById('oa_element').value,impactImage:document.getElementById('oa_impact').value.trim()||null,impactFrames:Math.max(1,parseNum(document.getElementById('oa_impact_frames').value)||1),impactRows:Math.max(1,parseNum(document.getElementById('oa_impact_rows').value)||1),animFps:Math.max(1,Math.min(60,parseNum(document.getElementById('oa_animfps').value)||60))};
+  const skChecks=[...document.querySelectorAll('.skill-active-check')];
+  if(skChecks.length)c.inactiveSkills=skChecks.filter(el=>!el.checked).map(el=>el.value);
   if(c.type==='player'){
     c.equipmentSlots=c.equipmentSlots||{};
     const oldSlots={...c.equipmentSlots};
@@ -3632,6 +3655,8 @@ function abilityResultsHtml(){
     const isTransfo=a.type==='Transformation';
     const infoLine=isTransfo
       ? `Transformation → ${esc(char(a.transformCharId)?.name||'—')} · Mana ${a.manaCost||0} · Auto à la mort : ${a.triggerOnDeath?'Oui':'Non'}`
+      : a.type==='Compétence'
+      ? `Compétence · ${a.skillStat&&a.skillMod?esc(a.skillStat)+' '+(a.skillMod>0?'+':'')+a.skillMod:'aucun effet sur les jets'}`
       : a.type==='Passif'
       ? `Aura (${esc(a.area)} ${a.areaSize}) · ${esc(a.formula)} · Effet : ${a.auraEffect==='heal'?'Soin':a.auraEffect==='shield'?'Bouclier':'Dégâts'} · Mana/tick ${a.manaCost||0}`
       : a.type==='Buff'
@@ -3639,13 +3664,14 @@ function abilityResultsHtml(){
       : a.type==='Persistant'
       ? `Zone persistante · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?`Ligne (zone ${a.zoneRange||a.range} cases)`:a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3} (zone ${a.zoneRange||a.range} cases)`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · ${a.duration} tour(s) · Portée origine ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
       : `${esc(a.type)}${a.hotkey?` [${esc(a.hotkey)}]`:''} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`;
-    return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
+    return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine} · Niv. ${a.level||1}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
   }).join('');
 }
 function openAbility(id){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les capacités.');return;}
   const a=id?S.abilities.find(x=>x.id===id):{id:'a'+Date.now(),name:'Nouvelle capacité',icon:'✨',iconImage:null,type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'single',areaSize:1,range:6,manaCost:0,desc:'',effect:'✨',transformCharId:null,triggerOnDeath:false,hotkey:null};
   const isTransfo=a.type==='Transformation';
+  const isSkill=a.type==='Compétence';
   const typeOpts=ABILITY_TYPES.map(v=>opt(v,v,a.type)).join('');
   const transformCharOpts=`<option value="">— Choisir un personnage —</option>`+S.characters.map(c=>`<option value="${esc(c.id)}" ${a.transformCharId===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
   const elementOpts=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres','Neutre','Soin','Bouclier','Physique','Récupération'].map(v=>opt(v,v,a.element)).join('');
@@ -3670,7 +3696,8 @@ function openAbility(id){
     ${imagePickerHtml('a_iconimage','a_icon_preview')}
   </div>
   <div class="field"><label>Type</label><select id="a_type" onchange="toggleAbilityTypeFields()">${typeOpts}</select></div>
-  <div class="field" id="a_manacost_field"><label>Coût en mana (0 = aucun)</label><input id="a_manacost" type="number" min="0" value="${a.manaCost??0}"></div>
+  <div class="field"><label>Niveau de la capacité</label><input id="a_level" type="number" min="1" value="${a.level||1}"></div>
+  <div class="field" id="a_manacost_field" style="display:${isSkill?'none':''}"><label>Coût en mana (0 = aucun)</label><input id="a_manacost" type="number" min="0" value="${a.manaCost??0}"></div>
   <div class="field" id="ability_passif_extra" style="display:${a.type==='Passif'?'':'none'}"><label>Effet de l'aura</label><select id="a_auraeffect">${opt('damage','Dégâts',a.auraEffect)}${opt('heal','Soin',a.auraEffect)}${opt('shield','Bouclier',a.auraEffect)}</select><p class="tiny muted">Aura auto-centrée sur le lanceur (zone = Carré ou Cercle uniquement), se déclenche à chaque début de son tour.</p></div>
   <div class="field" id="ability_buff_extra" style="display:${(a.type==='Buff'||a.type==='Persistant')?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.duration||3}"><p class="tiny muted">${a.type==='Persistant'?"Nombre de tours avant que la zone persistante ne s'estompe. Chaque token qui commence son tour dans la zone subit l'effet (calculé comme si le lanceur agissait à chaque fois).":"Cible unique ou zone (voir champ Zone ci-dessous). Effet auto à chaque début de tour de la/les cible(s) pendant N tours. Choisis toi-même la défense ciblée (dont « Aucune »)."}</p></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
@@ -3684,7 +3711,13 @@ function openAbility(id){
     <div class="field full"><label><input type="checkbox" id="a_allowrevert" ${a.allowRevert?'checked':''}> Permettre la détransformation (le personnage transformé gagne la capacité « Détransformer » et retrouve ses PV / mana / bouclier d'avant)</label></div>
     <div class="field full"><label><input type="checkbox" id="a_triggerondeath" ${a.triggerOnDeath?'checked':''}> Activer automatiquement cette transformation à la mort du personnage (si assez de mana)</label></div>
   </div>
-  <div id="ability_normal_fields" style="display:${isTransfo?'none':'contents'}">
+  <div id="ability_skill_fields" style="display:${isSkill?'contents':'none'}">
+    <div class="field"><label>Caractéristique influencée (vide = aucune)</label><select id="a_skillstat">${opt('','— Aucune —',a.skillStat||'')}${STAT_TESTS.map(st=>opt(st,st,a.skillStat||'')).join('')}</select></div>
+    <div class="field"><label>Modificateur au jet (ex : -20 = jet réduit de 20, min. 1)</label><input id="a_skillmod" type="number" value="${a.skillMod||0}"></div>
+    <div class="field full"><label>Description de l'effet</label>${richEditorHtml('a_skilldesc',a.desc||'')}</div>
+    <p class="tiny muted full" style="grid-column:1/-1">Avantage passif du personnage. Le MJ peut l'activer/désactiver dans la fiche du personnage.</p>
+  </div>
+  <div id="ability_normal_fields" style="display:${(isTransfo||isSkill)?'none':'contents'}">
   <div class="field"><label>Formule de dégâts / soin</label><input id="a_formula" value="${esc(a.formula)}"></div>
   <div class="field"><label>Multiplicateur (ex : /2, X2 — vide = aucun)</label><input id="a_dmgmult" value="${esc(a.dmgMult||'')}" placeholder="/2 ou X2"></div>
   <div class="field"><label>Dé du jet de réussite (défaut 1d100)</label><input id="a_atkdice" value="${esc(a.atkDice||'1d100')}" placeholder="1d100, 49, 1d20, 2d100-1…"></div>
@@ -3782,7 +3815,10 @@ function toggleAbilityTypeFields(){
   const val=document.getElementById('a_type').value;
   const isTransfo=val==='Transformation';
   document.getElementById('ability_transfo_fields').style.display=isTransfo?'contents':'none';
-  document.getElementById('ability_normal_fields').style.display=isTransfo?'none':'contents';
+  const isSkill=val==='Compétence';
+  document.getElementById('ability_normal_fields').style.display=(isTransfo||isSkill)?'none':'contents';
+  document.getElementById('ability_skill_fields').style.display=isSkill?'contents':'none';
+  document.getElementById('a_manacost_field').style.display=isSkill?'none':'';
   document.getElementById('ability_passif_extra').style.display=val==='Passif'?'':'none';
   document.getElementById('ability_buff_extra').style.display=(val==='Buff'||val==='Persistant')?'':'none';
   toggleAreaFields();
@@ -3801,12 +3837,20 @@ function saveAbility(id){
   target.iconImage=document.getElementById('a_iconimage').value.trim()||null;
   target.type=document.getElementById('a_type').value;
   target.manaCost=Math.max(0,+document.getElementById('a_manacost').value||0);
+  target.level=Math.max(1,Math.round(+document.getElementById('a_level').value||1));
   if(target.type==='Transformation'){
     target.transformCharId=document.getElementById('a_transformchar').value||null;
     target.triggerOnDeath=document.getElementById('a_triggerondeath').checked;
     target.allowRevert=document.getElementById('a_allowrevert').checked;
     target.formula='0'; target.stat='Force'; target.defense='none'; target.element='Neutre';
     target.area='single'; target.areaSize=1; target.range=0; target.desc=''; target.effect=''; target.dmgMult=''; target.atkDice='1d100';
+  }else if(target.type==='Compétence'){
+    target.formula='0'; target.stat='Force'; target.defense='none'; target.element='Neutre';
+    target.area='single'; target.areaSize=1; target.range=0; target.effect=''; target.dmgMult=''; target.atkDice='1d100';
+    target.manaCost=0; target.transformCharId=null; target.triggerOnDeath=false; target.allowRevert=false;
+    target.desc=rteHtml('a_skilldesc');
+    target.skillStat=document.getElementById('a_skillstat').value||'';
+    target.skillMod=parseNum(document.getElementById('a_skillmod').value);
   }else{
     target.formula=document.getElementById('a_formula').value||'1d20';
     target.dmgMult=document.getElementById('a_dmgmult').value.trim();
@@ -4333,8 +4377,10 @@ function myCharacterCard(c){
     </div>`;
   }).join(''):'';
   const totalWeight=characterTotalWeight(c), forceVal=c.stats?.Force||0, overWeight=totalWeight>forceVal;
-  const abilitiesHtml=abilities.length
-    ? abilities.map(a=>`<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${esc(a.type)} · ${esc(a.formula)} · ${esc(a.element)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}</small></div></div>`).join('')
+  const skillList=abilities.filter(a=>a.type==='Compétence'), abList=abilities.filter(a=>a.type!=='Compétence');
+  const skillsHtml=skillList.length?skillList.map(a=>{const off=(c.inactiveSkills||[]).includes(a.id);const inf=(a.skillStat&&+a.skillMod)?`Jet de ${a.skillStat} : ${a.skillMod>0?'+':''}${a.skillMod}`:'Aucun effet sur les jets';return `<div class="ability" style="${off?'opacity:.5':''}"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b> <span class="pill">Niv. ${a.level||1}</span> <span class="pill">${off?'⏸ Inactive':'✅ Active'}</span><small>${esc(inf)}</small><div class="tiny rte-view">${a.desc||''}</div></div></div>`;}).join(''):'<p class="tiny muted">Aucune compétence.</p>';
+  const abilitiesHtml=abList.length
+    ? abList.map(a=>`<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b> <span class="pill">Niv. ${a.level||1}</span><small>${esc(a.type)} · ${esc(a.formula)} · ${esc(a.element)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}</small><div class="tiny rte-view">${a.desc||''}</div></div></div>`).join('')
     : `<p class="tiny muted">Aucune capacité connue.</p>`;
   const instancesHtml=instances.length
     ? instances.map(i=>{
@@ -4366,7 +4412,9 @@ function myCharacterCard(c){
     <h3 style="font-size:13px;margin:14px 0 8px">Résistances élémentaires</h3>
     <div class="statgrid">${resHtml}</div>
     <h3 style="font-size:13px;margin:14px 0 8px">Capacités connues</h3>
-    ${abilitiesHtml}`;
+    ${abilitiesHtml}
+    <h3 style="font-size:13px;margin:14px 0 8px">Compétences</h3>
+    ${skillsHtml}`;
   return `<div class="card">
     <div class="row between" style="margin-bottom:14px">
       <div class="row"><div class="icon" style="width:44px;height:44px;font-size:22px;border-radius:12px;background:#2b1d3b;display:grid;place-items:center;overflow:hidden">${iconBoxHtml(c,'12px')}</div>
@@ -4387,7 +4435,7 @@ let hotbarPoolSearch='';
 let hotbarPoolTypeFilter='';
 function hotbarPoolEntries(){
   const c=char(hotbarEditChar);
-  const abilities=characterAbilities(hotbarEditChar);
+  const abilities=characterAbilities(hotbarEditChar).filter(a=>a.type!=='Compétence');
   const consumables=(c.consumablesOwned||[]).filter(o=>o.qty>0).map(o=>({id:o.id,def:(S.consumables||[]).find(x=>x.id===o.id)})).filter(x=>x.def);
   let entries=[
     ...STAT_TESTS.map(st=>({id:'stat_'+st,label:statTestLabel(st),icon:statTestIcon(st),type:'Test'})),
@@ -5355,6 +5403,7 @@ function moveSelectedTokenBy(dx,dy){
   t.x=nx; t.y=ny; t.px=null; t.py=null;
   addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
   if(S.combat.active)checkOpportunityAttacks(id,{x:oldX,y:oldY,sizeW:sw,sizeH:sh});
+  applyZoneDamageOnMove(t);
   saveState(); render();
 }
 document.addEventListener('keydown',e=>{
