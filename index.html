@@ -328,6 +328,7 @@ function normalizeState(){
     if(!Array.isArray(t.statusEffects))t.statusEffects=[];
     if(t.movementBlocked===undefined)t.movementBlocked=false;
     if(t.isKO===undefined)t.isKO=false;
+    if(!t.eqDur)t.eqDur={};
   });
   S.characters.forEach(c=>{
     if(!c.res)c.res={};
@@ -344,6 +345,8 @@ function normalizeState(){
     if(c.profileImage===undefined)c.profileImage=null;
     if(c.bio===undefined)c.bio='';
     if(c.inventory===undefined)c.inventory='';
+    if(c.critDurabilityDmg===undefined)c.critDurabilityDmg=0;
+    if(c.ultimateDurabilityDmg===undefined)c.ultimateDurabilityDmg=0;
     if(!c.oppAttack)c.oppAttack={formula:'',type:'Physique',element:'Neutre'};
     if(c.oppAttack.impactImage===undefined)c.oppAttack.impactImage=null;
     if(c.oppAttack.impactFrames===undefined)c.oppAttack.impactFrames=1;
@@ -371,6 +374,7 @@ function normalizeState(){
     if(e.weaponStat===undefined)e.weaponStat='Force';
     if(e.poids===undefined)e.poids=0;
     if(e.description===undefined)e.description='';
+    if(e.durabilityMax===undefined)e.durabilityMax=0;
   });
   S.abilities.forEach(a=>{
     if(a.element==='Gel')a.element='Glace';
@@ -813,20 +817,96 @@ function instTemplate(instance){return instance?char(instance.charId):null;}
 function characterAbilities(charId){if(!charId)return [];return S.abilities.filter(a=>(a.characterIds||[]).includes(charId));}
 function equip(id){return (S.equipment||[]).find(e=>e.id===id);}
 function naturalRes(c){return {ca:Math.ceil((c.stats?.Constitution||0)/10),dm:Math.ceil((c.stats?.Magie||0)/10)};}
-function effectiveDef(c){
+/* ---- Durabilité (armures hors anneaux/amulette, et armes) — suivie par jeton ---- */
+const DURABILITY_HIT_SLOTS={1:'torse',2:'jambes',3:'tete',4:'pieds',5:'main'};
+function slotItem(t,slotKey){const c=instTemplate(t);return c?equip(c.equipmentSlots?.[slotKey]):null;}
+function getEqDurability(t,slotKey){
+  const item=slotItem(t,slotKey);
+  if(!item||!item.durabilityMax)return null;
+  if(!t.eqDur)t.eqDur={};
+  if(t.eqDur[slotKey]===undefined)t.eqDur[slotKey]=item.durabilityMax;
+  return t.eqDur[slotKey];
+}
+function setEqDurability(t,slotKey,val){
+  const item=slotItem(t,slotKey);
+  if(!item||!item.durabilityMax)return;
+  if(!t.eqDur)t.eqDur={};
+  t.eqDur[slotKey]=Math.max(0,Math.min(item.durabilityMax,Math.round(val)));
+}
+function damageEqDurability(t,slotKey,amount){
+  const cur=getEqDurability(t,slotKey);
+  if(cur===null||!amount)return;
+  setEqDurability(t,slotKey,cur-amount);
+}
+function repairEqDurability(t,slotKey){
+  const item=slotItem(t,slotKey);
+  if(item)setEqDurability(t,slotKey,item.durabilityMax||0);
+}
+function equipStatFactor(t,slotKey){
+  const item=slotItem(t,slotKey);
+  if(!item||!item.durabilityMax)return 1;
+  const dur=getEqDurability(t,slotKey);
+  if(dur<=0)return 0;
+  if(dur<item.durabilityMax/2)return 0.5;
+  return 1;
+}
+function applyMonsterDurabilityHit(casterTpl,targetInst,targetTpl,label,lines){
+  if(!casterTpl||casterTpl.type!=='enemy'||!targetTpl||targetTpl.type!=='player'||!targetInst)return;
+  let amount=0;
+  if(label==='Réussite critique')amount=casterTpl.critDurabilityDmg||0;
+  else if(label==='Réussite ultime')amount=casterTpl.ultimateDurabilityDmg||0;
+  else return;
+  if(!amount)return;
+  const d5=1+Math.floor(Math.random()*5);
+  const slotKey=DURABILITY_HIT_SLOTS[d5];
+  const item=equip(targetTpl.equipmentSlots?.[slotKey]);
+  const slotLabel=(EQUIP_SLOTS.find(s=>s[0]===slotKey)||['',''])[1];
+  lines.push(`🎲 d5 : ${d5} → ${esc(slotLabel)} visé`);
+  if(item&&item.durabilityMax){
+    damageEqDurability(targetInst,slotKey,amount);
+    lines.push(`🔧 ${esc(item.name)} de <b>${esc(targetInst.label)}</b> perd ${amount} de durabilité (${getEqDurability(targetInst,slotKey)}/${item.durabilityMax}).`);
+  }
+}
+function degradeWeaponOnOutcome(casterInst,label){
+  if(!casterInst)return;
+  const tpl=instTemplate(casterInst); if(!tpl||tpl.type!=='player')return;
+  const w=equip(tpl.equipmentSlots?.['arme']); if(!w||w.itemType!=='weapon'||!w.durabilityMax)return;
+  if(label==='Échec critique')damageEqDurability(casterInst,'arme',1);
+  else if(label==='Échec ultime')damageEqDurability(casterInst,'arme',2);
+}
+function rollWithWeapon(formula,weaponUsed,casterInst){
+  const r=roll(formula);
+  broadcastDiceRoll(formulaSides(formula),r.rolls);
+  let total=r.total;
+  let logLine=`🎲 ${esc(formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`;
+  if(weaponUsed&&weaponUsed.damageFormula){
+    const f=casterInst?equipStatFactor(casterInst,'arme'):1;
+    if(f>0){
+      const w=roll(weaponUsed.damageFormula);
+      broadcastDiceRoll(formulaSides(weaponUsed.damageFormula),w.rolls);
+      const wt=f<1?Math.ceil(w.total*f):w.total;
+      total+=wt;
+      logLine+=` + arme « ${esc(weaponUsed.name)} »${f<1?' (abîmée, ÷2)':''} ${esc(weaponUsed.damageFormula)} : ${w.rolls.join(' + ')}${w.bonus?` + ${w.bonus}`:''} = ${wt}`;
+    }else{
+      logLine+=` + arme « ${esc(weaponUsed.name)} » : brisée (0 dégât)`;
+    }
+  }
+  return {total,logLine};
+}
+function effectiveDef(c,t){
   if(!c)return {CA:0,DM:0,'CA naturelle':0};
   if(c.type!=='player')return {CA:c.def?.CA||0,DM:c.def?.DM||0,'CA naturelle':c.def?.['CA naturelle']||0};
   const nat=naturalRes(c);
   let ca=(c.def?.CA||0)+nat.ca, dm=(c.def?.DM||0)+nat.dm;
-  if(c.equipmentSlots){EQUIP_SLOTS.forEach(([k])=>{const e=equip(c.equipmentSlots[k]);if(e){ca+=e.ca||0;dm+=e.dm||0;}});}
+  if(c.equipmentSlots){EQUIP_SLOTS.forEach(([k])=>{const e=equip(c.equipmentSlots[k]);if(e){const f=t?equipStatFactor(t,k):1;ca+=Math.ceil((e.ca||0)*f);dm+=Math.ceil((e.dm||0)*f);}});}
   return {CA:ca,DM:dm,'CA naturelle':c.def?.['CA naturelle']||0};
 }
-function effectiveRes(c){
+function effectiveRes(c,t){
   if(!c)return {};
   const out={...(c.res||{})};
   ELEMENT_RES_KEYS.forEach(k=>{if(out[k]===undefined)out[k]=0;});
   if(c.type==='player'&&c.equipmentSlots){
-    EQUIP_SLOTS.forEach(([k])=>{const e=equip(c.equipmentSlots[k]);if(e&&e.res){ELEMENT_RES_KEYS.forEach(rk=>{out[rk]=(out[rk]||0)+(e.res[rk]||0);});}});
+    EQUIP_SLOTS.forEach(([k])=>{const e=equip(c.equipmentSlots[k]);if(e&&e.res){const f=t?equipStatFactor(t,k):1;ELEMENT_RES_KEYS.forEach(rk=>{if(e.res[rk])out[rk]=(out[rk]||0)+Math.ceil(e.res[rk]*f);});}});
   }
   return out;
 }
@@ -2157,8 +2237,8 @@ function triggerAuras(casterInst){
         broadcastHud(t.id,{shield:amount});
       }else{
         let dmg=amount;
-        const def=effectiveDef(tTpl)[a.defense]||0; dmg=Math.max(0,dmg-def);
-        const resist=(effectiveRes(tTpl)[a.element]||0)/100; dmg=Math.max(0,Math.ceil(dmg*(1-resist)));
+        const def=effectiveDef(tTpl,t)[a.defense]||0; dmg=Math.max(0,dmg-def);
+        const resist=(effectiveRes(tTpl,t)[a.element]||0)/100; dmg=Math.max(0,Math.ceil(dmg*(1-resist)));
         const absorbed=Math.min(t.shield||0,dmg); t.shield-=absorbed; const hpDmg=dmg-absorbed;
         t.hp=Math.max(0,t.hp-hpDmg);
         lines.push(`✨ ${esc(t.label)} : -${hpDmg} PV`);
@@ -2190,10 +2270,10 @@ function tickStatusEffects(inst_){
       broadcastHud(inst_.id,{mana:raw});
     }else{
       let dmg=raw;
-      const def=se.defense!=='none'?(effectiveDef(tTpl)[se.defense]||0):0;
+      const def=se.defense!=='none'?(effectiveDef(tTpl,inst_)[se.defense]||0):0;
       dmg=Math.max(0,dmg-def);
       if(se.element!=='Physique'&&se.element!=='Neutre'){
-        const resist=(effectiveRes(tTpl)[se.element]||0)/100;
+        const resist=(effectiveRes(tTpl,inst_)[se.element]||0)/100;
         dmg=Math.max(0,Math.ceil(dmg*(1-resist)));
       }
       const absorbed=Math.min(inst_.shield||0,dmg); inst_.shield-=absorbed; const hpDmg=dmg-absorbed;
@@ -2621,10 +2701,10 @@ function resolveOpportunityAttack(attackerInst,targetInst){
     const w=equip(attackerTpl.equipmentSlots['arme']);
     if(w&&w.itemType==='weapon'&&w.damageFormula&&(w.weaponStat||'Force')===statKey){weaponUsed=w;weaponFormula=w.damageFormula;}
   }
-  const usedFormula=weaponFormula?combineFormula(oa.formula,weaponFormula):oa.formula;
   const atkRoll=roll('1d100'); const atk=atkRoll.total; const [label,mult]=outcome(atk);
   broadcastDiceRoll(100,[atk]);
   broadcastCritical(attackerInst.id,label);
+  degradeWeaponOnOutcome(attackerInst,label);
   const lines=[`⚡ <b>${esc(attackerInst.label)}</b> effectue une <b>attaque d'opportunité</b> sur <b>${esc(targetInst.label)}</b> !`];
   lines.push(`🎲 d100 : <b>${atk}</b> → ${label}`);
   if(mult===0){
@@ -2632,22 +2712,22 @@ function resolveOpportunityAttack(attackerInst,targetInst){
     addLog(lines.join('<br>'));
     return;
   }
-  const r=roll(usedFormula);
-  broadcastDiceRoll(formulaSides(usedFormula),r.rolls);
-  let damage=Math.ceil(r.total*mult*(attackerTpl.stats[statKey]||0)/100);
-  const def=isPhys?(effectiveDef(targetTpl).CA||0):(effectiveDef(targetTpl).DM||0);
+  const rw=rollWithWeapon(oa.formula,weaponUsed,attackerInst);
+  let damage=Math.ceil(rw.total*mult*(attackerTpl.stats[statKey]||0)/100);
+  const def=isPhys?(effectiveDef(targetTpl,targetInst).CA||0):(effectiveDef(targetTpl,targetInst).DM||0);
   damage=Math.max(0,damage-def);
   if(oa.element&&oa.element!=='Neutre'){
-    const resist=(effectiveRes(targetTpl)[oa.element]||0)/100;
+    const resist=(effectiveRes(targetTpl,targetInst)[oa.element]||0)/100;
     damage=Math.max(0,Math.ceil(damage*(1-resist)));
   }
   const absorbed=Math.min(targetInst.shield||0,damage); targetInst.shield-=absorbed; const hpDamage=damage-absorbed;
   targetInst.hp=Math.max(0,targetInst.hp-hpDamage);
-  lines.push(`🎲 ${esc(usedFormula)}${weaponUsed?` (${esc(oa.formula)} + arme « ${esc(weaponUsed.name)} » ${esc(weaponFormula)})`:''} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
+  lines.push(rw.logLine);
   lines.push(`✨ Dégâts (${esc(isPhys?'Physique':'Magique')} / ${esc(oa.element||'Neutre')}) : ${damage}${def?` (−${def} défense)`:''}`);
   if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
   lines.push(`❤️ ${esc(targetInst.label)} : -${hpDamage} PV (${targetInst.hp}/${targetInst.hpMax})`);
   broadcastHud(targetInst.id,{hp:-hpDamage,shield:absorbed>0?-absorbed:0});
+  applyMonsterDurabilityHit(attackerTpl,targetInst,targetTpl,label,lines);
   if(oa.impactImage){
     playOppImpactAt(targetInst.id,oa.impactImage,oa.impactFrames,oa.impactRows,oa.animFps);
     gameChannel?.send({type:'broadcast',event:'oppfx',payload:{targetId:targetInst.id,image:oa.impactImage,frames:oa.impactFrames,rows:oa.impactRows,fps:oa.animFps}});
@@ -2688,6 +2768,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   const atkExpr=a.atkDice||'1d100'; const atkRoll=roll(atkExpr); const atk=atkRoll.total; const [label,mult]=outcome(atk);
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
+  degradeWeaponOnOutcome(casterInst,label);
   const targets=affected(a,start,explicitTargetInstId);
   playAbilityFX(a,casterInst,targets,start);
   gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,casterId:casterInst.id,targetIds:targets.map(t=>t.id),start}});
@@ -2704,17 +2785,17 @@ function resolveAbility(a,start,explicitTargetInstId){
 
   // Pour les sorts de zone (AoE) : un seul jet de dés partagé, appliqué à toutes les cibles.
   const isAoE=a.area!=='single';
-  let sharedRoll=null, sharedUsedFormula=null;
+  let sharedRoll=null;
   if(isAoE){
     if(a.type==='Soin'||a.type==='Bouclier'){
-      sharedUsedFormula=a.formula;
       sharedRoll=roll(a.formula);
+      broadcastDiceRoll(formulaSides(a.formula),sharedRoll.rolls);
+      lines.push(`🎲 ${esc(a.formula)} : ${sharedRoll.rolls.join(' + ')}${sharedRoll.bonus?` + ${sharedRoll.bonus}`:''} = ${sharedRoll.total} <span class="tiny muted">(zone, jet unique)</span>`);
     }else{
-      sharedUsedFormula=weaponFormula?combineFormula(a.formula,weaponFormula):a.formula;
-      sharedRoll=roll(sharedUsedFormula);
+      const rw=rollWithWeapon(a.formula,weaponUsed,casterInst);
+      sharedRoll={total:rw.total};
+      lines.push(rw.logLine+' <span class="tiny muted">(zone, jet unique)</span>');
     }
-    broadcastDiceRoll(formulaSides(sharedUsedFormula),sharedRoll.rolls);
-    lines.push(`🎲 ${esc(sharedUsedFormula)}${weaponUsed?` (${esc(a.formula)} + arme « ${esc(weaponUsed.name)} » ${esc(weaponFormula)})`:''} : ${sharedRoll.rolls.join(' + ')}${sharedRoll.bonus?` + ${sharedRoll.bonus}`:''} = ${sharedRoll.total} <span class="tiny muted">(zone, jet unique)</span>`);
   }
 
   for(const t of targets){
@@ -2743,22 +2824,22 @@ function resolveAbility(a,start,explicitTargetInstId){
       continue;
     }
     if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);continue;}
-    const usedFormula=isAoE?sharedUsedFormula:(weaponFormula?combineFormula(a.formula,weaponFormula):a.formula);
-    const r=isAoE?sharedRoll:roll(usedFormula); const raw=r.total;
-    if(!isAoE)broadcastDiceRoll(formulaSides(usedFormula),r.rolls);
+    let raw;
+    if(isAoE){raw=sharedRoll.total;}
+    else{const rw=rollWithWeapon(a.formula,weaponUsed,casterInst);raw=rw.total;lines.push(rw.logLine);}
     let damage=applyMult(Math.ceil(raw*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
-    const def=(a.defense!=='none')?(effectiveDef(tTpl)[a.defense]||0):0;
+    const def=(a.defense!=='none')?(effectiveDef(tTpl,t)[a.defense]||0):0;
     damage=Math.max(0,damage-def);
-    const resist=(effectiveRes(tTpl)[a.element]||0)/100;
+    const resist=(effectiveRes(tTpl,t)[a.element]||0)/100;
     damage=Math.max(0,Math.ceil(damage*(1-resist)));
     const beforeShield=t.shield||0; const absorbed=Math.min(beforeShield,damage);
     t.shield-=absorbed; const hpDamage=damage-absorbed;
     t.hp=Math.max(0,t.hp-hpDamage);
-    if(!isAoE)lines.push(`🎲 ${esc(usedFormula)}${weaponUsed?` (${esc(a.formula)} + arme « ${esc(weaponUsed.name)} » ${esc(weaponFormula)})`:''} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${raw}`);
     lines.push(`✨ Dégâts (${esc(a.element)}) : ${damage}${def?` (−${def} défense)`:''}${resist?` (résistance ${Math.round(resist*100)}%)`:''}`);
     if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
     lines.push(`❤️ ${esc(t.label)} : -${hpDamage} PV (${t.hp}/${t.hpMax})`);
     broadcastHud(t.id,{hp:-hpDamage,shield:absorbed>0?-absorbed:0});
+    applyMonsterDurabilityHit(casterTpl,t,tTpl,label,lines);
     if(t.hp<=0){
       lines.push(`💀 <b>${esc(t.label)} est KO</b>.`);
       handleInstanceDeath(t);
@@ -2949,9 +3030,9 @@ function tickPersistentZones(nt){
       broadcastHud(nt.id,{shield:raw});
     }else{
       let dmg=raw;
-      const def=z.defense!=='none'?(effectiveDef(tTpl)[z.defense]||0):0;
+      const def=z.defense!=='none'?(effectiveDef(tTpl,nt)[z.defense]||0):0;
       dmg=Math.max(0,dmg-def);
-      const resist=(effectiveRes(tTpl)[z.element]||0)/100;
+      const resist=(effectiveRes(tTpl,nt)[z.element]||0)/100;
       dmg=Math.max(0,Math.ceil(dmg*(1-resist)));
       const absorbed=Math.min(nt.shield||0,dmg); nt.shield-=absorbed; const hpDmg=dmg-absorbed;
       nt.hp=Math.max(0,nt.hp-hpDmg);
@@ -3170,7 +3251,30 @@ function toggleHidden(id){
   c.hidden=!c.hidden;
   saveState(); render();
 }
-function equipmentSlotsHtml(base){
+function equipmentDurabilityHtml(charId){
+  const c=char(charId); if(!c||c.type!=='player')return '';
+  const insts=S.instances.filter(i=>i.charId===charId);
+  if(!insts.length)return '<p class="tiny muted">Aucun jeton sur la carte : la durabilité est suivie par jeton.</p>';
+  const out=insts.map(t=>{
+    const rows=EQUIP_SLOTS.map(([k,label])=>{
+      const item=equip(c.equipmentSlots?.[k]);
+      if(!item||!item.durabilityMax)return '';
+      const cur=getEqDurability(t,k);
+      const state=cur<=0?' 💥 brisé':(cur<item.durabilityMax/2?' ⚠️ abîmé':'');
+      return `<div class="row between" style="padding:4px 0"><span>${esc(label)} — ${esc(item.name)} : <b>${cur}/${item.durabilityMax}</b>${state}</span><button type="button" class="btn ghost" style="padding:3px 8px" onclick="repairEqDurabilitySlot('${t.id}','${k}')">🔧 Réparer</button></div>`;
+    }).join('');
+    return rows?`<div style="margin-bottom:6px"><b class="tiny">${esc(t.label)}</b>${rows}</div>`:'';
+  }).join('');
+  return out||'<p class="tiny muted">Aucun équipement destructible équipé.</p>';
+}
+function repairEqDurabilitySlot(instId,slotKey){
+  if(!isMJ())return;
+  const t=inst(instId); if(!t)return;
+  repairEqDurability(t,slotKey);
+  saveState(); openCharacter(t.charId);
+  toast('🔧 Équipement réparé.');
+}
+function equipmentSlotsHtml(base,charId){
   if(base.type!=='player')return '';
   const slots=base.equipmentSlots||{};
   const eqOpts=(cur,slotKey)=>{
@@ -3192,6 +3296,7 @@ function equipmentSlotsHtml(base){
   <label>🎒 Divers (poids uniquement, plusieurs possibles)</label>
   <div style="max-height:150px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px;margin-bottom:8px">${diversListHtml}</div>
   <div class="field"><label>⚖ Poids total porté</label><input id="c_weight_display" value="${w.toFixed(1)} kg / Force ${force} kg${weightMalusText(w,force)}" readonly style="opacity:.6"></div>
+  ${charId?`<div class="field full"><label>🔧 Durabilité (par jeton sur la carte)</label>${equipmentDurabilityHtml(charId)}</div>`:''}
   </div>`;
 }
 function updateWeightPreview(){
@@ -3205,6 +3310,7 @@ function updateWeightPreview(){
   const disp=document.getElementById('c_weight_display');
   if(disp)disp.value=`${w.toFixed(1)} kg / Force ${force} kg${weightMalusText(w,force)}`;
 }
+function toggleCharMonsterFields(){const el=document.getElementById('char_monster_durability_fields');if(el)el.style.display=document.getElementById('c_type').value==='enemy'?'':'none';}
 function switchCharModalTab(tab){
   const g=document.getElementById('charTabGeneral'), o=document.getElementById('charTabOpp');
   if(g)g.style.display=tab==='general'?'':'none';
@@ -3289,7 +3395,7 @@ function openCharacter(id){
     ${base.iconImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('c_iconimage','c_icon_preview',document.getElementById('c_icon').value)">↺ Revenir à l'emoji</button>`:''}
     ${imagePickerHtml('c_iconimage','c_icon_preview')}
   </div>
-  <div class="field"><label>Type</label><select id="c_type">${typeOpts}</select></div>
+  <div class="field"><label>Type</label><select id="c_type" onchange="toggleCharMonsterFields()">${typeOpts}</select></div>
   <div class="field"><label>Déplacement (cases/tour)</label><input id="c_move" type="number" value="${base.move??6}"></div>
   <div class="field full"><label>Joueur propriétaire (peut déplacer / lancer les sorts de ce personnage)</label><select id="c_owner">${ownerOpts}</select></div>
   <div class="field full"><label>Catégorie (dossier dans la bibliothèque)</label><select id="c_category">${catOpts}</select></div>
@@ -3297,6 +3403,13 @@ function openCharacter(id){
     <option value="false" ${!base.hidden?'selected':''}>👁 Visible des joueurs</option>
     <option value="true" ${base.hidden?'selected':''}>🙈 Caché des joueurs (MJ uniquement)</option>
   </select></div>
+  <div class="field full" id="char_monster_durability_fields" style="display:${base.type==='enemy'?'':'none'}">
+    <div class="row" style="gap:10px;flex-wrap:wrap">
+      <div class="field"><label>Durabilité critique (dégâts sur l'équipement en cas de coup critique)</label><input id="c_critdur" type="number" min="0" value="${base.critDurabilityDmg||0}"></div>
+      <div class="field"><label>Durabilité ultime (dégâts sur l'équipement en cas de coup ultime)</label><input id="c_ultdur" type="number" min="0" value="${base.ultimateDurabilityDmg||0}"></div>
+    </div>
+    <p class="tiny muted">0 = n'abîme pas l'équipement.</p>
+  </div>
   <div class="field"><label>PV maximum (automatique : Constitution × 2,5)</label><input id="c_hpmax" type="number" value="${maxHpFromCon(base.stats.Constitution)}" readonly style="opacity:.6"></div>
   <div class="field"><label>Mana maximum</label><input id="c_manamax" type="number" value="${base.resourcesMax.Mana??0}"></div>
   <div class="field"><label>Bouclier maximum</label><input id="c_shieldmax" type="number" value="${base.resourcesMax.Bouclier??0}"></div>
@@ -3321,7 +3434,7 @@ function openCharacter(id){
   <div class="field"><label>Résistance Lumière (%)</label><input id="r_lumiere" type="number" value="${base.res.Lumière??0}"></div>
   <div class="field"><label>Résistance Ténèbres (%)</label><input id="r_tenebres" type="number" value="${base.res.Ténèbres??0}"></div>
   ${bioHtml}
-  ${equipmentSlotsHtml(base)}
+  ${equipmentSlotsHtml(base,id)}
   </div>
   ${knownLine}</div>
   <div id="charTabOpp" style="display:none">${oppAttackHtml(base)}</div>
@@ -3339,6 +3452,8 @@ function saveCharacter(id){
   c.ownerId=document.getElementById('c_owner').value||null;
   c.categoryId=document.getElementById('c_category').value||null;
   c.hidden=document.getElementById('c_hidden').value==='true';
+  c.critDurabilityDmg=Math.max(0,parseNum(document.getElementById('c_critdur').value)||0);
+  c.ultimateDurabilityDmg=Math.max(0,parseNum(document.getElementById('c_ultdur').value)||0);
   c.profileImage=document.getElementById('c_profileimage').value.trim()||null;
   c.bio=rteHtml('c_bio');
   c.inventory=rteHtml('c_inventory');
@@ -3358,8 +3473,10 @@ function saveCharacter(id){
   c.oppAttack={formula:document.getElementById('oa_formula').value.trim(),type:document.getElementById('oa_type').value,element:document.getElementById('oa_element').value,impactImage:document.getElementById('oa_impact').value.trim()||null,impactFrames:Math.max(1,parseNum(document.getElementById('oa_impact_frames').value)||1),impactRows:Math.max(1,parseNum(document.getElementById('oa_impact_rows').value)||1),animFps:Math.max(1,Math.min(60,parseNum(document.getElementById('oa_animfps').value)||60))};
   if(c.type==='player'){
     c.equipmentSlots=c.equipmentSlots||{};
+    const oldSlots={...c.equipmentSlots};
     EQUIP_SLOTS.forEach(([k])=>{const el=document.getElementById('eqslot_'+k);if(el)c.equipmentSlots[k]=el.value||null;});
     c.equipmentSlots.diversIds=[...document.querySelectorAll('.eq-divers-check:checked')].map(el=>el.value);
+    S.instances.filter(i=>i.charId===c.id).forEach(ii=>{EQUIP_SLOTS.forEach(([k])=>{if(oldSlots[k]!==c.equipmentSlots[k]&&ii.eqDur)delete ii.eqDur[k];});});
   }
   if(!id)S.characters.push(c);
   S.instances.filter(i=>i.charId===c.id).forEach(i=>{
@@ -3917,11 +4034,12 @@ function equipResultsHtml(){
   if(!items.length)return '<p class="tiny muted">Aucun équipement ne correspond.</p>';
   return items.map(e=>{
     const catLabel=(EQUIP_CATEGORIES.find(c=>c[0]===e.category)||['','?'])[1];
-    const desc=e.itemType==='weapon'
+    const baseDesc=e.itemType==='weapon'
       ? `⚔ Arme · ${esc(catLabel)} · Dégâts : ${esc(e.damageFormula||'—')} · Stat : ${esc(e.weaponStat||'Force')} · ${e.poids||0} kg`
       : e.itemType==='divers'
       ? `🎒 Divers · ${e.poids||0} kg${e.description?` · ${esc(e.description).slice(0,60)}`:''}`
       : (()=>{const resTxt=ELEMENT_RES_KEYS.filter(k=>e.res[k]).map(k=>`${k} +${e.res[k]}%`).join(', ')||'Aucune résistance';return `🛡 Armure · ${esc(catLabel)} · CA +${e.ca||0} · DM +${e.dm||0} · ${resTxt} · ${e.poids||0} kg`;})();
+    const desc=baseDesc+(e.durabilityMax?` · 🔧 Durabilité ${e.durabilityMax}`:'');
     return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b><small>${desc}</small></div><button class="btn" onclick="openEquipment('${e.id}')">Modifier</button><button class="btn ghost" onclick="confirmDeleteEquipment('${e.id}')" title="Supprimer">🗑️</button></div>`;
   }).join('');
 }
@@ -3941,7 +4059,8 @@ function openEquipment(id){
     <option value="divers" ${isDivers?'selected':''}>🎒 Divers</option>
   </select></div>
   <div class="field"><label>Poids (kg)</label><input id="eq_poids" type="number" min="0" step="0.1" value="${e.poids||0}"></div>
-  <div class="field" id="eq_category_field" style="display:${(isWeapon||isDivers)?'none':''}"><label>Catégorie (emplacement)</label><select id="eq_category">${catOpts}</select></div>
+  <div class="field" id="eq_category_field" style="display:${(isWeapon||isDivers)?'none':''}"><label>Catégorie (emplacement)</label><select id="eq_category" onchange="toggleDurabilityField()">${catOpts}</select></div>
+  <div class="field" id="eq_durability_field" style="display:${(isWeapon||(!isDivers&&e.category!=='anneau'&&e.category!=='amulette'))?'':'none'}"><label>Durabilité maximale (vide ou 0 = indestructible)</label><input id="eq_durabilitymax" type="number" min="0" value="${e.durabilityMax||''}"></div>
   <div class="field full">
     <label>Icône personnalisée (petite, listes)</label>
     <div class="icon-dropzone" onclick="document.getElementById('eq_icon_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'eq_iconimage','eq_icon_preview')">
@@ -4000,6 +4119,13 @@ function toggleEquipTypeFields(){
   document.getElementById('eq_armor_fields').style.display=(!isWeapon&&!isDivers)?'contents':'none';
   document.getElementById('eq_category_field').style.display=(isWeapon||isDivers)?'none':'';
   document.getElementById('eq_desc_field').style.display=isDivers?'':'none';
+  toggleDurabilityField();
+}
+function toggleDurabilityField(){
+  const type=document.getElementById('eq_itemtype').value;
+  const cat=document.getElementById('eq_category')?.value||'';
+  const show=type==='weapon'||(type==='armor'&&cat!=='anneau'&&cat!=='amulette');
+  const f=document.getElementById('eq_durability_field'); if(f)f.style.display=show?'':'none';
 }
 function saveEquipment(id){
   if(!isMJ())return;
@@ -4011,6 +4137,7 @@ function saveEquipment(id){
   target.image=document.getElementById('eq_image').value.trim()||null;
   target.itemType=document.getElementById('eq_itemtype').value;
   target.poids=Math.max(0,parseFloat(document.getElementById('eq_poids').value)||0);
+  target.durabilityMax=Math.max(0,parseNum(document.getElementById('eq_durabilitymax')?.value)||0);
   if(target.itemType==='weapon'){
     target.category='arme';
     target.damageFormula=document.getElementById('eq_damage').value.trim()||'1d20';
@@ -4041,6 +4168,7 @@ function saveEquipment(id){
       Ténèbres:parseNum(document.getElementById('eq_r_tenebres').value)
     };
   }
+  if(target.itemType==='divers'||target.category==='anneau'||target.category==='amulette')target.durabilityMax=0;
   if(!id)S.equipment.push(target);
   saveState(); closeModal(); render();
 }
@@ -4068,14 +4196,16 @@ function myCharacterCard(c){
   const abilities=characterAbilities(c.id);
   const instances=S.instances.filter(i=>i.charId===c.id);
   const statsHtml=Object.entries(c.stats||{}).map(([k,v])=>`<div class="stat"><label>${esc(k)}</label><strong>${v}</strong></div>`).join('');
-  const eDef=effectiveDef(c), eRes=effectiveRes(c);
+  const myInst=S.instances.find(i=>i.charId===c.id);
+  const eDef=effectiveDef(c,myInst), eRes=effectiveRes(c,myInst);
   const defHtml=`<div class="stat"><label>Classe d'armure</label><strong>${eDef.CA??0}</strong></div><div class="stat"><label>Défense magique</label><strong>${eDef.DM??0}</strong></div>`;
   const resHtml=ELEMENT_RES_KEYS.map(k=>`<div class="stat"><label>${esc(k)}</label><strong>${eRes[k]??0}%</strong></div>`).join('');
   const nat=naturalRes(c);
   const equippedHtml=(c.type==='player'&&c.equipmentSlots)?EQUIP_SLOTS.map(([k,label])=>{
     const item=equip(c.equipmentSlots[k]); if(!item)return '';
     const resTxt=ELEMENT_RES_KEYS.filter(rk=>item.res?.[rk]).map(rk=>`${rk} +${item.res[rk]}%`).join(', ');
-    const statsLine=item.itemType==='weapon'?`⚔ Dégâts : ${esc(item.damageFormula||'—')} (s'ajoutent aux capacités liées à ${esc(item.weaponStat||'Force')})`:`CA +${item.ca||0} · DM +${item.dm||0}${resTxt?` · ${resTxt}`:''}`;
+    const durTxt=item.durabilityMax?` · 🔧 ${myInst?getEqDurability(myInst,k):item.durabilityMax}/${item.durabilityMax}`:'';
+    const statsLine=(item.itemType==='weapon'?`⚔ Dégâts : ${esc(item.damageFormula||'—')} (s'ajoutent aux capacités liées à ${esc(item.weaponStat||'Force')})`:`CA +${item.ca||0} · DM +${item.dm||0}${resTxt?` · ${resTxt}`:''}`)+durTxt;
     return `<div class="row" style="gap:10px;margin-bottom:8px;padding:6px;background:#20232a;border-radius:8px;align-items:center;flex-wrap:wrap">
       ${item.image?`<img src="${esc(item.image)}" style="max-width:100%;border-radius:8px;flex-shrink:0">`:`<div class="icon-preview" style="width:40px;height:40px;font-size:20px;flex-shrink:0">${iconInlineHtml(item,20)}</div>`}
       <div><b>${esc(label)} :</b> ${esc(item.name)}<br><span class="tiny muted">${statsLine}</span></div>
