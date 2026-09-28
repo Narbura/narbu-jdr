@@ -289,6 +289,7 @@ function normalizeState(){
   if(S.map.backgroundImage===undefined)S.map.backgroundImage=null;
   if(!S.combat)S.combat=structuredClone(DEFAULT.combat);
   if(S.freeMovement===undefined)S.freeMovement=false;
+  if(S.friendlyFire===undefined)S.friendlyFire=false;
   if(!S.characters)S.characters=[];
   if(!S.abilities)S.abilities=[];
   if(!S.consumables)S.consumables=[];
@@ -1296,6 +1297,12 @@ function toggleFreeMovement(){
   }
   saveState(); render();
 }
+function toggleFriendlyFire(){
+  if(!isMJ()){toast('⛔ Seul le MJ peut activer/désactiver le tir allié.');return;}
+  S.friendlyFire=!S.friendlyFire;
+  addLog(S.friendlyFire?'⚔ Le MJ active le tir allié (les alliés peuvent se cibler entre eux).':'⚔ Le MJ désactive le tir allié.');
+  saveState(); render();
+}
 function toggleHudEnabled(){
   if(!isMJ()){toast('⛔ Seul le MJ peut activer/désactiver le HUD.');return;}
   S.hudEnabled=!S.hudEnabled;
@@ -1505,6 +1512,7 @@ function tablePage(){
         </div>
       </div>
       <button class="btn ${S.hudEnabled?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleHudEnabled()" title="${isMJ()?'Activer/désactiver le HUD flottant (dégâts/soins) et les pop-ups de critiques':'Seul le MJ peut activer cette option'}">🎯 HUD${S.hudEnabled?' : ON':''}</button>
+      <button class="btn ${S.friendlyFire?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleFriendlyFire()" title="${isMJ()?'Autoriser/interdire les attaques entre alliés (joueurs entre eux, monstres entre eux)':'Seul le MJ peut activer cette option'}">⚔ Tir allié${S.friendlyFire?' : ON':''}</button>
       <button class="btn ${S.freeMovement?'primary':''}" ${(isMJ()&&!S.combat.active)?'':'disabled'} onclick="toggleFreeMovement()" title="${S.combat.active?'Indisponible pendant le combat — les tokens sont alignés sur la grille':(isMJ()?'Activer/désactiver le placement libre des tokens (hors combat)':'Seul le MJ peut activer cette option')}">🎯 Placement libre${S.freeMovement?' : ON':''}</button>
       ${combatControls}
     </div>
@@ -2805,7 +2813,7 @@ function affected(a,start,explicitTargetInstId){
       if(!t)return [];
       // Les sorts de soutien peuvent cibler le lanceur lui-même ; les sorts offensifs non.
       if(!isSupport&&t.id===selectedToken)return [];
-      return instTemplate(t)?.type===targetType?[t]:[];
+      return ((!isSupport&&S.friendlyFire)||instTemplate(t)?.type===targetType)?[t]:[];
     }
     const pool=S.instances.filter(i=>(isSupport||i.id!==selectedToken)&&instTemplate(i)?.type===targetType);
     let best=null,bestd=999;
@@ -2922,6 +2930,13 @@ function resolveAbility(a,start,explicitTargetInstId){
   if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
     toast(`🚫 Mana insuffisant (${casterInst.mana}/${a.manaCost}) pour lancer ${a.name} — choisis une autre action.`);
     activeAbility=null; hoverCell=null; render(); return;
+  }
+  if(a.area==='single'){
+    const isSup=(a.type==='Soin'||a.type==='Bouclier');
+    if(!explicitTargetInstId||!affected(a,start,explicitTargetInstId).length){
+      toast(isSup?"🚫 Il n'y a aucun allié là où vous visez actuellement.":"🚫 Il n'y a aucun ennemi là où vous visez actuellement.");
+      return;
+    }
   }
   if(a.range&&a.range>0){
     const casterSW=casterInst.sizeW||1, casterSH=casterInst.sizeH||1;
@@ -3502,7 +3517,7 @@ function equipmentSlotsHtml(base,charId){
   const nat=naturalRes(base);
   const diversItems=(S.equipment||[]).filter(e=>e.itemType==='divers');
   const diversIds=slots.diversIds||[];
-  const diversListHtml=diversItems.length?diversItems.map(e=>`<label class="ability-char-item"><input type="checkbox" class="eq-divers-check" value="${esc(e.id)}" ${diversIds.includes(e.id)?'checked':''} onchange="updateWeightPreview()"> <span>${iconInlineHtml(e)} ${esc(e.name)} <small class="muted">(${e.poids||0} kg)</small></span></label>`).join(''):'<p class="tiny muted">Aucun équipement "Divers" créé (page 🎒 Équipement).</p>';
+  const diversListHtml=diversItems.length?`<input id="divers_search" placeholder="🔎 Rechercher un équipement divers…" oninput="filterDiversList()" style="margin-bottom:6px">`+diversItems.map(e=>`<label class="ability-char-item" data-name="${esc(e.name.toLowerCase())}"><input type="checkbox" class="eq-divers-check" value="${esc(e.id)}" ${diversIds.includes(e.id)?'checked':''} onchange="updateWeightPreview()"> <span>${iconInlineHtml(e)} ${esc(e.name)} <small class="muted">(${e.poids||0} kg)</small></span></label>`).join(''):'<p class="tiny muted">Aucun équipement "Divers" créé (page 🎒 Équipement).</p>';
   const w=characterTotalWeight(base), force=base.stats?.Force||0;
   return `<div class="field full"><label>🎒 Équipement (seul le MJ peut équiper)</label>
   <div class="statgrid" style="grid-template-columns:repeat(3,1fr)">
@@ -3515,6 +3530,12 @@ function equipmentSlotsHtml(base,charId){
   <div class="field"><label>⚖ Poids total porté</label><input id="c_weight_display" value="${w.toFixed(1)} kg / Force ${force} kg${weightMalusText(w,force)}" readonly style="opacity:.6"></div>
   ${charId?`<div class="field full"><label>🔧 Durabilité de l'équipement</label>${equipmentDurabilityHtml(charId)}</div>`:''}
   </div>`;
+}
+function filterDiversList(){
+  const q=(document.getElementById('divers_search')?.value||'').trim().toLowerCase();
+  document.querySelectorAll('#modal .ability-char-item[data-name]').forEach(el=>{
+    el.style.display=el.dataset.name.includes(q)?'grid':'none';
+  });
 }
 function updateWeightPreview(){
   let w=0;
@@ -4476,7 +4497,7 @@ function showTokenMenu(x,y,instId){
   closeTokenMenu();
   const t=inst(instId); const tpl=t&&instTemplate(t); if(!tpl)return;
   let items='';
-  if(isMJ())items+=`<button class="btn ghost" onclick="openSheetModal('${tpl.id}')">📄 Consulter la fiche du personnage</button>`;
+  if(isMJ())items+=`<button class="btn ghost" onclick="openSheetModal('${tpl.id}')">📄 Consulter la fiche du personnage</button><button class="btn ghost" onclick="openCharacter('${tpl.id}')">✏️ Modifier la fiche du personnage</button>`;
   if(tpl.type==='player'){const on=getShowXpSet().includes(tpl.id);items+=`<button class="btn ghost" onclick="toggleShowXp('${tpl.id}')">${on?'🙈 Cacher l’expérience':'⭐ Afficher l’expérience'}</button>`;}
   if(!items)return;
   const m=document.createElement('div'); m.id='tokenMenu'; m.className='token-menu';
