@@ -328,6 +328,8 @@ function normalizeState(){
     if(!Array.isArray(t.statusEffects))t.statusEffects=[];
     if(t.movementBlocked===undefined)t.movementBlocked=false;
     if(t.isKO===undefined)t.isKO=false;
+    if(t.origForm===undefined)t.origForm=null;
+    if(!t.savedForms)t.savedForms={};
   });
   S.characters.forEach(c=>{
     if(!c.res)c.res={};
@@ -384,6 +386,7 @@ function normalizeState(){
     if(a.transformCharId===undefined)a.transformCharId=null;
     if(a.triggerOnDeath===undefined)a.triggerOnDeath=false;
     if(a.hotkey===undefined)a.hotkey=null;
+    if(a.allowRevert===undefined)a.allowRevert=false;
     if(a.atkDice===undefined)a.atkDice='1d100';
     if(a.coneStart===undefined)a.coneStart=1;
     if(a.coneEnd===undefined)a.coneEnd=3;
@@ -1456,6 +1459,7 @@ function tablePage(){
         }).join('');
         abilitiesHtml+=consumablesButtonsHtml(selInst);
         }
+        abilitiesHtml+=revertButtonHtml(selInst);
       }else{
         abilitiesHtml='<span class="tiny muted">Vous ne contrôlez pas ce personnage.</span>';
       }
@@ -3187,23 +3191,56 @@ function startAbility(id){
   activeAbility=id; hoverCell=null; render();
   toast(pendingPersistentOrigin?'🎯 Choisis la direction du sort (clique pour confirmer)':'🎯 Ciblage : clique sur une cible ou une case (Échap pour annuler)');
 }
-function transformInstance(instId,targetCharId){
+function transformInstance(instId,targetCharId,allowRevert){
   const t=inst(instId); const newChar=char(targetCharId);
   if(!t||!newChar)return false;
+  if(allowRevert){
+    if(!t.origForm)t.origForm={charId:t.charId,label:t.label,hp:t.hp,hpMax:t.hpMax,mana:t.mana,manaMax:t.manaMax,shield:t.shield,shieldMax:t.shieldMax};
+  }else t.origForm=null;
+  t.savedForms=t.savedForms||{};
+  const sv=allowRevert?t.savedForms[targetCharId]:null;
   t.charId=targetCharId;
   t.label=newChar.name;
-  t.hpMax=newChar.resourcesMax?.Vie||1; t.hp=t.hpMax;
-  t.manaMax=newChar.resourcesMax?.Mana||0; t.mana=t.manaMax;
-  t.shieldMax=newChar.resourcesMax?.Bouclier||0; t.shield=t.shieldMax;
+  if(sv){
+    t.hpMax=sv.hpMax; t.hp=sv.hp; t.manaMax=sv.manaMax; t.mana=sv.mana; t.shieldMax=sv.shieldMax; t.shield=sv.shield;
+  }else{
+    t.hpMax=newChar.resourcesMax?.Vie||1; t.hp=t.hpMax;
+    t.manaMax=newChar.resourcesMax?.Mana||0; t.mana=t.manaMax;
+    t.shieldMax=newChar.resourcesMax?.Bouclier||0; t.shield=t.shieldMax;
+  }
   t.isKO=false; t.movementBlocked=false;
   return true;
+}
+function revertButtonHtml(selInst){
+  if(!selInst||!selInst.origForm)return '';
+  return `<button class="btn" onclick="revertTransformation()" title="Reprendre ta forme d'origine (PV / mana / bouclier d'avant la transformation)">↩️ Détransformer</button>`;
+}
+function revertTransformation(){
+  if(!selectedToken){toast('Sélectionne d’abord un personnage.');return;}
+  if(!canControlInstance(selectedToken)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
+  if(S.combat.active&&S.combat.order[S.combat.turn]!==selectedToken){toast('⏳ Ce n’est pas le tour de ce personnage.');return;}
+  const t=inst(selectedToken); if(!t||!t.origForm)return;
+  const o=t.origForm;
+  if(!char(o.charId)){toast('⚠️ La forme d’origine n’existe plus.');return;}
+  const fromName=t.label;
+  t.savedForms=t.savedForms||{};
+  t.savedForms[t.charId]={hp:t.hp,hpMax:t.hpMax,mana:t.mana,manaMax:t.manaMax,shield:t.shield,shieldMax:t.shieldMax};
+  t.charId=o.charId; t.label=o.label;
+  t.hpMax=o.hpMax; t.hp=Math.max(1,o.hp);
+  t.manaMax=o.manaMax; t.mana=o.mana;
+  t.shieldMax=o.shieldMax; t.shield=o.shield;
+  t.origForm=null; t.isKO=false; t.movementBlocked=false;
+  addLog(`↩️ <b>${esc(fromName)}</b> reprend sa forme d'origine : <b>${esc(t.label)}</b>.`);
+  activeAbility=null; hoverCell=null;
+  if(S.combat.active&&S.combat.order[S.combat.turn]===t.id)advanceTurn();
+  saveState(); render();
 }
 function castTransformation(a){
   if(!a.transformCharId||!char(a.transformCharId)){toast('⚠️ Cette capacité n’a pas de personnage de transformation valide.');return;}
   const caster=inst(selectedToken); if(!caster)return;
   const fromName=caster.label;
   if(a.manaCost>0)caster.mana=Math.max(0,(caster.mana||0)-a.manaCost);
-  transformInstance(caster.id,a.transformCharId);
+  transformInstance(caster.id,a.transformCharId,a.allowRevert);
   addLog(`🔄 <b>${esc(fromName)}</b> se transforme en <b>${esc(caster.label)}</b> (${esc(a.name)}).`);
   activeAbility=null; hoverCell=null;
   if(S.combat.active&&S.combat.order[S.combat.turn]===caster.id)advanceTurn();
@@ -3216,7 +3253,7 @@ function handleInstanceDeath(t){
   if(usable){
     const fromName=t.label;
     if(usable.manaCost>0)t.mana=Math.max(0,(t.mana||0)-usable.manaCost);
-    transformInstance(t.id,usable.transformCharId);
+    transformInstance(t.id,usable.transformCharId,usable.allowRevert);
     addLog(`💀➡️🔄 <b>${esc(fromName)}</b> tombe à 0 PV et se transforme automatiquement en <b>${esc(t.label)}</b> (${esc(usable.name)}).`);
   }else if(tpl&&tpl.type==='player'){
     if(t.isKO){
@@ -3609,7 +3646,14 @@ function openAbility(id){
   <div class="field" id="ability_passif_extra" style="display:${a.type==='Passif'?'':'none'}"><label>Effet de l'aura</label><select id="a_auraeffect">${opt('damage','Dégâts',a.auraEffect)}${opt('heal','Soin',a.auraEffect)}${opt('shield','Bouclier',a.auraEffect)}</select><p class="tiny muted">Aura auto-centrée sur le lanceur (zone = Carré ou Cercle uniquement), se déclenche à chaque début de son tour.</p></div>
   <div class="field" id="ability_buff_extra" style="display:${(a.type==='Buff'||a.type==='Persistant')?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.duration||3}"><p class="tiny muted">${a.type==='Persistant'?"Nombre de tours avant que la zone persistante ne s'estompe. Chaque token qui commence son tour dans la zone subit l'effet (calculé comme si le lanceur agissait à chaque fois).":"Cible unique ou zone (voir champ Zone ci-dessous). Effet auto à chaque début de tour de la/les cible(s) pendant N tours. Choisis toi-même la défense ciblée (dont « Aucune »)."}</p></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
-    <div class="field full"><label>Se transforme en</label><input id="a_transformchar_search" placeholder="Rechercher un personnage par nom…" oninput="filterTransformCharSelect()"><select id="a_transformchar" size="6" style="margin-top:6px">${transformCharOpts}</select></div>
+    <div class="field full"><label>Se transforme en</label>
+    <input type="hidden" id="a_transformchar" value="${esc(a.transformCharId||'')}">
+    <button type="button" class="btn" id="a_transformchar_btn" style="text-align:left" onclick="toggleTransformDropdown()">${esc(char(a.transformCharId)?.name||'— Choisir un personnage —')} ▾</button>
+    <div id="a_transformchar_panel" style="display:none;border:1px solid #3a3e48;border-radius:8px;padding:6px;margin-top:4px">
+      <input id="a_transformchar_search" placeholder="Rechercher un personnage par nom…" oninput="filterTransformCharSelect()">
+      <div style="max-height:180px;overflow:auto;margin-top:6px">${S.characters.map(c=>`<div class="asset-item" style="cursor:pointer" data-name="${esc(c.name.toLowerCase())}" onclick="selectTransformChar('${c.id}')">${iconInlineHtml(c)} ${esc(c.name)}</div>`).join('')}</div>
+    </div></div>
+    <div class="field full"><label><input type="checkbox" id="a_allowrevert" ${a.allowRevert?'checked':''}> Permettre la détransformation (le personnage transformé gagne la capacité « Détransformer » et retrouve ses PV / mana / bouclier d'avant)</label></div>
     <div class="field full"><label><input type="checkbox" id="a_triggerondeath" ${a.triggerOnDeath?'checked':''}> Activer automatiquement cette transformation à la mort du personnage (si assez de mana)</label></div>
   </div>
   <div id="ability_normal_fields" style="display:${isTransfo?'none':'contents'}">
@@ -3684,11 +3728,16 @@ function openAbility(id){
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveAbility('${id||''}')">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
 }
+function toggleTransformDropdown(){const p=document.getElementById('a_transformchar_panel');if(p)p.style.display=p.style.display==='none'?'block':'none';}
+function selectTransformChar(id){
+  document.getElementById('a_transformchar').value=id;
+  const c=char(id);
+  document.getElementById('a_transformchar_btn').textContent=(c?c.name:'— Choisir un personnage —')+' ▾';
+  document.getElementById('a_transformchar_panel').style.display='none';
+}
 function filterTransformCharSelect(){
   const q=(document.getElementById('a_transformchar_search')?.value||'').trim().toLowerCase();
-  document.querySelectorAll('#a_transformchar option').forEach(o=>{
-    o.style.display=o.text.toLowerCase().includes(q)?'':'none';
-  });
+  document.querySelectorAll('#a_transformchar_panel [data-name]').forEach(o=>{o.style.display=o.dataset.name.includes(q)?'':'none';});
 }
 function toggleAreaFields(){
   const v=document.getElementById('a_area').value;
@@ -3727,6 +3776,7 @@ function saveAbility(id){
   if(target.type==='Transformation'){
     target.transformCharId=document.getElementById('a_transformchar').value||null;
     target.triggerOnDeath=document.getElementById('a_triggerondeath').checked;
+    target.allowRevert=document.getElementById('a_allowrevert').checked;
     target.formula='0'; target.stat='Force'; target.defense='none'; target.element='Neutre';
     target.area='single'; target.areaSize=1; target.range=0; target.desc=''; target.effect=''; target.dmgMult=''; target.atkDice='1d100';
   }else{
@@ -3753,7 +3803,7 @@ function saveAbility(id){
     target.impactFrames=Math.max(1,+document.getElementById('a_impact_frames').value||1);
     target.impactRows=Math.max(1,+document.getElementById('a_impact_rows').value||1);
     target.animFps=Math.max(1,Math.min(60,+document.getElementById('a_animfps').value||60));
-    target.transformCharId=null; target.triggerOnDeath=false;
+    target.transformCharId=null; target.triggerOnDeath=false; target.allowRevert=false;
     target.auraEffect=document.getElementById('a_auraeffect')?document.getElementById('a_auraeffect').value:'damage';
     target.duration=Math.max(1,+(document.getElementById('a_duration')?.value)||3);
     if(target.type==='Passif'){
