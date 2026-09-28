@@ -349,8 +349,6 @@ function normalizeState(){
     if(c.profileImage===undefined)c.profileImage=null;
     if(!(c.level>=1))c.level=1; if(!(c.xp>=0))c.xp=0; if(!(c.xpValue>=0))c.xpValue=0;
     if(c.bio===undefined)c.bio='';
-    if(!Array.isArray(c.statHistory))c.statHistory=[];
-    if(!(c.statPointsSpent>=0))c.statPointsSpent=0;
     if(c.inventory===undefined)c.inventory='';
     if(!c.eqDur)c.eqDur={};
     if(c.critDurabilityDmg===undefined)c.critDurabilityDmg=0;
@@ -569,7 +567,7 @@ function subscribeRealtime(){
     })
     .on('broadcast',{event:'oppfx'},payload=>{
       const d=payload.payload||{};
-      if(currentPage==='table')playOppImpactAt(d.targetId,d.image,d.frames,d.rows,d.fps);
+      if(currentPage==='table')playOppImpactAt(d.targetId,d.image,d.frames,d.rows,d.fps,d.auto);
     })
     .on('broadcast',{event:'dice'},payload=>{
       const d=payload.payload||{};
@@ -826,60 +824,6 @@ function syncSheetInputs(){
   });
 }
 function xpNeeded(level){let n=10;for(let i=1;i<(level||1);i++)n=Math.floor(n*1.5);return n;}
-/* ---- Points de caractéristique gagnés par niveau ---- */
-function levelPointsEarned(lvl){let n=0;for(let l=2;l<=(lvl||1);l++)n+=(l%5===0)?20:5;return n;}
-function statPointsAvailable(c){return Math.max(0,levelPointsEarned(c.level||1)-(c.statPointsSpent||0));}
-function statStep(val){return val<50?{gain:2,cost:1}:val<100?{gain:1,cost:1}:{gain:1,cost:2};}
-let pendingStats={};
-function pendingSim(c){
-  const vals={...(c.stats||{})}; let cost=0;
-  (pendingStats[c.id]||[]).forEach(s=>{const st=statStep(vals[s]||0);vals[s]=(vals[s]||0)+st.gain;cost+=st.cost;});
-  return {vals,cost};
-}
-function refreshSheet(cid){if(sheetModalChar===cid)refreshSheetModal();else render();}
-function statPointUp(cid,stat){
-  const c=char(cid); if(!c||!canControlChar(cid))return;
-  const sim=pendingSim(c), st=statStep(sim.vals[stat]||0);
-  if(statPointsAvailable(c)-sim.cost<st.cost){toast('⚠️ Pas assez de points.');return;}
-  (pendingStats[cid]=pendingStats[cid]||[]).push(stat);
-  refreshSheet(cid);
-}
-function statPointDown(cid,stat){
-  const arr=pendingStats[cid]||[]; const i=arr.lastIndexOf(stat); if(i<0)return;
-  arr.splice(i,1); refreshSheet(cid);
-}
-function cancelStatPoints(cid){pendingStats[cid]=[];refreshSheet(cid);}
-function confirmStatPoints(cid){
-  const c=char(cid); if(!c||!canControlChar(cid))return;
-  const steps=pendingStats[cid]||[]; if(!steps.length)return;
-  steps.forEach(s=>{
-    const st=statStep(c.stats[s]||0);
-    c.stats[s]=(c.stats[s]||0)+st.gain;
-    c.statPointsSpent=(c.statPointsSpent||0)+st.cost;
-    (c.statHistory=c.statHistory||[]).push({stat:s,gain:st.gain,cost:st.cost});
-  });
-  pendingStats[cid]=[];
-  syncConstitution(c);
-  addLog(`✨ <b>${esc(c.name)}</b> répartit ses points de caractéristique.`);
-  saveState(); refreshSheet(cid);
-}
-function syncConstitution(c){
-  c.resourcesMax=c.resourcesMax||{};
-  c.resourcesMax.Vie=maxHpFromCon(c.stats.Constitution);
-  S.instances.filter(i=>i.charId===c.id).forEach(i=>{i.hpMax=c.resourcesMax.Vie;i.hp=Math.min(i.hp,i.hpMax);});
-}
-/* Si le niveau baisse : annule les gains de stats (les plus récents d'abord) tant que les points dépensés dépassent ceux du niveau */
-function reconcileLevelPoints(c){
-  c.statHistory=c.statHistory||[]; c.statPointsSpent=c.statPointsSpent||0;
-  const earned=levelPointsEarned(c.level||1);
-  while(c.statPointsSpent>earned&&c.statHistory.length){
-    const h=c.statHistory.pop();
-    c.stats[h.stat]=Math.max(0,(c.stats[h.stat]||0)-h.gain);
-    c.statPointsSpent-=h.cost;
-  }
-  if(c.statPointsSpent>earned)c.statPointsSpent=earned;
-  pendingStats[c.id]=[];
-}
 function awardXp(killerInst,deadTpl){
   const k=killerInst?instTemplate(killerInst):null;
   if(!k||k.type!=='player'||!deadTpl||deadTpl.type!=='enemy')return;
@@ -1055,7 +999,7 @@ function playDiceRoll(sides,values){
       canvas.width=size; canvas.height=size; canvas.style.cssText=`width:${size}px;height:${size}px`;
       overlay.appendChild(canvas);
       const targetFrame=Math.max(0,Math.min(frames-1,v-1));
-      activeDice.push({canvas,ctx:canvas.getContext('2d'),img:getFxImg(ds.image),frames,rows,fps,start:performance.now()+i*80,spinMs:650,holdMs:1300,targetFrame,size,landed:false});
+      activeDice.push({canvas,ctx:canvas.getContext('2d'),img:getFxImg(ds.image,ds.spriteAuto),frames,rows,fps,start:performance.now()+i*80,spinMs:650,holdMs:1300,targetFrame,size,landed:false});
       if(!diceRafRunning){diceRafRunning=true;requestAnimationFrame(diceLoop);}
     }else{
       const die=document.createElement('div');
@@ -1091,6 +1035,7 @@ function dicePage(){
     <div class="field" style="max-width:180px"><label>Nombre de frames (faces)</label><input id="dice_frames" type="number" min="1" value="${ds.frames??20}"></div>
     <div class="field" style="max-width:180px"><label>Nombre de lignes</label><input id="dice_rows" type="number" min="1" value="${ds.rows??4}"></div>
     <div class="field" style="max-width:180px"><label>Vitesse de rotation (FPS)</label><input id="dice_fps" type="number" min="1" max="60" value="${ds.fps??24}"></div>
+    <label class="row" style="gap:6px"><input type="checkbox" id="dice_spriteauto" ${ds.spriteAuto?'checked':''}> ✂️ Sprites rognés (détection auto)</label>
   </div>
   <div class="row" style="gap:8px;margin-top:10px">
     <button class="btn primary" onclick="saveDiceImage()">Enregistrer</button>
@@ -1113,6 +1058,7 @@ function saveDiceImage(){
   S.diceSettings.frames=Math.max(1,parseNum(document.getElementById('dice_frames').value)||20);
   S.diceSettings.rows=Math.max(1,parseNum(document.getElementById('dice_rows').value)||4);
   S.diceSettings.fps=Math.max(1,Math.min(60,parseNum(document.getElementById('dice_fps').value)||24));
+  S.diceSettings.spriteAuto=document.getElementById('dice_spriteauto').checked;
   saveState(); render();
   toast('✅ Réglages du dé enregistrés.');
 }
@@ -1727,10 +1673,54 @@ function updateZonePreview(){
 
 /* ============================= ANIMATIONS DE SORTS (FX) ============================= */
 const fxImgCache={};
-function getFxImg(url){
+function getFxImg(url,auto){
   if(!url)return null;
-  if(!fxImgCache[url]){const im=new Image();im.crossOrigin='anonymous';im.src=url;fxImgCache[url]=im;}
-  return fxImgCache[url];
+  const k=url+(auto?'#auto':'');
+  if(!fxImgCache[k]){const im=new Image();im.crossOrigin='anonymous';im.src=url;im._auto=!!auto;fxImgCache[k]=im;}
+  return fxImgCache[k];
+}
+/* Détection auto des sprites rognés : repère chaque sprite par sa zone non transparente */
+function occRuns(a,n){
+  const r=[]; let s=-1;
+  for(let i=0;i<=a.length;i++){ if(i<a.length&&a[i]){if(s<0)s=i;} else if(s>=0){r.push([s,i]);s=-1;} }
+  while(r.length>n){let bi=0,bg=1e9;for(let i=0;i<r.length-1;i++){const g=r[i+1][0]-r[i][1];if(g<bg){bg=g;bi=i;}}r.splice(bi,2,[r[bi][0],r[bi+1][1]]);}
+  return r.length===n?r:null;
+}
+function detectSpriteRects(img,frames,rows){
+  const key=frames+'x'+rows;
+  img._rects=img._rects||{};
+  if(img._rects[key]!==undefined)return img._rects[key];
+  let res=null;
+  try{
+    const W=img.naturalWidth,H=img.naturalHeight;
+    const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+    const cx=cv.getContext('2d',{willReadFrequently:true}); cx.drawImage(img,0,0);
+    const d=cx.getImageData(0,0,W,H).data;
+    const px=(x,y)=>d[(y*W+x)*4+3]>8;
+    const rowOcc=new Array(H).fill(false);
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++){if(px(x,y)){rowOcc[y]=true;break;}}
+    const bands=occRuns(rowOcc,rows);
+    if(bands){
+      const cols=Math.ceil(frames/rows), list=[];
+      let ok=true;
+      for(let b=0;b<bands.length&&ok;b++){
+        const [y0,y1]=bands[b];
+        const count=Math.min(cols,frames-b*cols); if(count<=0)break;
+        const colOcc=new Array(W).fill(false);
+        for(let x=0;x<W;x++)for(let y=y0;y<y1;y++){if(px(x,y)){colOcc[x]=true;break;}}
+        const cr=occRuns(colOcc,count);
+        if(!cr){ok=false;break;}
+        cr.forEach(([x0,x1])=>{
+          let ymin=y1,ymax=y0;
+          for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){if(px(x,y)){if(y<ymin)ymin=y;if(y>ymax)ymax=y;break;}}
+          list.push({x:x0,y:ymin,w:x1-x0,h:ymax-ymin+1});
+        });
+      }
+      if(ok&&list.length===frames)res={list,maxW:Math.max(...list.map(r=>r.w)),maxH:Math.max(...list.map(r=>r.h))};
+    }
+  }catch(e){ res=null; }
+  img._rects[key]=res;
+  return res;
 }
 const fxAvgColorCache={};
 function getAvgColorFromImage(url,cb){
@@ -1797,6 +1787,14 @@ function fxLoop(now){
 function fxDrawFrame(ctx,img,frame,frames,rows,dx,dy,dw,dh){
   if(!img||!img.complete||!img.naturalWidth)return;
   rows=rows||1;
+  if(img._auto){
+    const rc=detectSpriteRects(img,frames,rows);
+    if(rc&&rc.list[frame]){
+      const r=rc.list[frame], w=r.w*dw/rc.maxW, h=r.h*dh/rc.maxH;
+      ctx.drawImage(img,r.x,r.y,r.w,r.h,dx+(dw-w)/2,dy+(dh-h)/2,w,h);
+      return;
+    }
+  }
   const cols=Math.max(1,Math.ceil(frames/rows));
   const fw=img.naturalWidth/cols, fh=img.naturalHeight/rows;
   const row=Math.floor(frame/cols), col=frame%cols;
@@ -1911,8 +1909,8 @@ function playAbilityFX(a,casterInst,targets,start){
   if(!casterInst)return;
   ensureFxCanvas();
   const cell=S.map.cell, fps=a.animFps||60;
-  const projImg=a.projectileImage?getFxImg(a.projectileImage):null;
-  const impactImg=a.impactSpritesheet?getFxImg(a.impactSpritesheet):null;
+  const projImg=a.projectileImage?getFxImg(a.projectileImage,a.spriteAuto):null;
+  const impactImg=a.impactSpritesheet?getFxImg(a.impactSpritesheet,a.spriteAuto):null;
   const projFrames=Math.max(1,a.projectileFrames||1);
   const projRows=Math.max(1,a.projectileRows||1);
   const impactFrames=Math.max(1,a.impactFrames||1);
@@ -2777,14 +2775,14 @@ function checkOpportunityAttacks(moverId,oldBox){
     if(wasAdj&&!nowAdj)resolveOpportunityAttack(ot,mover);
   });
 }
-function playOppImpactAt(targetId,image,frames,rows,fps){
+function playOppImpactAt(targetId,image,frames,rows,fps,auto){
   if(!image)return;
   const t=inst(targetId); if(!t)return;
   ensureFxCanvas();
   const cell=S.map.cell;
   const [cx,cy]=instCenterPx(t);
   const size=Math.max(cell*1.4,Math.max(t.sizeW||1,t.sizeH||1)*cell*1.4);
-  fxAddImpact(getFxImg(image),Math.max(1,frames||1),Math.max(1,rows||1),cx,cy,size,size,Math.max(1,fps||60));
+  fxAddImpact(getFxImg(image,auto),Math.max(1,frames||1),Math.max(1,rows||1),cx,cy,size,size,Math.max(1,fps||60));
 }
 function resolveOpportunityAttack(attackerInst,targetInst){
   const attackerTpl=instTemplate(attackerInst), targetTpl=instTemplate(targetInst);
@@ -2825,8 +2823,8 @@ function resolveOpportunityAttack(attackerInst,targetInst){
   broadcastHud(targetInst.id,{hp:-hpDamage,shield:absorbed>0?-absorbed:0});
   applyMonsterDurabilityHit(attackerTpl,targetInst,targetTpl,label,lines);
   if(oa.impactImage){
-    playOppImpactAt(targetInst.id,oa.impactImage,oa.impactFrames,oa.impactRows,oa.animFps);
-    gameChannel?.send({type:'broadcast',event:'oppfx',payload:{targetId:targetInst.id,image:oa.impactImage,frames:oa.impactFrames,rows:oa.impactRows,fps:oa.animFps}});
+    playOppImpactAt(targetInst.id,oa.impactImage,oa.impactFrames,oa.impactRows,oa.animFps,oa.spriteAuto);
+    gameChannel?.send({type:'broadcast',event:'oppfx',payload:{targetId:targetInst.id,image:oa.impactImage,frames:oa.impactFrames,rows:oa.impactRows,fps:oa.animFps,auto:oa.spriteAuto}});
   }
   if(targetInst.hp<=0){lines.push(`💀 <b>${esc(targetInst.label)} est KO</b>.`);handleInstanceDeath(targetInst,attackerInst);}
   addLog(lines.join('<br>'));
@@ -3476,6 +3474,8 @@ function oppAttackHtml(base){
       <div class="field" style="max-width:200px"><label>Nombre de lignes</label><input id="oa_impact_rows" type="number" min="1" value="${oa.impactRows||1}"></div>
       <div class="field" style="max-width:200px"><label>Vitesse (FPS)</label><input id="oa_animfps" type="number" min="1" max="60" value="${oa.animFps||60}"></div>
     </div>
+    <div class="row" style="margin-top:6px"><label><input type="checkbox" id="oa_spriteauto" ${oa.spriteAuto?'checked':''}> ✂️ Sprites rognés (détection auto, chaque sprite centré)</label>
+    </div>
   </div>
   </div>`;
 }
@@ -3551,8 +3551,8 @@ function openCharacter(id){
   <div class="field"><label>PV maximum (automatique : Constitution × 2,5)</label><input id="c_hpmax" type="number" value="${maxHpFromCon(base.stats.Constitution)}" readonly style="opacity:.6"></div>
   <div class="field"><label>Mana maximum</label><input id="c_manamax" type="number" value="${base.resourcesMax.Mana??0}"></div>
   <div class="field"><label>Bouclier maximum</label><input id="c_shieldmax" type="number" value="${base.resourcesMax.Bouclier??0}"></div>
-  <div class="field"><label>Niveau</label><input id="c_level" type="number" min="1" value="${base.level||1}" oninput="const m=xpNeeded(parseNum(this.value)||1)-1;const x=document.getElementById('c_xp');x.max=m;if(+x.value>m)x.value=m;document.getElementById('c_xp_label').textContent='XP sur le niveau actuel (max '+m+')'"></div>
-  <div class="field"><label id="c_xp_label">XP sur le niveau actuel (max ${xpNeeded(base.level||1)-1})</label><input id="c_xp" type="number" min="0" max="${xpNeeded(base.level||1)-1}" value="${base.xp||0}"></div>
+  <div class="field"><label>Niveau</label><input id="c_level" type="number" min="1" value="${base.level||1}"></div>
+  <div class="field"><label>XP sur le niveau actuel</label><input id="c_xp" type="number" min="0" value="${base.xp||0}"></div>
   <div class="field"><label>Force</label><input id="s_force" type="number" value="${base.stats.Force??0}" oninput="updateWeightPreview()"></div>
   <div class="field"><label>Magie</label><input id="s_magic" type="number" value="${base.stats.Magie??0}"></div>
   <div class="field"><label>Agilité</label><input id="s_agi" type="number" value="${base.stats.Agilité??0}"></div>
@@ -3604,8 +3604,6 @@ function saveCharacter(id){
   c.inventory=rteHtml('c_inventory');
   c.resourcesMax={Vie:maxHpFromCon(document.getElementById('s_con').value),Mana:parseNum(document.getElementById('c_manamax').value),Bouclier:parseNum(document.getElementById('c_shieldmax').value)};
   c.stats={...(c.stats||{}),Constitution:parseNum(document.getElementById('s_con').value),Endurance:parseNum(document.getElementById('s_end').value),Social:parseNum(document.getElementById('s_soc').value),Artisanat:parseNum(document.getElementById('s_craft').value),Force:parseNum(document.getElementById('s_force').value),Magie:parseNum(document.getElementById('s_magic').value),Agilité:parseNum(document.getElementById('s_agi').value),Vitesse:parseNum(document.getElementById('s_speed').value)};
-  reconcileLevelPoints(c);
-  c.resourcesMax.Vie=maxHpFromCon(c.stats.Constitution);
   c.def={CA:parseNum(document.getElementById('d_ca').value),DM:parseNum(document.getElementById('d_dm').value),'CA naturelle':parseNum(document.getElementById('d_ca').value)};
   c.res={
     Feu:parseNum(document.getElementById('r_fire').value),
@@ -3617,7 +3615,7 @@ function saveCharacter(id){
     Lumière:parseNum(document.getElementById('r_lumiere').value),
     Ténèbres:parseNum(document.getElementById('r_tenebres').value)
   };
-  c.oppAttack={formula:document.getElementById('oa_formula').value.trim(),type:document.getElementById('oa_type').value,element:document.getElementById('oa_element').value,impactImage:document.getElementById('oa_impact').value.trim()||null,impactFrames:Math.max(1,parseNum(document.getElementById('oa_impact_frames').value)||1),impactRows:Math.max(1,parseNum(document.getElementById('oa_impact_rows').value)||1),animFps:Math.max(1,Math.min(60,parseNum(document.getElementById('oa_animfps').value)||60))};
+  c.oppAttack={formula:document.getElementById('oa_formula').value.trim(),type:document.getElementById('oa_type').value,element:document.getElementById('oa_element').value,impactImage:document.getElementById('oa_impact').value.trim()||null,impactFrames:Math.max(1,parseNum(document.getElementById('oa_impact_frames').value)||1),impactRows:Math.max(1,parseNum(document.getElementById('oa_impact_rows').value)||1),animFps:Math.max(1,Math.min(60,parseNum(document.getElementById('oa_animfps').value)||60)),spriteAuto:document.getElementById('oa_spriteauto').checked};
   const skChecks=[...document.querySelectorAll('.skill-active-check')];
   if(skChecks.length)c.inactiveSkills=skChecks.filter(el=>!el.checked).map(el=>el.value);
   if(c.type==='player'){
@@ -3803,6 +3801,7 @@ function openAbility(id){
     ${a.zoneImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('a_zoneimage','a_zoneimage_preview','🖼️')">↺ Retirer</button>`:''}
     ${imagePickerHtml('a_zoneimage','a_zoneimage_preview')}
   </div>
+<div class="field full"><label><input type="checkbox" id="a_spriteauto" ${a.spriteAuto?'checked':''}> ✂️ Sprites rognés (détection auto : chaque sprite est centré, plus besoin d'espacement régulier — laisse au moins 1-2 px transparents entre eux)</label></div>
   <div class="field full">
     <label>🎯 Image du projectile (optionnelle — spritesheet horizontale possible)</label>
     <div class="icon-dropzone" onclick="document.getElementById('a_proj_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'a_projectile','a_proj_preview')">
@@ -3933,6 +3932,7 @@ function saveAbility(id){
     target.impactFrames=Math.max(1,+document.getElementById('a_impact_frames').value||1);
     target.impactRows=Math.max(1,+document.getElementById('a_impact_rows').value||1);
     target.animFps=Math.max(1,Math.min(60,+document.getElementById('a_animfps').value||60));
+    target.spriteAuto=document.getElementById('a_spriteauto')?.checked||false;
     target.transformCharId=null; target.triggerOnDeath=false; target.allowRevert=false;
     target.auraEffect=document.getElementById('a_auraeffect')?document.getElementById('a_auraeffect').value:'damage';
     target.duration=Math.max(1,+(document.getElementById('a_duration')?.value)||3);
@@ -4403,15 +4403,7 @@ function myCharacterCard(c){
   const tab=mySheetTabs[c.id]||'bio';
   const abilities=characterAbilities(c.id);
   const instances=S.instances.filter(i=>i.charId===c.id);
-  const canAlloc=c.type==='player'&&canControlChar(c.id);
-  const sim=pendingSim(c), availPts=statPointsAvailable(c), leftPts=availPts-sim.cost, pendSteps=pendingStats[c.id]||[];
-  const showArrows=canAlloc&&(availPts>0||pendSteps.length>0);
-  const statsHtml=Object.entries(c.stats||{}).map(([k,v])=>{
-    const nv=sim.vals[k]??v;
-    const arrows=showArrows?`<span style="display:inline-flex;gap:2px"><button class="btn ghost" style="padding:0 6px" onclick="statPointUp('${c.id}','${esc(k)}')">▲</button><button class="btn ghost" style="padding:0 6px" onclick="statPointDown('${c.id}','${esc(k)}')">▼</button></span>`:'';
-    return `<div class="stat"><label>${esc(k)}</label><div class="row between"><strong>${nv}${nv!==v?` <small style="color:var(--success)">(+${nv-v})</small>`:''}</strong>${arrows}</div></div>`;
-  }).join('');
-  const pointsBanner=showArrows?`<div class="stat" style="margin-bottom:8px"><label>✨ Points de caractéristique à répartir</label><div class="row between"><strong>${leftPts} / ${availPts}</strong>${pendSteps.length?`<span class="row" style="gap:6px"><button class="btn" onclick="cancelStatPoints('${c.id}')">Annuler</button><button class="btn primary" onclick="confirmStatPoints('${c.id}')">✔ Confirmer</button></span>`:''}</div></div>`:'';
+  const statsHtml=Object.entries(c.stats||{}).map(([k,v])=>`<div class="stat"><label>${esc(k)}</label><strong>${v}</strong></div>`).join('');
   const myInst=S.instances.find(i=>i.charId===c.id);
   const eDef=effectiveDef(c,myInst), eRes=effectiveRes(c,myInst);
   const defHtml=`<div class="stat"><label>Classe d'armure</label><strong>${eDef.CA??0}</strong></div><div class="stat"><label>Défense magique</label><strong>${eDef.DM??0}</strong></div>`;
@@ -4474,7 +4466,6 @@ function myCharacterCard(c){
     <h3 style="font-size:13px;margin:0 0 8px">Sur la carte</h3>
     ${instancesHtml}
     <h3 style="font-size:13px;margin:14px 0 8px">Statistiques</h3>
-    ${pointsBanner}
     <div class="statgrid">${statsHtml}${defHtml}</div>
     <h3 style="font-size:13px;margin:14px 0 8px">Résistances élémentaires</h3>
     <div class="statgrid">${resHtml}</div>
