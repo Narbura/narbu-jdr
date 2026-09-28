@@ -859,13 +859,13 @@ function applyMonsterDurabilityHit(casterTpl,targetInst,targetTpl,label,lines){
   else if(label==='Réussite ultime')amount=casterTpl.ultimateDurabilityDmg||0;
   else return;
   if(!amount)return;
-  const eligible=[1,2,3,4,5].filter(n=>{const k=DURABILITY_HIT_SLOTS[n];const it=equip(targetTpl.equipmentSlots?.[k]);return !(it&&it.durabilityMax&&getEqDurability(targetInst,k)<=0);});
+  const eligible=[1,2,3,4,5].filter(n=>{const k=DURABILITY_HIT_SLOTS[n];const it=equip(targetTpl.equipmentSlots?.[k]);return !!it&&!(it.durabilityMax&&getEqDurability(targetInst,k)<=0);});
   if(!eligible.length)return; // toutes les pièces sont brisées : plus d'effet
   const d5=eligible[Math.floor(Math.random()*eligible.length)];
   const slotKey=DURABILITY_HIT_SLOTS[d5];
   const item=equip(targetTpl.equipmentSlots?.[slotKey]);
   const slotLabel=(EQUIP_SLOTS.find(s=>s[0]===slotKey)||['',''])[1];
-  lines.push(`🎲 d5 : ${d5} → ${esc(slotLabel)} visé`);
+  lines.push(`🎲 d5 : ${d5} → ${esc(slotLabel)} visé${item?` (${esc(item.name)}${item.durabilityMax?'':' — indestructible'})`:' (vide)'}`);
   if(item&&item.durabilityMax){
     damageEqDurability(targetInst,slotKey,amount);
     lines.push(`🔧 ${esc(item.name)} de <b>${esc(targetInst.label)}</b> perd ${amount} de durabilité (${getEqDurability(targetInst,slotKey)}/${item.durabilityMax}).`);
