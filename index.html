@@ -3930,7 +3930,7 @@ function openAbility(id){
   <div class="field full"><label>Description</label>${richEditorHtml('a_desc',a.desc||'')}</div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
   <div class="field full"><label><input type="checkbox" id="a_impactpertoken" ${a.impactPerToken?'checked':''}> 💥 Animation d'impact séparée par cible touchée (sinon un seul impact sur toute la zone)</label></div>
-  <div class="field full" id="a_zoneimage_field" style="display:${a.area==='single'?'none':''}">
+  <div class="field full" id="a_zoneimage_field" style="display:${(a.area==='single'||(a.area==='self'&&a.type!=='Persistant'))?'none':''}">
     <label>🖼️ Image de zone (remplace la couleur unie par cette image, visible uniquement dans la forme de la zone)</label>
     <div class="icon-dropzone" onclick="document.getElementById('a_zoneimage_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'a_zoneimage','a_zoneimage_preview')">
       <div id="a_zoneimage_preview" class="icon-preview">${a.zoneImage?`<img src="${esc(a.zoneImage)}">`:'<span>🖼️</span>'}</div>
@@ -3957,7 +3957,7 @@ function openAbility(id){
     </div>
   </div>
 ${spriteAutoSelect('a_spriteauto',a.spriteAuto)}
-  <div class="field full">
+  <div class="field full" id="a_proj_field" style="display:${a.area==='self'?'none':''}">
     <label>🎯 Image du projectile (optionnelle — spritesheet horizontale possible)</label>
     <div class="icon-dropzone" onclick="document.getElementById('a_proj_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'a_projectile','a_proj_preview')">
       <div id="a_proj_preview" class="icon-preview">${a.projectileImage?`<img src="${esc(a.projectileImage)}">`:'<span>➡️</span>'}</div>
@@ -4023,7 +4023,9 @@ function toggleAreaFields(){
   const spf=document.getElementById('a_spin_field');
   if(spf)spf.style.display=(v==='self')?'':'none';
   const zif=document.getElementById('a_zoneimage_field');
-  if(zif)zif.style.display=(v==='single')?'none':'';
+  if(zif)zif.style.display=(v==='single'||(v==='self'&&type!=='Persistant'))?'none':'';
+  const pjf=document.getElementById('a_proj_field');
+  if(pjf)pjf.style.display=(v==='self')?'none':'';
 }
 function toggleAbilityTypeFields(){
   const val=document.getElementById('a_type').value;
