@@ -2029,6 +2029,7 @@ function playAbilityFX(a,casterInst,targets,start){
   const [fromX,fromY]=instCenterPx(casterInst);
   const doImpact=(cx,cy,size,clip)=>{ if(impactImg)fxAddImpact(impactImg,impactFrames,a.impactRows||1,cx,cy,size,size,fps,clip); };
   const doImpactZoneOrPerToken=(cx,cy,size,clip)=>{
+    if(!(targets||[]).length)return; // aucune cible touchée : pas d'impact
     if(a.impactPerToken&&(targets||[]).length){
       targets.forEach(t=>{
         const [tx,ty]=instCenterPx(t);
