@@ -160,6 +160,7 @@ button,select,.nav,.btn{touch-action:manipulation}
   <button class="nav" data-page="characters">🧙 <span>Personnages</span></button>
   <button class="nav" data-page="abilities">✨ <span>Capacités</span></button>
   <button class="nav" data-page="equipment">🎒 <span>Équipement</span></button>
+  <button class="nav" data-page="levelup">📈 <span>Changement de niveau</span></button>
   <button class="nav" data-page="dice">🎲 <span>Dés</span></button>
   <button class="nav" data-page="mysheet">🪪 <span>Ma fiche</span></button>
   <button class="nav" data-page="hotbar">🎯 <span>Mes Compétences</span></button>
@@ -317,6 +318,11 @@ function normalizeState(){
   if(S.diceSettings.rows===undefined)S.diceSettings.rows=4;
   if(S.diceSettings.fps===undefined)S.diceSettings.fps=24;
   if(S._rev===undefined)S._rev=0;
+  if(!S.levelUpSettings)S.levelUpSettings={};
+  {const lu=S.levelUpSettings;
+   if(lu.spriteImage===undefined)lu.spriteImage=null; if(lu.image===undefined)lu.image=null;
+   if(!(lu.frames>=1))lu.frames=1; if(!(lu.rows>=1))lu.rows=1; if(!(lu.fps>=1))lu.fps=24;
+   if(lu.durationMs===undefined)lu.durationMs=2000; if(lu.sizeMult===undefined)lu.sizeMult=4;}
   if(S.hudEnabled===undefined)S.hudEnabled=false;
   if(!S.hudSettings)S.hudSettings={};
   if(S.hudSettings.resourceDurationMs===undefined)S.hudSettings.resourceDurationMs=1000;
@@ -427,7 +433,7 @@ function normalizeState(){
 let S=JSON.parse(localStorage.getItem('arcanum-vtt')||'null')||structuredClone(DEFAULT);
 normalizeState();
 
-const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',equipment:'Équipement',dice:'Dés',library:'Bibliothèque',mysheet:'Ma fiche',hotbar:'Mes Compétences'};
+const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',equipment:'Équipement',dice:'Dés',library:'Bibliothèque',mysheet:'Ma fiche',hotbar:'Mes Compétences',levelup:'Changement de niveau'};
 
 let currentPage='table';
 let selectedToken=null;
@@ -571,6 +577,9 @@ function subscribeRealtime(){
       const d=payload.payload||{};
       showHudFloating(d.instId,d.deltas);
     })
+    .on('broadcast',{event:'levelup'},payload=>{
+      showLevelUp((payload.payload||{}).instId);
+    })
     .on('broadcast',{event:'crit'},payload=>{
       const d=payload.payload||{};
       showCriticalPopup(d.instId,d.key);
@@ -640,6 +649,9 @@ function updateUserBadge(){
   if(eqNav) eqNav.style.display=isMJ()?'':'none';
   const abNav=document.querySelector('.nav[data-page="abilities"]');
   if(abNav) abNav.style.display=isMJ()?'':'none';
+  const luNav=document.querySelector('.nav[data-page="levelup"]');
+  if(luNav) luNav.style.display=isMJ()?'':'none';
+  if(!isMJ()&&currentPage==='levelup'){currentPage='table';}
   const hbNav=document.querySelector('.nav[data-page="hotbar"]');
   if(hbNav) hbNav.style.display='';
   if(!isMJ()&&currentPage==='library'){currentPage='table';}
@@ -894,7 +906,9 @@ function awardXp(killerInst,deadTpl){
   const amt=deadTpl.xpValue||0; if(!amt)return;
   k.level=k.level||1; k.xp=(k.xp||0)+amt;
   addLog(`⭐ <b>${esc(k.name)}</b> gagne ${amt} XP.`);
-  while(k.xp>=xpNeeded(k.level)){k.xp-=xpNeeded(k.level);k.level++;addLog(`🎉 <b>${esc(k.name)}</b> passe niveau ${k.level} !`);}
+  let leveled=false;
+  while(k.xp>=xpNeeded(k.level)){k.xp-=xpNeeded(k.level);k.level++;leveled=true;addLog(`🎉 <b>${esc(k.name)}</b> passe niveau ${k.level} !`);}
+  if(leveled)levelUpChar(k.id);
 }
 function char(id){return S.characters.find(c=>c.id===id);}
 function inst(id){return S.instances.find(i=>i.id===id);}
@@ -1468,6 +1482,7 @@ function render(){
   else if(currentPage==='characters')c.innerHTML=charactersPage();
   else if(currentPage==='abilities')c.innerHTML=abilitiesPage();
   else if(currentPage==='equipment')c.innerHTML=equipmentPage();
+  else if(currentPage==='levelup')c.innerHTML=levelUpPage();
   else if(currentPage==='dice')c.innerHTML=dicePage();
   else if(currentPage==='library')c.innerHTML=libraryPage();
   else if(currentPage==='mysheet')c.innerHTML=mySheetPage();
@@ -3358,6 +3373,7 @@ function promptSetHotkey(charId,abilityId){
     Object.keys(m[charId]).forEach(aid=>{if(m[charId][aid]===trimmed)delete m[charId][aid];});
     m[charId][abilityId]=trimmed;
   }else{toast('⚠️ Touche invalide (un seul caractère, sans espace).');return;}
+  if(charId==='__ui__'&&(abilityId==='ui_start'||abilityId==='ui_end')){const o=abilityId==='ui_start'?'ui_end':'ui_start';if(m[charId][abilityId])m[charId][o]=m[charId][abilityId];else delete m[charId][o];}
   setHotkeyMap(m);
   render();
 }
@@ -3720,6 +3736,7 @@ function saveCharacter(id){
   c.critDurabilityDmg=Math.max(0,parseNum(document.getElementById('c_critdur').value)||0);
   c.ultimateDurabilityDmg=Math.max(0,parseNum(document.getElementById('c_ultdur').value)||0);
   c.profileImage=document.getElementById('c_profileimage').value.trim()||null;
+  const oldLevel=c.level||1;
   c.level=Math.max(1,Math.round(parseNum(document.getElementById('c_level').value))||1);
   c.xp=Math.max(0,Math.round(parseNum(document.getElementById('c_xp').value)));
   c.xp=Math.min(c.xp,xpNeeded(c.level)-1);
@@ -3774,6 +3791,7 @@ function saveCharacter(id){
     }
     if(i.hp<=0){addLog(`💀 <b>${esc(i.label)}</b> tombe à 0 PV.`);handleInstanceDeath(i);}
   });
+  if(id&&c.level>oldLevel)levelUpChar(c.id);
   saveState(); closeModal(); render();
 }
 function closeModal(){document.getElementById('modalBg').classList.remove('open');const m=document.getElementById('modal');m.classList.remove('modal-fullscreen');m.classList.remove('note-focus-mode');noteFocusMode=false;sheetModalChar=null;m.style.position='';m.style.left='';m.style.top='';m.style.margin='';}
@@ -4541,7 +4559,7 @@ function showTokenMenu(x,y,instId){
   closeTokenMenu();
   const t=inst(instId); const tpl=t&&instTemplate(t); if(!tpl)return;
   let items='';
-  if(isMJ())items+=`<button class="btn ghost" onclick="openSheetModal('${tpl.id}')">📄 Consulter la fiche du personnage</button><button class="btn ghost" onclick="openCharacter('${tpl.id}')">✏️ Modifier la fiche du personnage</button>`;
+  if(isMJ())items+=`<button class="btn ghost" onclick="broadcastLevelUp('${instId}')">🎉 Tester l’animation de niveau</button><button class="btn ghost" onclick="openSheetModal('${tpl.id}')">📄 Consulter la fiche du personnage</button><button class="btn ghost" onclick="openCharacter('${tpl.id}')">✏️ Modifier la fiche du personnage</button>`;
   if(tpl.type==='player'){const on=getShowXpSet().includes(tpl.id);items+=`<button class="btn ghost" onclick="toggleShowXp('${tpl.id}')">${on?'🙈 Cacher l’expérience':'⭐ Afficher l’expérience'}</button>`;}
   if(!items)return;
   const m=document.createElement('div'); m.id='tokenMenu'; m.className='token-menu';
@@ -5522,6 +5540,73 @@ function openNoteViewModal(n){
   document.getElementById('modalBg').classList.add('open');
 }
 
+/* ============================= CHANGEMENT DE NIVEAU ============================= */
+function levelUpChar(charId){S.instances.filter(i=>i.charId===charId).forEach(i=>broadcastLevelUp(i.id));}
+function broadcastLevelUp(instId){
+  gameChannel?.send({type:'broadcast',event:'levelup',payload:{instId}});
+  showLevelUp(instId);
+}
+function showLevelUp(instId){
+  if(currentPage!=='table')return;
+  setTimeout(()=>{
+    const lu=S.levelUpSettings||{}, t=inst(instId); if(!t)return;
+    const cell=S.map.cell, z=mapZoom, sw=t.sizeW||1, sh=t.sizeH||1;
+    if(lu.spriteImage){
+      ensureFxCanvas();
+      const [cx,cy]=instCenterPx(t), size=Math.max(cell*1.4,Math.max(sw,sh)*cell*1.4);
+      fxAddImpact(getFxImg(lu.spriteImage,lu.spriteAuto),Math.max(1,lu.frames||1),Math.max(1,lu.rows||1),cx,cy,size,size,Math.max(1,lu.fps||24));
+    }
+    const el=document.querySelector(`[data-token="${instId}"]`); if(!el)return;
+    const rect=el.getBoundingClientRect(), dur=lu.durationMs??2000, mult=lu.sizeMult??4;
+    const pos=`position:fixed;left:${rect.left+rect.width/2}px;top:${rect.top-cell*z}px;transform:translate(-50%,-100%);z-index:9999;pointer-events:none;`;
+    let node;
+    if(lu.image){
+      node=document.createElement('img'); node.src=lu.image;
+      node.style.cssText=pos+`width:${cell*sw*mult*z}px;height:${cell*sh*mult*z}px;object-fit:fill`;
+    }else{
+      node=document.createElement('div'); node.textContent='LEVEL UP';
+      node.style.cssText=pos+`color:#ffd54a;font-weight:900;white-space:nowrap;font-size:${Math.max(20,cell*Math.max(sw,sh)*0.5*z)}px;text-shadow:0 2px 4px #000,0 0 10px #000`;
+    }
+    document.body.appendChild(node);
+    setTimeout(()=>node.remove(),dur);
+  },300);
+}
+function levelUpPage(){
+  if(!isMJ())return `<div class="card"><p class="muted">Réservé au Maître du Jeu.</p></div>`;
+  const lu=S.levelUpSettings||{};
+  const drop=(hid,pid,fid,val,emoji,label)=>`<div class="icon-dropzone" onclick="document.getElementById('${fid}').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'${hid}','${pid}')"><div id="${pid}" class="icon-preview" style="width:90px;height:90px;font-size:36px">${val?`<img src="${esc(val)}">`:`<span>${emoji}</span>`}</div><p class="tiny muted">${label}</p><input type="file" id="${fid}" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'${hid}','${pid}')"></div><input type="hidden" id="${hid}" value="${esc(val||'')}">${imagePickerHtml(hid,pid)}<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('${hid}','${pid}','${emoji}')">↺ Retirer</button>`;
+  return `<div class="card" style="max-width:760px"><h2>📈 Changement de niveau</h2>
+  <p class="tiny muted">Effets affichés à tous quand un personnage gagne un niveau. Astuce : clic droit sur un jeton → « Tester l'animation de niveau ».</p>
+  <div class="field full"><label>💥 Spritesheet sur le personnage (s'adapte à sa taille)</label>${drop('lu_sprite','lu_sprite_preview','lu_sprite_file',lu.spriteImage,'🎉','Glisse une image ici ou clique. Vide = pas d\'animation.')}
+  <div class="row" style="gap:10px;margin-top:8px;flex-wrap:wrap">
+    <div class="field" style="max-width:180px"><label>Nombre de frames</label><input id="lu_frames" type="number" min="1" value="${lu.frames||1}"></div>
+    <div class="field" style="max-width:180px"><label>Nombre de lignes</label><input id="lu_rows" type="number" min="1" value="${lu.rows||1}"></div>
+    <div class="field" style="max-width:180px"><label>Vitesse (FPS)</label><input id="lu_fps" type="number" min="1" max="60" value="${lu.fps||24}"></div>
+  </div>${spriteAutoSelect('lu_spriteauto',lu.spriteAuto)}</div>
+  <div class="field full" style="margin-top:14px"><label>🖼️ Image au-dessus du jeton (vide = « LEVEL UP » jaune)</label>${drop('lu_img','lu_img_preview','lu_img_file',lu.image,'🖼️','Glisse une image ici ou clique.')}
+  <div class="row" style="gap:10px;margin-top:8px;flex-wrap:wrap">
+    <div class="field" style="max-width:220px"><label>Durée d'affichage (ms)</label><input id="lu_dur" type="number" min="100" value="${lu.durationMs??2000}"></div>
+    <div class="field" style="max-width:220px"><label>Taille (× la taille du jeton)</label><input id="lu_size" type="number" min="0.5" step="0.5" value="${lu.sizeMult??4}"></div>
+  </div></div>
+  <div class="modal-actions"><button class="btn primary" onclick="saveLevelUpSettings()">Enregistrer</button></div></div>`;
+}
+function saveLevelUpSettings(){
+  if(!isMJ())return;
+  const v=id=>document.getElementById(id)?.value||'';
+  S.levelUpSettings={
+    spriteImage:v('lu_sprite').trim()||null,
+    frames:Math.max(1,parseNum(v('lu_frames'))||1),
+    rows:Math.max(1,parseNum(v('lu_rows'))||1),
+    fps:Math.max(1,Math.min(60,parseNum(v('lu_fps'))||24)),
+    spriteAuto:v('lu_spriteauto')||false,
+    image:v('lu_img').trim()||null,
+    durationMs:Math.max(100,parseNum(v('lu_dur'))||2000),
+    sizeMult:Math.max(0.5,parseFloat(v('lu_size'))||4)
+  };
+  saveState(); render();
+  toast('✅ Réglages enregistrés.');
+}
+
 /* ============================= PLEIN ÉCRAN ============================= */
 /* ============================= GRILLE : OPACITÉ ET AFFICHAGE (préférence locale, jamais synchronisée) ============================= */
 function applyGridOpacity(){
@@ -5638,7 +5723,7 @@ document.addEventListener('keydown',e=>{
   if(currentPage!=='table')return;
   const m=getHotkeyMap()['__ui__']||{};
   const id=Object.keys(m).find(k=>m[k]===e.key);
-  const acts={ui_next:()=>S.combat.active&&nextTurn(),ui_start:()=>!S.combat.active&&startCombat(),ui_end:()=>S.combat.active&&endCombat(),ui_fullscreen:toggleFullscreen,ui_grid:toggleGridVisible,ui_ff:toggleFriendlyFire,ui_hud:toggleHudEnabled,ui_free:toggleFreeMovement};
+  const acts={ui_next:()=>S.combat.active&&nextTurn(),ui_start:()=>S.combat.active?endCombat():startCombat(),ui_end:()=>S.combat.active?endCombat():startCombat(),ui_fullscreen:toggleFullscreen,ui_grid:toggleGridVisible,ui_ff:toggleFriendlyFire,ui_hud:toggleHudEnabled,ui_free:toggleFreeMovement};
   if(!id||!acts[id])return;
   e.preventDefault(); e.stopImmediatePropagation(); acts[id]();
 });
@@ -5721,7 +5806,7 @@ document.addEventListener('keydown',e=>{
     if(tw){
       const id=tw.dataset.token;
       st.mode='token'; wrap.onmousedown(fake(t,e.target));
-      lpTimer=setTimeout(()=>{ if(st&&st.mode==='token'&&!st.moved){ dragCandidate=null; st.mode='menu'; showTokenMenu(st.sx,st.sy,id); } },400);
+      lpTimer=setTimeout(()=>{ if(st&&st.mode==='token'&&!st.moved){ dragCandidate=null; st.mode='menu'; showTokenMenu(st.sx,st.sy,id); } },600);
       return;
     }
     wrap.onmousedown(fake(t,e.target,2));
