@@ -1487,9 +1487,7 @@ function updateTargetingBanner(){
   }
   if(pendingPersistentOrigin&&currentPage==='table'){
     const pa=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId);
-    const stageTxt=pendingPersistentOrigin.stage==='angle'?'clique pour choisir la direction'
-      :pendingPersistentOrigin.stage==='distance'?'clique pour choisir la distance'
-      :'ajuste l’orientation puis clique pour lancer';
+    const stageTxt='←/→ ou clic droit maintenu pour orienter, clic pour lancer';
     banner.innerHTML=`🎯 <b>${esc(pa?.name||'Zone')}</b> — ${stageTxt} (Échap pour annuler)`;
     banner.classList.add('show');
     return;
@@ -1704,46 +1702,49 @@ function zoneMarkup(a,cell,originOverride,rangeCellsOverride){
   const effect=a.effect?`<span class="zone-effect" style="font-size:${Math.max(24,size*8)}px">${esc(a.effect)}</span>`:'';
   return `<div id="zonePreview" class="zone" style="left:${px}px;top:${py}px;width:${d}px;height:${d}px;${radius}">${effect}</div>`;
 }
+function clampToRange(ci,cell,range){
+  if(!ci||!(range>0))return cell;
+  const sw=ci.sizeW||1,sh=ci.sizeH||1;
+  if(footprintDistance(ci.x,ci.y,sw,sh,cell[0],cell[1],1,1)<=range)return cell;
+  const cx=ci.x+(sw-1)/2,cy=ci.y+(sh-1)/2,vx=cell[0]-cx,vy=cell[1]-cy;
+  for(let k=1;k>=0;k-=0.02){
+    const nx=Math.round(cx+vx*k),ny=Math.round(cy+vy*k);
+    if(footprintDistance(ci.x,ci.y,sw,sh,nx,ny,1,1)<=range)return [nx,ny];
+  }
+  return [ci.x,ci.y];
+}
+function persistentLiveOrigin(a,ci){
+  const p=pendingPersistentOrigin,c=S.map.cell,b=instCenterPx(ci);
+  let o=p.frozen||p.mousePx||b;
+  if(a.range>0&&!p.frozen){
+    const maxPx=a.range*c+Math.max(ci.sizeW||1,ci.sizeH||1)*c/2;
+    const dx=o[0]-b[0],dy=o[1]-b[1],d=Math.hypot(dx,dy);
+    if(d>maxPx)o=[b[0]+dx*maxPx/d,b[1]+dy*maxPx/d];
+  }
+  return o;
+}
+function persistentAngle(p,o,ci){
+  if(p.angle!=null)return p.angle;
+  const b=instCenterPx(ci);
+  return Math.atan2(o[1]-b[1],o[0]-b[0]);
+}
 function updateZonePreview(){
   const map=document.getElementById('map'); if(!map)return;
   document.getElementById('zonePreview')?.remove();
+  const caster=selectedToken?inst(selectedToken):null;
   if(pendingPersistentOrigin){
-    if(!hoverCell)return;
-    const a=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId);
-    if(!a)return;
-    const c=S.map.cell, zoneLen=a.zoneRange||a.range||1;
-    if(a.area==='line'||a.area==='cone'){
-      if(pendingPersistentOrigin.stage==='angle'){
-        // 1er clic à venir : la zone suit la souris depuis le lanceur.
-        map.insertAdjacentHTML('beforeend',zoneMarkup(a,hoverCell,null,zoneLen));
-        return;
-      }
-      if(pendingPersistentOrigin.stage==='distance'){
-        // 2e clic à venir : la zone glisse le long de la direction verrouillée, de 0 à la portée max.
-        const {angle,casterPx}=pendingPersistentOrigin;
-        const maxCells=a.range>0?a.range:9999;
-        const distCells=projectDistanceCells(casterPx[0],casterPx[1],angle,hoverCell,maxCells);
-        const originPx=[casterPx[0]+Math.cos(angle)*distCells*c,casterPx[1]+Math.sin(angle)*distCells*c];
-        map.insertAdjacentHTML('beforeend',lineConeMarkupFromAxis(a,{cx:originPx[0],cy:originPx[1],angle,range:zoneLen*c}));
-        return;
-      }
-      if(pendingPersistentOrigin.stage==='final'){
-        // 3e clic à venir : réoriente la zone autour du point de distance déjà choisi.
-        const {originPx}=pendingPersistentOrigin;
-        const hx=hoverCell[0]*c+c/2, hy=hoverCell[1]*c+c/2;
-        const angle=Math.atan2(hy-originPx[1],hx-originPx[0]);
-        map.insertAdjacentHTML('beforeend',lineConeMarkupFromAxis(a,{cx:originPx[0],cy:originPx[1],angle,range:zoneLen*c}));
-        return;
-      }
-      return;
-    }
-    map.insertAdjacentHTML('beforeend',zoneMarkup(a,hoverCell,pendingPersistentOrigin.origin));
+    const p=pendingPersistentOrigin, a=S.abilities.find(x=>x.id===p.abilityId);
+    if(!a||!caster)return;
+    const o=persistentLiveOrigin(a,caster);
+    map.insertAdjacentHTML('beforeend',lineConeMarkupFromAxis(a,{cx:o[0],cy:o[1],angle:persistentAngle(p,o,caster),range:(a.zoneRange||a.range||1)*S.map.cell}));
     return;
   }
   if(!activeAbility||!hoverCell)return;
   const a=S.abilities.find(x=>x.id===activeAbility);
   if(!a||a.area==='single')return;
-  map.insertAdjacentHTML('beforeend',zoneMarkup(a,hoverCell));
+  let cell=hoverCell;
+  if(a.area==='square'||a.area==='circle')cell=clampToRange(caster,hoverCell,a.range);
+  map.insertAdjacentHTML('beforeend',zoneMarkup(a,cell));
 }
 
 /* ============================= ANIMATIONS DE SORTS (FX) ============================= */
@@ -2623,6 +2624,11 @@ function setupMapInteractions(){
 
   wrap.onmousedown=e=>{
     if(e.button===2){
+      if(pendingPersistentOrigin&&activeAbility){
+        const pa=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId),pc=inst(selectedToken);
+        if(pa&&pc){const p=pendingPersistentOrigin;const o=persistentLiveOrigin(pa,pc);p.angle=persistentAngle(p,o,pc);p.frozen=o;p.rotating=true;}
+        e.preventDefault();return;
+      }
       panState={startX:e.clientX,startY:e.clientY,origX:mapPan.x,origY:mapPan.y};
       wrap.classList.add('panning'); e.preventDefault(); return;
     }
@@ -2736,6 +2742,11 @@ function setupMapInteractions(){
       }
       return;
     }
+    if(activeAbility&&pendingPersistentOrigin){
+      const p=pendingPersistentOrigin,px=mapPixelPoint(e.clientX,e.clientY);
+      if(p.rotating&&p.frozen)p.angle=Math.atan2(px[1]-p.frozen[1],px[0]-p.frozen[0]); else p.mousePx=px;
+      updateZonePreview(); return;
+    }
     if(activeAbility){
       const rect=wrap.getBoundingClientRect();
       const x=Math.floor((e.clientX-rect.left-mapPan.x)/(S.map.cell*mapZoom));
@@ -2744,7 +2755,8 @@ function setupMapInteractions(){
     }
   };
 
-  window.onmouseup=()=>{
+  window.onmouseup=ev=>{
+    if(pendingPersistentOrigin&&pendingPersistentOrigin.rotating){const p=pendingPersistentOrigin;p.rotating=false;p.frozen=null;if(ev&&ev.clientX!=null)p.mousePx=mapPixelPoint(ev.clientX,ev.clientY);}
     if(tokenResizeState){
       const {id,previewSize,origSizeW}=tokenResizeState;
       const t=inst(id);
@@ -2958,8 +2970,9 @@ function resolveAbility(a,start,explicitTargetInstId){
   }
   if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
     toast(`🚫 Mana insuffisant (${casterInst.mana}/${a.manaCost}) pour lancer ${a.name} — choisis une autre action.`);
-    activeAbility=null; hoverCell=null; render(); return;
+    return;
   }
+  if(a.area==='square'||a.area==='circle')start=clampToRange(casterInst,start,a.range);
   if(a.area==='single'){
     const isSup=(a.type==='Soin'||a.type==='Bouclier');
     if(!explicitTargetInstId||!affected(a,start,explicitTargetInstId).length){
@@ -3096,7 +3109,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   const t=inst(targetInstId); if(!t){toast('Cible invalide.');return;}
   if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
     toast(`🚫 Mana insuffisant (${casterInst.mana}/${a.manaCost}).`);
-    activeAbility=null; hoverCell=null; render(); return;
+    return;
   }
   if(a.range&&a.range>0){
     const dist=footprintDistance(casterInst.x,casterInst.y,casterInst.sizeW||1,casterInst.sizeH||1,t.x,t.y,t.sizeW||1,t.sizeH||1);
@@ -3115,11 +3128,12 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   saveState(); render();
 }
 function resolveBuffZone(a,casterInst,start){
+  if(a.area==='square'||a.area==='circle')start=clampToRange(casterInst,start,a.range);
   if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
   if(!canControlInstance(casterInst.id)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
   if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
     toast(`🚫 Mana insuffisant (${casterInst.mana}/${a.manaCost}).`);
-    activeAbility=null; hoverCell=null; render(); return;
+    return;
   }
   if(a.range&&a.range>0){
     const dist=footprintDistance(casterInst.x,casterInst.y,casterInst.sizeW||1,casterInst.sizeH||1,start[0],start[1],1,1);
@@ -3148,54 +3162,24 @@ function resolveBuffZone(a,casterInst,start){
   saveState(); render();
 }
 /* ============================= ZONES PERSISTANTES (type Persistant) ============================= */
-/* Placement en 3 clics pour Ligne/Cône :
-   1) direction depuis le lanceur   2) distance du lanceur (0 → portée max)   3) orientation finale (pivote sur le point choisi) puis lance. */
+/* Ligne/Cône persistant : la zone suit la souris (au pixel, plafonnée à la portée) ; ←/→ ou clic droit maintenu pour orienter ; clic pour lancer. */
 function handlePersistentLineConeClick(a,casterInst,pt){
   if(!casterInst){toast('Sélectionne d’abord un personnage.');pendingPersistentOrigin=null;activeAbility=null;render();return;}
-  if(!pendingPersistentOrigin||pendingPersistentOrigin.abilityId!==a.id){
-    pendingPersistentOrigin={abilityId:a.id,stage:'angle'};
-  }
-  const c=S.map.cell;
-  const casterPx=casterPixelPos(casterInst);
-
-  if(pendingPersistentOrigin.stage==='angle'){
-    const clickPx=[pt[0]*c+c/2,pt[1]*c+c/2];
-    pendingPersistentOrigin.angle=Math.atan2(clickPx[1]-casterPx[1],clickPx[0]-casterPx[0]);
-    pendingPersistentOrigin.casterPx=casterPx;
-    pendingPersistentOrigin.stage='distance';
-    hoverCell=null;
-    toast('🎯 Choisis la distance (clique pour confirmer)');
-    render();
-    return;
-  }
-  if(pendingPersistentOrigin.stage==='distance'){
-    const {angle,casterPx:cp}=pendingPersistentOrigin;
-    const maxCells=a.range>0?a.range:9999;
-    const distCells=projectDistanceCells(cp[0],cp[1],angle,pt,maxCells);
-    pendingPersistentOrigin.originPx=[cp[0]+Math.cos(angle)*distCells*c,cp[1]+Math.sin(angle)*distCells*c];
-    pendingPersistentOrigin.stage='final';
-    hoverCell=null;
-    toast('🎯 Ajuste l’orientation puis clique pour lancer (Échap pour annuler)');
-    render();
-    return;
-  }
-  if(pendingPersistentOrigin.stage==='final'){
-    const {originPx}=pendingPersistentOrigin;
-    const clickPx=[pt[0]*c+c/2,pt[1]*c+c/2];
-    const finalAngle=Math.atan2(clickPx[1]-originPx[1],clickPx[0]-originPx[0]);
-    const zoneLen=a.zoneRange||a.range||1;
-    const axis={cx:originPx[0],cy:originPx[1],angle:finalAngle,range:zoneLen*c};
-    pendingPersistentOrigin=null; activeAbility=null; hoverCell=null;
-    resolvePersistentAbility(a,casterInst,pt,null,axis);
-    return;
-  }
+  if(!pendingPersistentOrigin||pendingPersistentOrigin.abilityId!==a.id)pendingPersistentOrigin={abilityId:a.id};
+  const p=pendingPersistentOrigin,c=S.map.cell;
+  if(!p.mousePx&&!p.frozen)p.mousePx=[pt[0]*c+c/2,pt[1]*c+c/2];
+  const o=persistentLiveOrigin(a,casterInst), angle=persistentAngle(p,o,casterInst);
+  const axis={cx:o[0],cy:o[1],angle,range:(a.zoneRange||a.range||1)*c};
+  pendingPersistentOrigin=null; activeAbility=null; hoverCell=null;
+  resolvePersistentAbility(a,casterInst,pt,null,axis);
 }
 function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride){
+  if(!originOverride&&!axisOverride&&(a.area==='square'||a.area==='circle'))start=clampToRange(casterInst,start,a.range);
   if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
   if(!canControlInstance(casterInst.id)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
   if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
     toast(`🚫 Mana insuffisant (${casterInst.mana}/${a.manaCost}).`);
-    activeAbility=null; hoverCell=null; pendingPersistentOrigin=null; render(); return;
+    return;
   }
   if(!originOverride&&!axisOverride&&a.range&&a.range>0&&a.area!=='self'){
     const dist=footprintDistance(casterInst.x,casterInst.y,casterInst.sizeW||1,casterInst.sizeH||1,start[0],start[1],1,1);
@@ -3394,7 +3378,7 @@ function startAbility(id){
   const a=S.abilities.find(x=>x.id===id); if(!a)return;
   if(a.type==='Compétence'){toast('🎓 Les compétences sont passives.');return;}
   if(a.type==='Passif'){ toggleAuraForCaster(id); return; }
-  if(a.manaCost>0&&caster&&(caster.mana||0)<a.manaCost){
+  if(a.type==='Transformation'&&a.manaCost>0&&caster&&(caster.mana||0)<a.manaCost){
     toast(`🚫 Mana insuffisant (${caster.mana}/${a.manaCost}) pour lancer ${a.name} — choisis une autre action.`);
     return;
   }
@@ -3405,9 +3389,9 @@ function startAbility(id){
     else resolveAbility(a,[caster.x,caster.y]);
     return;
   }
-  pendingPersistentOrigin=(a.type==='Persistant'&&(a.area==='line'||a.area==='cone'))?{abilityId:id,stage:'angle'}:null;
+  pendingPersistentOrigin=(a.type==='Persistant'&&(a.area==='line'||a.area==='cone'))?{abilityId:id}:null;
   activeAbility=id; hoverCell=null; render();
-  toast(pendingPersistentOrigin?'🎯 Choisis la direction du sort (clique pour confirmer)':'🎯 Ciblage : clique sur une cible ou une case (Échap pour annuler)');
+  toast(pendingPersistentOrigin?'🎯 La zone suit la souris — ←/→ ou clic droit maintenu pour orienter, clic pour lancer':'🎯 Ciblage : clique sur une cible ou une case (Échap pour annuler)');
 }
 function transformInstance(instId,targetCharId,allowRevert){
   const t=inst(instId); const newChar=char(targetCharId);
@@ -5613,6 +5597,14 @@ document.addEventListener('keydown',e=>{
     if(t){removeInstance(selectedToken);saveState();render();toast('🗑 Token retiré de la carte');}
   }
 });
+document.addEventListener('keydown',e=>{
+  if(!pendingPersistentOrigin||!activeAbility||!/^Arrow/.test(e.key))return;
+  const a=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId),c=inst(selectedToken); if(!a||!c)return;
+  e.preventDefault();
+  const p=pendingPersistentOrigin,o=persistentLiveOrigin(a,c),step=(e.shiftKey?15:5)*Math.PI/180;
+  p.angle=persistentAngle(p,o,c)+((e.key==='ArrowLeft'||e.key==='ArrowUp')?-step:step);
+  updateZonePreview();
+});
 const ARROW_DELTAS={ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0]};
 function moveSelectedTokenBy(dx,dy){
   if(!selectedToken)return;
@@ -5693,6 +5685,11 @@ document.addEventListener('keydown',e=>{
     e.target.addEventListener('touchend',onEnd,{passive:false});
     e.target.addEventListener('touchcancel',onEnd,{passive:false});
     clearTimeout(lpTimer);
+    if(e.touches.length>=2&&activeAbility&&pendingPersistentOrigin&&st&&(st.mode==='aim'||st.mode==='rot')){
+      const pa=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId),pc=inst(selectedToken);
+      if(pa&&pc){const p=pendingPersistentOrigin;if(!p.rotating){const o=persistentLiveOrigin(pa,pc);p.angle=persistentAngle(p,o,pc);p.frozen=o;p.rotating=true;}st.mode='rot';moveTo(e.touches[1]);}
+      return;
+    }
     if(e.touches.length>=2){
       if(st&&st.mode==='pinch')return;
       if(st)up();
@@ -5720,6 +5717,7 @@ document.addEventListener('keydown',e=>{
     if(!st)return;
     e.preventDefault();
     const wrap=W(); if(!wrap)return;
+    if(st.mode==='rot'){const t2=e.touches[1];if(t2)moveTo(t2);return;}
     if(st.mode==='pinch'){
       if(e.touches.length<2)return;
       const a=e.touches[0],b=e.touches[1];
@@ -5743,6 +5741,7 @@ document.addEventListener('keydown',e=>{
     clearTimeout(lpTimer);
     if(!st)return;
     e.preventDefault();
+    if(st.mode==='rot'){if(e.touches.length<2){const p=pendingPersistentOrigin;if(p){p.rotating=false;p.frozen=null;}st.mode='aim';st.moved=true;}return;}
     if(e.touches.length>0)return;
     const t=e.changedTouches[0], wrap=W(), m=st.mode, moved=st.moved;
     st=null;
