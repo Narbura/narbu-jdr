@@ -282,8 +282,8 @@ const DEFAULT={
 };
 const ELEMENT_RES_KEYS=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres'];
 const STAT_TESTS=['Social','Artisanat','Endurance','Force','Agilité','Constitution','Vitesse','Magie'];
-const EQUIP_SLOTS=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['amulette','Amulette'],['anneau1','Anneau 1'],['anneau2','Anneau 2'],['arme','Arme']];
-const EQUIP_CATEGORIES=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['amulette','Amulette'],['anneau','Anneau'],['arme','Arme'],['divers','Divers']];
+const EQUIP_SLOTS=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['bouclier','Bouclier'],['amulette','Amulette'],['anneau1','Anneau 1'],['anneau2','Anneau 2'],['arme','Arme']];
+const EQUIP_CATEGORIES=[['tete','Tête'],['torse','Torse'],['jambes','Jambes'],['pieds','Pieds'],['main','Main'],['bouclier','Bouclier'],['amulette','Amulette'],['anneau','Anneau'],['arme','Arme'],['divers','Divers']];
 function equipSlotCategory(slotKey){return (slotKey==='anneau1'||slotKey==='anneau2')?'anneau':slotKey;}
 
 function normalizeState(){
@@ -938,7 +938,7 @@ function characterAbilities(charId){if(!charId)return [];return S.abilities.filt
 function equip(id){return (S.equipment||[]).find(e=>e.id===id);}
 function naturalRes(c){return {ca:Math.ceil((c.stats?.Constitution||0)/10),dm:Math.ceil((c.stats?.Magie||0)/10)};}
 /* ---- Durabilité (armures hors anneaux/amulette, et armes) — suivie par jeton ---- */
-const DURABILITY_HIT_SLOTS={1:'torse',2:'jambes',3:'tete',4:'pieds',5:'main'};
+const DURABILITY_HIT_SLOTS={1:'torse',2:'jambes',3:'tete',4:'pieds',5:'main',6:'bouclier'};
 function tplOf(x){return x&&x.charId?char(x.charId):x;}
 function slotItem(t,slotKey){const c=tplOf(t);return c?equip(c.equipmentSlots?.[slotKey]):null;}
 function getEqDurability(t,slotKey){
@@ -978,13 +978,13 @@ function applyMonsterDurabilityHit(casterTpl,targetInst,targetTpl,label,lines){
   else if(label==='Réussite ultime')amount=casterTpl.ultimateDurabilityDmg||0;
   else return;
   if(!amount)return;
-  const eligible=[1,2,3,4,5].filter(n=>{const k=DURABILITY_HIT_SLOTS[n];const it=equip(targetTpl.equipmentSlots?.[k]);return !!it&&!(it.durabilityMax&&getEqDurability(targetInst,k)<=0);});
+  const eligible=[1,2,3,4,5,6].filter(n=>{const k=DURABILITY_HIT_SLOTS[n];const it=equip(targetTpl.equipmentSlots?.[k]);return !!it&&!(it.durabilityMax&&getEqDurability(targetInst,k)<=0);});
   if(!eligible.length)return; // toutes les pièces sont brisées : plus d'effet
   const d5=eligible[Math.floor(Math.random()*eligible.length)];
   const slotKey=DURABILITY_HIT_SLOTS[d5];
   const item=equip(targetTpl.equipmentSlots?.[slotKey]);
   const slotLabel=(EQUIP_SLOTS.find(s=>s[0]===slotKey)||['',''])[1];
-  lines.push(`🎲 d5 : ${d5} → ${esc(slotLabel)} visé${item?` (${esc(item.name)}${item.durabilityMax?'':' — indestructible'})`:' (vide)'}`);
+  lines.push(`🎲 d6 : ${d5} → ${esc(slotLabel)} visé${item?` (${esc(item.name)}${item.durabilityMax?'':' — indestructible'})`:' (vide)'}`);
   if(item&&item.durabilityMax){
     damageEqDurability(targetInst,slotKey,amount);
     lines.push(`🔧 ${esc(item.name)} de <b>${esc(targetInst.label)}</b> perd ${amount} de durabilité (${getEqDurability(targetInst,slotKey)}/${item.durabilityMax}).`);
@@ -1698,9 +1698,10 @@ function lineConeHitTest(axis,areaType,c,coneStart,coneEnd,px,py){
   return perp<=sw+(ew-sw)*(proj/range);
 }
 function footprintHitsLineCone(tx,ty,tw,th,axis,areaType,c,coneStart,coneEnd){
-  // Touché dès qu'un coin ou le centre de la case occupée par le token est dans la zone.
-  const pts=[[tx,ty],[tx+tw,ty],[tx,ty+th],[tx+tw,ty+th],[tx+tw/2,ty+th/2]].map(p=>[p[0]*c,p[1]*c]);
-  return pts.some(([px,py])=>lineConeHitTest(axis,areaType,c,coneStart,coneEnd,px,py));
+  for(let cx=0;cx<tw;cx++)for(let cy=0;cy<th;cy++)for(let i=0;i<=4;i++)for(let j=0;j<=4;j++){
+    if(lineConeHitTest(axis,areaType,c,coneStart,coneEnd,(tx+cx+i/4)*c,(ty+cy+j/4)*c))return true;
+  }
+  return false;
 }
 function lineConeMarkupFromAxis(a,axis){
   const {cx,cy,angle,range}=axis, c=S.map.cell;
@@ -1717,10 +1718,10 @@ function lineConeMarkupFromAxis(a,axis){
   const mapW=S.map.cols*c, mapH=S.map.rows*c;
   if(a.zoneImage){
     const clipId='clip'+Math.random().toString(36).slice(2,9);
-    return `<svg id="zonePreview" style="position:absolute;left:0;top:0;pointer-events:none;z-index:20" width="${mapW}" height="${mapH}"><defs><clipPath id="${clipId}"><polygon points="${pts}"/></clipPath></defs><image href="${esc(a.zoneImage)}" x="0" y="0" width="${mapW}" height="${mapH}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" opacity=".85"/><polygon points="${pts}" fill="none" stroke="#c084fc" stroke-width="2"/></svg>`;
+    return `<svg id="zonePreview" style="position:absolute;left:0;top:0;pointer-events:none;z-index:40" width="${mapW}" height="${mapH}"><defs><clipPath id="${clipId}"><polygon points="${pts}"/></clipPath></defs><image href="${esc(a.zoneImage)}" x="0" y="0" width="${mapW}" height="${mapH}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" opacity=".85"/><polygon points="${pts}" fill="none" stroke="#c084fc" stroke-width="2"/></svg>`;
   }
   const effect=a.effect?`<text x="${cx+dx*range/2}" y="${cy+dy*range/2}" font-size="${Math.max(24,c*0.8)}" text-anchor="middle" dominant-baseline="middle" opacity=".42">${esc(a.effect)}</text>`:'';
-  return `<svg id="zonePreview" style="position:absolute;left:0;top:0;pointer-events:none;z-index:20" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="#a44cff38" stroke="#c084fc" stroke-width="2"/>${effect}</svg>`;
+  return `<svg id="zonePreview" style="position:absolute;left:0;top:0;pointer-events:none;z-index:40" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="#a44cff38" stroke="#c084fc" stroke-width="2"/>${effect}</svg>`;
 }
 function lineConeMarkup(a,targetCell,originOverride,rangeCellsOverride){
   const axis=zoneAxis(a,targetCell,originOverride,rangeCellsOverride); if(!axis)return '';
@@ -1733,11 +1734,12 @@ function zoneMarkup(a,cell,originOverride,rangeCellsOverride){
   const px=x*S.map.cell, py=y*S.map.cell, d=size*S.map.cell;
   const radius=a.area==='circle'?'border-radius:50%;':'';
   if(a.zoneImage){
-    return `<div id="zonePreview" class="zone" style="left:${px}px;top:${py}px;width:${d}px;height:${d}px;${radius}background:none;border-color:#c084fc;overflow:hidden"><img src="${esc(a.zoneImage)}" style="width:100%;height:100%;object-fit:cover;opacity:.85"></div>`;
+    return `<div id="zonePreview" class="zone" style="z-index:40;left:${px}px;top:${py}px;width:${d}px;height:${d}px;${radius}background:none;border-color:#c084fc;overflow:hidden"><img src="${esc(a.zoneImage)}" style="width:100%;height:100%;object-fit:cover;opacity:.85"></div>`;
   }
   const effect=a.effect?`<span class="zone-effect" style="font-size:${Math.max(24,size*8)}px">${esc(a.effect)}</span>`:'';
-  return `<div id="zonePreview" class="zone" style="left:${px}px;top:${py}px;width:${d}px;height:${d}px;${radius}">${effect}</div>`;
+  return `<div id="zonePreview" class="zone" style="z-index:40;left:${px}px;top:${py}px;width:${d}px;height:${d}px;${radius}">${effect}</div>`;
 }
+function clampZone(a,s){const z=a.areaSize||3;return [Math.max(0,Math.min(S.map.cols-z,s[0])),Math.max(0,Math.min(S.map.rows-z,s[1]))];}
 function clampToRange(ci,cell,range){
   if(!ci||!(range>0))return cell;
   const sw=ci.sizeW||1,sh=ci.sizeH||1;
@@ -2911,7 +2913,7 @@ function affected(a,start,explicitTargetInstId){
 
   // Zone (carré / cercle)
   const size=a.areaSize||3;
-  const inZone=t=>t.x>=start[0]&&t.x<start[0]+size&&t.y>=start[1]&&t.y<start[1]+size;
+  const inZone=t=>t.x<start[0]+size&&t.x+(t.sizeW||1)>start[0]&&t.y<start[1]+size&&t.y+(t.sizeH||1)>start[1];
   if(isSupport){
     // Soin / Bouclier / Potion en zone : uniquement les alliés, lanceur inclus.
     return S.instances.filter(t=>instTemplate(t)?.type===casterType&&inZone(t));
@@ -3008,7 +3010,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     toast(`🚫 Mana insuffisant (${casterInst.mana}/${a.manaCost}) pour lancer ${a.name} — choisis une autre action.`);
     return;
   }
-  if(a.area==='square'||a.area==='circle')start=clampToRange(casterInst,start,a.range);
+  if(a.area==='square'||a.area==='circle')start=clampZone(a,clampToRange(casterInst,start,a.range));
   if(a.area==='single'){
     const isSup=(a.type==='Soin'||a.type==='Bouclier');
     if(!explicitTargetInstId||!affected(a,start,explicitTargetInstId).length){
@@ -3164,7 +3166,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   saveState(); render();
 }
 function resolveBuffZone(a,casterInst,start){
-  if(a.area==='square'||a.area==='circle')start=clampToRange(casterInst,start,a.range);
+  if(a.area==='square'||a.area==='circle')start=clampZone(a,clampToRange(casterInst,start,a.range));
   if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
   if(!canControlInstance(casterInst.id)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
   if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
@@ -3210,7 +3212,7 @@ function handlePersistentLineConeClick(a,casterInst,pt){
   resolvePersistentAbility(a,casterInst,pt,null,axis);
 }
 function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride){
-  if(!originOverride&&!axisOverride&&(a.area==='square'||a.area==='circle'))start=clampToRange(casterInst,start,a.range);
+  if(!originOverride&&!axisOverride&&(a.area==='square'||a.area==='circle'))start=clampZone(a,clampToRange(casterInst,start,a.range));
   if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
   if(!canControlInstance(casterInst.id)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
   if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
@@ -5331,7 +5333,7 @@ async function deleteImage(id){
   toast('🗑️ Image supprimée.');
 }
 function imageItemHtml(m){
-  return `<div class="asset-item" draggable="true" ondragstart="imageDragStart(event,'${m.id||''}')" title="Glisser vers un dossier pour la ranger">
+  return `<div class="asset-item" draggable="true" ondragstart="imageDragStart(event,'${m.id||''}')" oncontextmenu="event.preventDefault();showMoveMenu(event.clientX,event.clientY,'image','${m.id||''}')" title="Glisser vers un dossier pour la ranger">
     <img src="${esc(m.url)}" style="width:30px;height:30px;object-fit:cover;border-radius:6px;flex-shrink:0" alt="">
     <div class="asset-info"><b>${esc(m.displayName)}</b></div>
     <button class="btn ghost" style="padding:4px 8px" onclick="openRenameImageModal('${m.id}')" title="Renommer">✏️</button>
@@ -5385,12 +5387,22 @@ function onNoteSearchInput(v){
   if(c)c.innerHTML=notesResultsHtml();
 }
 function noteItemHtml(n){
-  return `<div class="asset-item" draggable="true" ondragstart="noteDragStart(event,'${n.id}')" onclick="openNoteEditModal('${n.id}')" title="Glisser vers un dossier — cliquer pour modifier">
+  return `<div class="asset-item" draggable="true" ondragstart="noteDragStart(event,'${n.id}')" oncontextmenu="event.preventDefault();showMoveMenu(event.clientX,event.clientY,'note','${n.id}')" onclick="openNoteEditModal('${n.id}')" title="Glisser vers un dossier — cliquer pour modifier">
     <div class="asset-icon">${n.image?`<img src="${esc(n.image)}" style="width:100%;height:100%;object-fit:cover;border-radius:7px">`:'📝'}</div>
     <div class="asset-info"><b>${esc(n.title)}</b></div>
     <button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();showNoteToPlayers('${n.id}')" title="Montrer aux joueurs">👁</button>
     <button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();deleteNote('${n.id}')" title="Supprimer">🗑️</button>
   </div>`;
+}
+function showMoveMenu(x,y,kind,itemId){
+  if(!itemId)return;
+  closeTokenMenu();
+  const cats=kind==='note'?(S.noteCategories||[]):imageCategories;
+  const fn=kind==='note'?'moveNoteToCategory':'moveImageToCategory';
+  const path=id=>{const p=[];let cur=id;while(cur){const c=cats.find(k=>k.id===cur);if(!c)break;p.unshift(c.name);cur=c.parent_id;}return p.join(' › ');};
+  const items=`<div class="tiny muted" style="padding:4px 8px">Déplacer vers…</div><button class="btn ghost" onclick="${fn}('${itemId}',null)">🏠 Racine</button>`+cats.map(c=>`<button class="btn ghost" onclick="${fn}('${itemId}','${c.id}')">📁 ${esc(path(c.id))}</button>`).join('');
+  const m=document.createElement('div'); m.id='tokenMenu'; m.className='token-menu';
+  m.style.left=Math.min(x,innerWidth-260)+'px'; m.style.top=Math.min(y,innerHeight*0.4)+'px'; m.style.maxHeight='60vh'; m.style.overflow='auto'; m.innerHTML=items; document.body.appendChild(m);
 }
 function noteDragStart(ev,noteId){
   ev.dataTransfer.setData('text/plain','note:'+noteId);
