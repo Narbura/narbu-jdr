@@ -3230,7 +3230,7 @@ function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride
   }
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   const casterTpl=instTemplate(casterInst);
-  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,casterLabel:casterInst.label,turnsLeft:a.duration||3,effect:a.effect,zoneImage:a.zoneImage||null};
+  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,casterLabel:casterInst.label,casterInstId:casterInst.id,turnsLeft:a.duration||3,effect:a.effect,zoneImage:a.zoneImage||null};
   if(a.area==='line'||a.area==='cone'){
     const axis=axisOverride||zoneAxis(a,start,originOverride,a.zoneRange||a.range||1);
     if(!axis){toast('Sélectionne d’abord un personnage.');return;}
@@ -3271,14 +3271,17 @@ function applyPersistentZones(nt,onlyDamage){
     if(onlyDamage&&(z.element==='Soin'||z.element==='Bouclier'))return;
     if(!tokenInPersistentZone(nt,z))return;
     const r=roll(z.formula);
-    const raw=applyMult(Math.max(0,Math.ceil(r.total*(z.statValue||0)/100)),z.dmgMult);
+    const base=Math.max(0,Math.ceil(r.total*(z.statValue||0)/100));
+    const raw=applyMult(base,z.dmgMult);
+    const det=`<br>🎲 ${esc(z.formula)} = ${r.total} × ${z.statValue||0}% = ${base}`+(z.dmgMult?` → mult. ${esc(z.dmgMult)} = ${raw}`:'');
+    const killer=inst(z.casterInstId)||null;
     if(z.element==='Soin'){
       nt.hp=Math.min(nt.hpMax,nt.hp+raw);
-      addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : +${raw} PV`);
+      addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : +${raw} PV${det}`);
       broadcastHud(nt.id,{hp:raw});
     }else if(z.element==='Bouclier'){
       nt.shield=(nt.shield||0)+raw; if(nt.shield>nt.shieldMax)nt.shieldMax=nt.shield;
-      addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : +${raw} bouclier`);
+      addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : +${raw} bouclier${det}`);
       broadcastHud(nt.id,{shield:raw});
     }else{
       let dmg=raw;
@@ -3288,9 +3291,9 @@ function applyPersistentZones(nt,onlyDamage){
       dmg=Math.max(0,Math.ceil(dmg*(1-resist)));
       const absorbed=Math.min(nt.shield||0,dmg); nt.shield-=absorbed; const hpDmg=dmg-absorbed;
       nt.hp=Math.max(0,nt.hp-hpDmg);
-      addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : -${hpDmg} PV`);
+      addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : -${hpDmg} PV${det}${def?` − défense ${def}`:''}${resist?` − résistance ${Math.round(resist*100)}%`:''}`);
       broadcastHud(nt.id,{hp:-hpDmg,shield:absorbed>0?-absorbed:0});
-      if(nt.hp<=0){addLog(`💀 <b>${esc(nt.label)} est KO</b>.`);handleInstanceDeath(nt);}
+      if(nt.hp<=0){addLog(`💀 <b>${esc(nt.label)} est KO</b>.`);handleInstanceDeath(nt,killer);}
     }
   });
 }
