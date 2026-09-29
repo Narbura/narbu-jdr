@@ -1540,9 +1540,9 @@ function tablePage(){
           <p class="tiny muted" style="margin:6px 0 0">Ce réglage n'affecte que ton propre écran.</p>
         </div>
       </div>
-      <button class="btn ${S.hudEnabled?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleHudEnabled()" ${uiCtx('ui_hud')} title="${isMJ()?'Activer/désactiver le HUD flottant (dégâts/soins) et les pop-ups de critiques':'Seul le MJ peut activer cette option'}">${hkTag('ui_hud')}🎯 HUD${S.hudEnabled?' : ON':''}</button>
-      <button class="btn ${S.friendlyFire?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleFriendlyFire()" ${uiCtx('ui_ff')} title="${isMJ()?'Autoriser/interdire les attaques entre alliés (joueurs entre eux, monstres entre eux)':'Seul le MJ peut activer cette option'}">${hkTag('ui_ff')}⚔ Tir allié${S.friendlyFire?' : ON':''}</button>
-      <button class="btn ${S.freeMovement?'primary':''}" ${(isMJ()&&!S.combat.active)?'':'disabled'} onclick="toggleFreeMovement()" ${uiCtx('ui_free')} title="${S.combat.active?'Indisponible pendant le combat — les tokens sont alignés sur la grille':(isMJ()?'Activer/désactiver le placement libre des tokens (hors combat)':'Seul le MJ peut activer cette option')}">${hkTag('ui_free')}🎯 Placement libre${S.freeMovement?' : ON':''}</button>
+      ${isMJ()?`<button class="btn ${S.hudEnabled?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleHudEnabled()" ${uiCtx('ui_hud')} title="${isMJ()?'Activer/désactiver le HUD flottant (dégâts/soins) et les pop-ups de critiques':'Seul le MJ peut activer cette option'}">${hkTag('ui_hud')}🎯 HUD${S.hudEnabled?' : ON':''}</button>`:''}
+      ${isMJ()?`<button class="btn ${S.friendlyFire?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleFriendlyFire()" ${uiCtx('ui_ff')} title="${isMJ()?'Autoriser/interdire les attaques entre alliés (joueurs entre eux, monstres entre eux)':'Seul le MJ peut activer cette option'}">${hkTag('ui_ff')}⚔ Tir allié${S.friendlyFire?' : ON':''}</button>`:''}
+      ${isMJ()?`<button class="btn ${S.freeMovement?'primary':''}" ${(isMJ()&&!S.combat.active)?'':'disabled'} onclick="toggleFreeMovement()" ${uiCtx('ui_free')} title="${S.combat.active?'Indisponible pendant le combat — les tokens sont alignés sur la grille':(isMJ()?'Activer/désactiver le placement libre des tokens (hors combat)':'Seul le MJ peut activer cette option')}">${hkTag('ui_free')}🎯 Placement libre${S.freeMovement?' : ON':''}</button>`:''}
       ${combatControls}`}<button class="btn ghost fs-hide" style="margin-left:auto;flex-shrink:0" onclick="toggleToolbar()" title="${toolbarHidden?'Afficher':'Masquer'} les options">${toolbarHidden?'▼':'▶'}</button>
     </div>
     <div class="map-wrap" id="mapWrap">
@@ -5650,7 +5650,7 @@ applyGridOpacity();
 function toggleFullscreen(){
   stageFullscreen=!stageFullscreen;
   document.body.classList.toggle('stage-fullscreen',stageFullscreen);
-  if(stageFullscreen)document.documentElement.requestFullscreen?.().catch(()=>{});
+  if(stageFullscreen)document.documentElement.requestFullscreen?.().then(()=>navigator.keyboard?.lock?.(['Escape'])).catch(()=>{});
   else if(document.fullscreenElement)document.exitFullscreen?.().catch(()=>{});
   render();
 }
@@ -5668,10 +5668,10 @@ document.addEventListener('fullscreenchange',()=>{
 /* ============================= RACCOURCIS CLAVIER ============================= */
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
-    if(stageFullscreen){exitStageFullscreen();return;}
     if(pendingPersistentOrigin){pendingPersistentOrigin=null;activeAbility=null;hoverCell=null;render();return;}
     if(activeAbility){activeAbility=null;hoverCell=null;render();return;}
     if(multiSel.length){multiSel=[];render();return;}
+    if(stageFullscreen){exitStageFullscreen();return;}
   }
   if(e.key==='Delete'&&(selectedToken||multiSel.length)&&!activeAbility){
     if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))return;
