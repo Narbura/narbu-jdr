@@ -1505,13 +1505,13 @@ function updateTargetingBanner(){
 function tablePage(){
   const mj=isMJ();
   const combatControls = mj
-    ? (S.combat.active?`<button class="btn" onclick="endCombat()">⏹ Fin du combat</button><button class="btn" onclick="nextTurn()">⏭ Tour suivant</button>`:`<button class="btn primary" onclick="startCombat()">⚔ Démarrer le combat</button>`)
+    ? (S.combat.active?`<button class="btn" onclick="endCombat()" ${uiCtx('ui_end')}>${hkTag('ui_end')}⏹ Fin du combat</button><button class="btn" onclick="nextTurn()" ${uiCtx('ui_next')}>${hkTag('ui_next')}⏭ Tour suivant</button>`:`<button class="btn primary" onclick="startCombat()" ${uiCtx('ui_start')}>${hkTag('ui_start')}⚔ Démarrer le combat</button>`)
     : (S.combat.active?`<span class="pill">⚔ Combat en cours</span>`:'');
   return `<div class="map-layout" id="mapLayout">
   <div class="card map-card">
     <div class="map-toolbar">
-      <button class="btn" onclick="toggleFullscreen()">${stageFullscreen?'✕ Quitter le plein écran':'⛶ Plein écran'}</button>
-      <button class="btn" id="gridToggleBtn" onclick="toggleGridVisible()" title="Afficher/masquer la grille">${gridVisible?'▦':'⬜'} Grille</button>
+      <button class="btn" onclick="toggleFullscreen()" ${uiCtx('ui_fullscreen')}>${hkTag('ui_fullscreen')}${stageFullscreen?'✕ Quitter le plein écran':'⛶ Plein écran'}</button>
+      <button class="btn" id="gridToggleBtn" onclick="toggleGridVisible()" ${uiCtx('ui_grid')} title="Afficher/masquer la grille · Clic droit : raccourci">${hkTag('ui_grid')}${gridVisible?'▦':'⬜'} Grille</button>
       <div style="position:relative;display:inline-block">
         <button class="btn ghost" title="Réglage de l'opacité de la grille" onclick="toggleGridOpacityPopover()">⚙</button>
         <div id="gridOpacityPopover" class="grid-opacity-popover" style="display:${gridPopoverOpen?'block':'none'}">
@@ -1520,9 +1520,9 @@ function tablePage(){
           <p class="tiny muted" style="margin:6px 0 0">Ce réglage n'affecte que ton propre écran.</p>
         </div>
       </div>
-      <button class="btn ${S.hudEnabled?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleHudEnabled()" title="${isMJ()?'Activer/désactiver le HUD flottant (dégâts/soins) et les pop-ups de critiques':'Seul le MJ peut activer cette option'}">🎯 HUD${S.hudEnabled?' : ON':''}</button>
-      <button class="btn ${S.friendlyFire?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleFriendlyFire()" title="${isMJ()?'Autoriser/interdire les attaques entre alliés (joueurs entre eux, monstres entre eux)':'Seul le MJ peut activer cette option'}">⚔ Tir allié${S.friendlyFire?' : ON':''}</button>
-      <button class="btn ${S.freeMovement?'primary':''}" ${(isMJ()&&!S.combat.active)?'':'disabled'} onclick="toggleFreeMovement()" title="${S.combat.active?'Indisponible pendant le combat — les tokens sont alignés sur la grille':(isMJ()?'Activer/désactiver le placement libre des tokens (hors combat)':'Seul le MJ peut activer cette option')}">🎯 Placement libre${S.freeMovement?' : ON':''}</button>
+      <button class="btn ${S.hudEnabled?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleHudEnabled()" ${uiCtx('ui_hud')} title="${isMJ()?'Activer/désactiver le HUD flottant (dégâts/soins) et les pop-ups de critiques':'Seul le MJ peut activer cette option'}">${hkTag('ui_hud')}🎯 HUD${S.hudEnabled?' : ON':''}</button>
+      <button class="btn ${S.friendlyFire?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleFriendlyFire()" ${uiCtx('ui_ff')} title="${isMJ()?'Autoriser/interdire les attaques entre alliés (joueurs entre eux, monstres entre eux)':'Seul le MJ peut activer cette option'}">${hkTag('ui_ff')}⚔ Tir allié${S.friendlyFire?' : ON':''}</button>
+      <button class="btn ${S.freeMovement?'primary':''}" ${(isMJ()&&!S.combat.active)?'':'disabled'} onclick="toggleFreeMovement()" ${uiCtx('ui_free')} title="${S.combat.active?'Indisponible pendant le combat — les tokens sont alignés sur la grille':(isMJ()?'Activer/désactiver le placement libre des tokens (hors combat)':'Seul le MJ peut activer cette option')}">${hkTag('ui_free')}🎯 Placement libre${S.freeMovement?' : ON':''}</button>
       ${combatControls}
     </div>
     <div class="map-wrap" id="mapWrap">
@@ -3345,6 +3345,8 @@ function removeAffliction(instId,defId){
 function getHotkeyMap(){try{return JSON.parse(localStorage.getItem('narbudr-my-hotkeys')||'{}');}catch(e){return {};}}
 function setHotkeyMap(m){localStorage.setItem('narbudr-my-hotkeys',JSON.stringify(m));saveUiPrefsToProfile();}
 function myHotkeyFor(charId,abilityId){return (getHotkeyMap()[charId]||{})[abilityId]||null;}
+function uiCtx(id){return `oncontextmenu="event.preventDefault();promptSetHotkey('__ui__','${id}')"`;}
+function hkTag(id){const k=myHotkeyFor('__ui__',id);return k?`[${esc(k)}] `:'';}
 function promptSetHotkey(charId,abilityId){
   const key=prompt('Touche pour ce raccourci (1-9, lettre, ou symbole comme & é " \' ( § è ! ç à) — laisse vide pour retirer :','');
   if(key===null)return;
@@ -5537,7 +5539,7 @@ function toggleGridVisible(){
   localStorage.setItem('narbudr-grid-visible',gridVisible?'1':'0');
   applyGridOpacity();
   const btn=document.getElementById('gridToggleBtn');
-  if(btn)btn.innerHTML=(gridVisible?'▦':'⬜')+' Grille';
+  if(btn)btn.innerHTML=hkTag('ui_grid')+(gridVisible?'▦':'⬜')+' Grille';
 }
 function toggleGridOpacityPopover(){
   gridPopoverOpen=!gridPopoverOpen;
@@ -5601,7 +5603,7 @@ document.addEventListener('keydown',e=>{
   if(!pendingPersistentOrigin||!activeAbility||!/^Arrow/.test(e.key))return;
   const a=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId),c=inst(selectedToken); if(!a||!c)return;
   e.preventDefault();
-  const p=pendingPersistentOrigin,o=persistentLiveOrigin(a,c),step=(e.shiftKey?15:5)*Math.PI/180;
+  const p=pendingPersistentOrigin,o=persistentLiveOrigin(a,c),step=(e.shiftKey?15:1)*Math.PI/180;
   p.angle=persistentAngle(p,o,c)+((e.key==='ArrowLeft'||e.key==='ArrowUp')?-step:step);
   updateZonePreview();
 });
@@ -5629,6 +5631,17 @@ function moveSelectedTokenBy(dx,dy){
   applyZoneDamageOnMove(t);
   saveState(); render();
 }
+document.addEventListener('keydown',e=>{
+  if(e.key.length!==1||/\s/.test(e.key))return;
+  if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)||e.target.isContentEditable)return;
+  if(document.getElementById('modalBg')?.classList.contains('open'))return;
+  if(currentPage!=='table')return;
+  const m=getHotkeyMap()['__ui__']||{};
+  const id=Object.keys(m).find(k=>m[k]===e.key);
+  const acts={ui_next:()=>S.combat.active&&nextTurn(),ui_start:()=>!S.combat.active&&startCombat(),ui_end:()=>S.combat.active&&endCombat(),ui_fullscreen:toggleFullscreen,ui_grid:toggleGridVisible,ui_ff:toggleFriendlyFire,ui_hud:toggleHudEnabled,ui_free:toggleFreeMovement};
+  if(!id||!acts[id])return;
+  e.preventDefault(); e.stopImmediatePropagation(); acts[id]();
+});
 document.addEventListener('keydown',e=>{
   if(e.key.length!==1||/\s/.test(e.key))return;
   if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)||e.target.isContentEditable)return;
@@ -5708,7 +5721,7 @@ document.addEventListener('keydown',e=>{
     if(tw){
       const id=tw.dataset.token;
       st.mode='token'; wrap.onmousedown(fake(t,e.target));
-      lpTimer=setTimeout(()=>{ if(st&&st.mode==='token'&&!st.moved){ dragCandidate=null; st.mode='menu'; showTokenMenu(st.sx,st.sy,id); } },600);
+      lpTimer=setTimeout(()=>{ if(st&&st.mode==='token'&&!st.moved){ dragCandidate=null; st.mode='menu'; showTokenMenu(st.sx,st.sy,id); } },400);
       return;
     }
     wrap.onmousedown(fake(t,e.target,2));
