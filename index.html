@@ -527,9 +527,17 @@ async function flushSave(){
   saveInFlight=false;
   if(saveQueued){ saveQueued=false; flushSave(); }
 }
+function broadcastState(){
+  try{
+    const payload={s:S};
+    if(JSON.stringify(payload).length>230000)return; // trop lourd : Realtime base de données prend le relais
+    gameChannel?.send({type:'broadcast',event:'state',payload});
+  }catch(e){ console.error('broadcastState',e); }
+}
 async function persistState(){
   bumpRev(); pushUndoCheckpoint();
-  localStorage.setItem('arcanum-vtt', JSON.stringify(S));
+  try{localStorage.setItem('arcanum-vtt', JSON.stringify(S));}catch(e){}
+  broadcastState();
   await flushSave();
 }
 /* saveState() : appelée partout après une action de jeu. Met à jour l'undo + le stockage local
@@ -537,13 +545,14 @@ async function persistState(){
    envoyer un par action. saveState(true) force un envoi immédiat (bouton "Sauvegarder"). */
 function saveState(immediate){
   bumpRev(); pushUndoCheckpoint();
-  localStorage.setItem('arcanum-vtt', JSON.stringify(S));
+  try{localStorage.setItem('arcanum-vtt', JSON.stringify(S));}catch(e){}
+  broadcastState();
   if(immediate){
     flushSave();
     toast('Sauvegarde effectuée');
   }else{
     clearTimeout(saveDebounceTimer);
-    saveDebounceTimer=setTimeout(flushSave,350);
+    saveDebounceTimer=setTimeout(flushSave,40);
   }
 }
 window.addEventListener('beforeunload',()=>{ if(saveDebounceTimer)flushSave(); });
@@ -563,12 +572,20 @@ function subscribeRealtime(){
       if(payload.new && payload.new.data){
         const incoming=payload.new.data;
         // Écho de notre propre sauvegarde (ou réponse réseau en retard) : notre état local est déjà plus récent, on ignore.
-        if((incoming._rev||0)<(S._rev||0))return;
+        if((incoming._rev||0)<=(S._rev||0))return;
         S=incoming;
         normalizeState();
         syncTurnSelection();
         render();
       }
+    })
+    .on('broadcast',{event:'state'},payload=>{
+      const incoming=(payload.payload||{}).s;
+      if(!incoming||(incoming._rev||0)<=(S._rev||0))return;
+      S=incoming;
+      normalizeState();
+      syncTurnSelection();
+      render();
     })
     .on('broadcast',{event:'fx'},payload=>{
       const d=payload.payload||{};
@@ -667,7 +684,6 @@ function updateUserBadge(){
 }
 
 /* ============================= UTILITAIRES ============================= */
-function saveState(){ persistState(); toast('Sauvegarde effectuée'); }
 function resetDemo(){
   if(!isMJ()){toast('⛔ Seul le MJ peut réinitialiser la partie.');return;}
   if(!confirm('Réinitialiser les données de démonstration pour TOUTE la table ?'))return;
