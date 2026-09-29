@@ -2679,13 +2679,14 @@ function setupMapInteractions(){
         if(activeAbility==='__dissipation__'){applyDissipation(id);return;}
         const a=S.abilities.find(x=>x.id===activeAbility); const t=inst(id);
         if(a&&t){
+          const pt=(a.area==='single')?[t.x,t.y]:mapPoint(e.clientX,e.clientY);
           if(a.type==='Buff'){
             if(a.area==='single')resolveBuffAbility(a,inst(selectedToken),id);
-            else resolveBuffZone(a,inst(selectedToken),[t.x,t.y]);
+            else resolveBuffZone(a,inst(selectedToken),pt);
           }
-          else if(a.type==='Persistant'&&(a.area==='line'||a.area==='cone'))handlePersistentLineConeClick(a,inst(selectedToken),[t.x,t.y]);
-          else if(a.type==='Persistant')resolvePersistentAbility(a,inst(selectedToken),[t.x,t.y]);
-          else resolveAbility(a,[t.x,t.y],id);
+          else if(a.type==='Persistant'&&(a.area==='line'||a.area==='cone'))handlePersistentLineConeClick(a,inst(selectedToken),pt);
+          else if(a.type==='Persistant')resolvePersistentAbility(a,inst(selectedToken),pt);
+          else resolveAbility(a,pt,a.area==='single'?id:undefined);
         }
         return;
       }
