@@ -855,7 +855,11 @@ function rteInsertTable(id){
 }
 function rteHtml(id){return document.getElementById(id)?.innerHTML||'';}
 function opt(value,label,current){return `<option value="${esc(value)}" ${value===current?'selected':''}>${esc(label)}</option>`;}
-function parseNum(v){const n=+v;return Number.isFinite(n)?n:0;}
+function parseNum(v){
+  if(typeof v==='string')v=v.trim().replace(/\s/g,'').replace(',','.').replace(/[x×*]10\^/i,'e').replace(/\+(?=e)/i,'');
+  const n=+v; if(n===Infinity)return Number.MAX_VALUE; return Number.isFinite(n)?n:0;
+}
+function fmtNum(n){n=+n||0;if(Math.abs(n)<1e12)return String(Math.round(n*100)/100);const [m,e]=n.toExponential(2).split('e');return `${+m}×10<sup>${+e}</sup>`;}
 function maxHpFromCon(con){return Math.max(1,Math.ceil(parseNum(con)*2.5));}
 function syncSheetInputs(){
   document.querySelectorAll('#modal input[data-inst]').forEach(el=>{
@@ -866,7 +870,7 @@ function syncSheetInputs(){
     if(v!==undefined&&String(v)!==el.value)el.value=v;
   });
 }
-function xpNeeded(level){let n=10;for(let i=1;i<(level||1);i++)n=Math.floor(n*1.5);return n;}
+function xpNeeded(level){let n=10;for(let i=1;i<(level||1);i++)n=Math.min(Number.MAX_VALUE,Math.floor(n*1.5));return n;}
 /* ---- Points de caractéristique gagnés par niveau ---- */
 function levelPointsEarned(lvl){let n=0;for(let l=2;l<=(lvl||1);l++)n+=(l%5===0)?20:5;return n;}
 function statPointsAvailable(c){return Math.max(0,levelPointsEarned(c.level||1)-(c.statPointsSpent||0));}
@@ -925,8 +929,8 @@ function awardXp(killerInst,deadTpl){
   const k=killerInst?instTemplate(killerInst):null;
   if(!k||k.type!=='player'||!deadTpl||deadTpl.type!=='enemy')return;
   const amt=deadTpl.xpValue||0; if(!amt)return;
-  k.level=k.level||1; k.xp=(k.xp||0)+amt;
-  addLog(`⭐ <b>${esc(k.name)}</b> gagne ${amt} XP.`);
+  k.level=k.level||1; k.xp=Math.min(Number.MAX_VALUE,(k.xp||0)+amt);
+  addLog(`⭐ <b>${esc(k.name)}</b> gagne ${fmtNum(amt)} XP.`);
   let leveled=false;
   while(k.xp>=xpNeeded(k.level)){k.xp-=xpNeeded(k.level);k.level++;leveled=true;addLog(`🎉 <b>${esc(k.name)}</b> passe niveau ${k.level} !`);}
   if(leveled)levelUpChar(k.id);
@@ -3704,15 +3708,15 @@ function openCharacter(id){
     <div class="row" style="gap:10px;flex-wrap:wrap">
       <div class="field"><label>Durabilité critique (dégâts sur l'équipement en cas de coup critique)</label><input id="c_critdur" type="number" min="0" value="${base.critDurabilityDmg||0}"></div>
       <div class="field"><label>Durabilité ultime (dégâts sur l'équipement en cas de coup ultime)</label><input id="c_ultdur" type="number" min="0" value="${base.ultimateDurabilityDmg||0}"></div>
-      <div class="field"><label>Valeur d'XP (donnée au joueur qui le tue)</label><input id="c_xpvalue" type="number" min="0" value="${base.xpValue||0}"></div>
+      <div class="field"><label>Valeur d'XP (donnée au joueur qui le tue)</label><input id="c_xpvalue" type="text" value="${base.xpValue||0}" placeholder="ex : 1.2e308"></div>
     </div>
     <p class="tiny muted">0 = n'abîme pas l'équipement.</p>
   </div>
   <div class="field"><label>PV maximum (automatique : Constitution × 2,5)</label><input id="c_hpmax" type="number" value="${maxHpFromCon(base.stats.Constitution)}" readonly style="opacity:.6"></div>
   <div class="field"><label>Mana maximum</label><input id="c_manamax" type="number" value="${base.resourcesMax.Mana??0}"></div>
   <div class="field"><label>Bouclier maximum</label><input id="c_shieldmax" type="number" value="${base.resourcesMax.Bouclier??0}"></div>
-  <div class="field"><label>Niveau</label><input id="c_level" type="number" min="1" value="${base.level||1}" oninput="const m=xpNeeded(parseNum(this.value)||1)-1;const x=document.getElementById('c_xp');x.max=m;if(+x.value>m)x.value=m;document.getElementById('c_xp_label').textContent='XP sur le niveau actuel (max '+m+')'"></div>
-  <div class="field"><label id="c_xp_label">XP sur le niveau actuel (max ${xpNeeded(base.level||1)-1})</label><input id="c_xp" type="number" min="0" max="${xpNeeded(base.level||1)-1}" value="${base.xp||0}"></div>
+  <div class="field"><label>Niveau</label><input id="c_level" type="number" min="1" value="${base.level||1}" oninput="const m=xpNeeded(parseNum(this.value)||1)-1;const x=document.getElementById('c_xp');if(parseNum(x.value)>m)x.value=m;document.getElementById('c_xp_label').innerHTML='XP sur le niveau actuel (max '+fmtNum(m)+')'"></div>
+  <div class="field"><label id="c_xp_label">XP sur le niveau actuel (max ${fmtNum(xpNeeded(base.level||1)-1)})</label><input id="c_xp" type="text" value="${base.xp||0}" placeholder="ex : 1.2e308"></div>
   <div class="field"><label>Force</label><input id="s_force" type="number" value="${base.stats.Force??0}" oninput="updateWeightPreview()"></div>
   <div class="field"><label>Magie</label><input id="s_magic" type="number" value="${base.stats.Magie??0}"></div>
   <div class="field"><label>Agilité</label><input id="s_agi" type="number" value="${base.stats.Agilité??0}"></div>
@@ -4652,7 +4656,7 @@ function myCharacterCard(c){
     return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px"><span>${iconInlineHtml(def)} ${esc(def.name)} × ${o.qty} <small class="muted">(+${def.amount} ${def.resource==='Mana'?'💧 Mana':'❤️ PV'})</small></span><button class="btn" style="padding:4px 8px" onclick="useConsumable('${c.id}','${o.id}')">Utiliser</button></div>`;
   }).join(''):'<p class="tiny muted">Aucun consommable.</p>';
   const lvl=c.level||1, xpNow=c.xp||0, xpNeed=xpNeeded(lvl);
-  const xpBlock=c.type==='player'?`<div class="stat" style="margin-bottom:8px"><label>⭐ Niveau ${lvl}</label><div class="mini-bar" style="width:100%;height:8px"><i style="width:${pct(xpNow,xpNeed)}%;background:#e7b85c"></i></div><div class="tiny muted" style="margin-top:4px">XP : ${xpNow} / ${xpNeed} · Reste ${xpNeed-xpNow} pour le niveau ${lvl+1}</div></div>`:'';
+  const xpBlock=c.type==='player'?`<div class="stat" style="margin-bottom:8px"><label>⭐ Niveau ${lvl}</label><div class="mini-bar" style="width:100%;height:8px"><i style="width:${pct(xpNow,xpNeed)}%;background:#e7b85c"></i></div><div class="tiny muted" style="margin-top:4px">XP : ${fmtNum(xpNow)} / ${fmtNum(xpNeed)} · Reste ${fmtNum(xpNeed-xpNow)} pour le niveau ${lvl+1}</div></div>`:'';
   const bioTabHtml=`
     ${xpBlock}
     <div style="margin-bottom:12px">${c.profileImage?`<img src="${esc(c.profileImage)}" style="max-width:100%;border-radius:10px;display:block">`:'<p class="tiny muted">Aucune image.</p>'}</div>
