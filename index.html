@@ -59,6 +59,7 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .zone-effect{position:absolute;inset:0;display:grid;place-items:center;opacity:.42}
 .token-wrap{position:absolute;z-index:30;pointer-events:none}
 .token{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:var(--tok-w,var(--cell-size,32px));height:var(--tok-h,var(--cell-size,32px));border-radius:50%;display:grid;place-items:center;font-size:calc(var(--tok-min,var(--cell-size,32px))*0.5);font-weight:800;color:#fff;cursor:pointer;pointer-events:auto}
+.token>img{position:absolute;left:0;top:0;width:100%!important;height:100%!important;object-fit:fill!important}
 .token-resize-handle{position:absolute;right:-4px;bottom:-4px;width:12px;height:12px;background:var(--accent);border:2px solid #fff;border-radius:3px;cursor:nwse-resize;display:none;z-index:40}
 .token-wrap.selected .token-resize-handle{display:block}
 .token-wrap.selected .token{outline:3px solid #fff;outline-offset:3px}
@@ -1909,13 +1910,14 @@ function fxAddImpact(img,frames,rows,cx,cy,w,h,fps,clip){
     ctx.restore();
   }});
 }
-function fxAddSpin(img,cx,cy,size,turnsPerSec,duration){
+function fxAddSpin(img,cx,cy,size,radius,turnsPerSec,duration){
   if(!img)return;
   fxStart({duration,draw(ctx,elapsed){
     if(!img.complete||!img.naturalWidth)return;
     const fade=Math.min(1,(duration-elapsed)/(duration*0.2));
     ctx.save(); ctx.globalAlpha=Math.max(0,fade);
-    ctx.translate(cx,cy); ctx.rotate(Math.PI*2*turnsPerSec*elapsed/1000);
+    const ang=Math.PI*2*turnsPerSec*elapsed/1000;
+    ctx.translate(cx+Math.cos(ang)*radius,cy+Math.sin(ang)*radius); ctx.rotate(ang);
     ctx.drawImage(img,-size/2,-size/2,size,size);
     ctx.restore();
   }});
@@ -2058,7 +2060,11 @@ function playAbilityFX(a,casterInst,targets,start){
   if(a.area==='self'){
     const sw=casterInst.sizeW||1, sh=casterInst.sizeH||1;
     const size=((a.areaSize||1)*2+Math.max(sw,sh))*cell;
-    if(a.spinImage)fxAddSpin(getFxImg(a.spinImage),fromX,fromY,size,a.spinSpeed||2,(a.spinDuration||1)*1000);
+    if(a.spinImage){
+      const imgSize=(a.areaSize||1)*cell;
+      const radius=size/2-imgSize/2;
+      fxAddSpin(getFxImg(a.spinImage),fromX,fromY,imgSize,radius,a.spinSpeed||2,(a.spinDuration||1)*1000);
+    }
     doImpactZoneOrPerToken(fromX,fromY,size);
     return;
   }
@@ -3938,7 +3944,7 @@ function openAbility(id){
     <label>🌀 Image tournoyante (« Autour de soi » uniquement — remplit la zone et tourne autour du personnage)</label>
     <div class="icon-dropzone" onclick="document.getElementById('a_spin_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'a_spin','a_spin_preview')">
       <div id="a_spin_preview" class="icon-preview">${a.spinImage?`<img src="${esc(a.spinImage)}">`:'<span>🌀</span>'}</div>
-      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir. Vide = pas de rotation.</p>
+      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir. Vide = pas de rotation. Dessine l'image orientée vers la droite : sa gauche (ex : pommeau) sera côté lanceur.</p>
       <input type="file" id="a_spin_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'a_spin','a_spin_preview')">
     </div>
     <input type="hidden" id="a_spin" value="${esc(a.spinImage||'')}">
