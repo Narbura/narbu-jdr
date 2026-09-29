@@ -127,6 +127,7 @@ body.stage-fullscreen .map-toolbar{position:fixed;top:10px;left:50%;transform:tr
 body.stage-fullscreen .bottom-abilities{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);z-index:90;background:#17191fee;border:1px solid #454956;border-radius:12px;padding:7px;max-width:92vw}
 body.stage-fullscreen .map-wrap{height:100%;border:0;border-radius:0}
 body.stage-fullscreen .targeting-banner{top:64px}
+body.stage-fullscreen .fs-hide,body.stage-fullscreen .map-toolbar.is-hidden,body.stage-fullscreen .bottom-abilities.is-hidden{display:none!important}
 
 .map-wrap{touch-action:none;-webkit-user-select:none;-webkit-touch-callout:none}
 button,select,.nav,.btn{touch-action:manipulation}
@@ -1528,7 +1529,7 @@ function tablePage(){
     : (S.combat.active?`<span class="pill">⚔ Combat en cours</span>`:'');
   return `<div class="map-layout" id="mapLayout">
   <div class="card map-card">
-    <div class="map-toolbar">${toolbarHidden?'':`
+    <div class="map-toolbar ${toolbarHidden?'is-hidden':''}">${toolbarHidden?'':`
       <button class="btn" onclick="toggleFullscreen()" ${uiCtx('ui_fullscreen')}>${hkTag('ui_fullscreen')}${stageFullscreen?'✕ Quitter le plein écran':'⛶ Plein écran'}</button>
       <button class="btn" id="gridToggleBtn" onclick="toggleGridVisible()" ${uiCtx('ui_grid')} title="Afficher/masquer la grille · Clic droit : raccourci">${hkTag('ui_grid')}${gridVisible?'▦':'⬜'} Grille</button>
       <div style="position:relative;display:inline-block">
@@ -1542,14 +1543,14 @@ function tablePage(){
       <button class="btn ${S.hudEnabled?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleHudEnabled()" ${uiCtx('ui_hud')} title="${isMJ()?'Activer/désactiver le HUD flottant (dégâts/soins) et les pop-ups de critiques':'Seul le MJ peut activer cette option'}">${hkTag('ui_hud')}🎯 HUD${S.hudEnabled?' : ON':''}</button>
       <button class="btn ${S.friendlyFire?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleFriendlyFire()" ${uiCtx('ui_ff')} title="${isMJ()?'Autoriser/interdire les attaques entre alliés (joueurs entre eux, monstres entre eux)':'Seul le MJ peut activer cette option'}">${hkTag('ui_ff')}⚔ Tir allié${S.friendlyFire?' : ON':''}</button>
       <button class="btn ${S.freeMovement?'primary':''}" ${(isMJ()&&!S.combat.active)?'':'disabled'} onclick="toggleFreeMovement()" ${uiCtx('ui_free')} title="${S.combat.active?'Indisponible pendant le combat — les tokens sont alignés sur la grille':(isMJ()?'Activer/désactiver le placement libre des tokens (hors combat)':'Seul le MJ peut activer cette option')}">${hkTag('ui_free')}🎯 Placement libre${S.freeMovement?' : ON':''}</button>
-      ${combatControls}`}<button class="btn ghost" style="margin-left:auto;flex-shrink:0" onclick="toggleToolbar()" title="${toolbarHidden?'Afficher':'Masquer'} les options">${toolbarHidden?'▼':'▶'}</button>
+      ${combatControls}`}<button class="btn ghost fs-hide" style="margin-left:auto;flex-shrink:0" onclick="toggleToolbar()" title="${toolbarHidden?'Afficher':'Masquer'} les options">${toolbarHidden?'▼':'▶'}</button>
     </div>
     <div class="map-wrap" id="mapWrap">
       <div class="map-drop-hint" id="mapDropHint">➕ Déposer sur la carte</div>
       <div class="map" id="map" style="width:${S.map.cols*S.map.cell}px;height:${S.map.rows*S.map.cell}px${S.map.backgroundImage?`;background-image:url('${esc(S.map.backgroundImage)}');background-size:100% 100%;background-repeat:no-repeat`:''}">${mapCells()}${persistentZonesHtml()}${auraZonesHtml()}${tokensHtml()}</div>
       ${S.combat.active?`<div class="turn-banner">⚔ Tour : <b>${esc(inst(S.combat.order[S.combat.turn])?.label||'—')}</b></div>`:''}
     </div>
-    <div class="bottom-abilities">${bottomHidden?'':(()=>{
+    <div class="bottom-abilities ${bottomHidden?'is-hidden':''}">${bottomHidden?'':(()=>{
       const selInst=selectedToken?inst(selectedToken):null;
       if(!selInst)return '<span class="tiny muted">Sélectionne un personnage sur la carte pour voir ses capacités.</span>';
       let abilitiesHtml='';
@@ -1581,7 +1582,7 @@ function tablePage(){
       }
       const mjExtra=isMJ()?`<button class="btn ghost" onclick="openManageAfflictions('${selInst.id}')" title="Gérer les afflictions de ce jeton">🩸 Afflictions</button><button class="btn ${activeAbility==='__dissipation__'?'primary':''}" onclick="startDissipation()" title="Purger toutes les afflictions d'un jeton">🧹 Dissipation</button>`:'';
       return abilitiesHtml+mjExtra;
-    })()}<button class="btn ghost" style="margin-left:auto;flex-shrink:0;position:sticky;right:0" onclick="toggleBottomBar()" title="${bottomHidden?'Afficher':'Masquer'} les raccourcis">${bottomHidden?'▲':'▶'}</button></div>
+    })()}<button class="btn ghost fs-hide" style="margin-left:auto;flex-shrink:0;position:sticky;right:0" onclick="toggleBottomBar()" title="${bottomHidden?'Afficher':'Masquer'} les raccourcis">${bottomHidden?'▲':'▶'}</button></div>
   </div>
   <div class="card side-panel">${sidePanelHtml()}</div>
   </div>`;
