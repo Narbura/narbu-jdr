@@ -52,7 +52,7 @@ button,input,select,textarea{font:inherit} button{cursor:pointer}
 .map-wrap{flex:1;position:relative;overflow:hidden;background:#0d0f13;border:1px solid var(--line);border-radius:12px;cursor:grab}
 .map-wrap.panning{cursor:grabbing}
 .map{position:absolute;top:0;left:0;background:linear-gradient(145deg,#2a3134,#1f2629);border:1px solid #59606a;box-shadow:0 15px 50px #0008;user-select:none;transform-origin:0 0}
-.cell{position:absolute;border-right:1px solid #ffffffaa;border-bottom:1px solid #ffffffaa;pointer-events:none;mix-blend-mode:difference;z-index:15;opacity:var(--grid-opacity,1)}
+.grid-layer{position:absolute;left:0;top:0;pointer-events:none;mix-blend-mode:difference;z-index:15;opacity:var(--grid-opacity,1);background-image:linear-gradient(to left,#ffffffaa 1px,transparent 1px),linear-gradient(to top,#ffffffaa 1px,transparent 1px)}
 .grid-opacity-popover{position:absolute;top:44px;left:0;background:#17191fee;border:1px solid #454956;border-radius:10px;padding:10px 14px;z-index:96;min-width:210px;box-shadow:0 10px 30px #0008}
 .grid-opacity-popover input[type="range"]{width:100%;margin-top:6px}
 .zone{position:absolute;pointer-events:none;background:#a44cff38;border:2px solid #c084fc;box-shadow:0 0 25px #a44cff55 inset,0 0 18px #a44cff33;z-index:20}
@@ -1803,9 +1803,8 @@ function tablePage(){
   </div>`;
 }
 function mapCells(){
-  let out=''; const m=S.map;
-  for(let y=0;y<m.rows;y++)for(let x=0;x<m.cols;x++)out+=`<div class="cell" style="left:${x*m.cell}px;top:${y*m.cell}px;width:${m.cell}px;height:${m.cell}px"></div>`;
-  return out;
+  const m=S.map;
+  return `<div class="grid-layer" style="width:${m.cols*m.cell}px;height:${m.rows*m.cell}px;background-size:${m.cell}px ${m.cell}px"></div>`;
 }
 function auraZonesHtml(){
   let out='';
