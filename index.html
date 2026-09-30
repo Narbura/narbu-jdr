@@ -497,6 +497,7 @@ let ownRecent={};            // empreintes de mes propres écritures récentes (
 let pendingChat=[];          // messages de chat en attente d'insertion
 let seenChat=new Set();
 let touched=[];
+let instTs={};   // numéro de version par pion (ignore les retours réseau périmés)
 function canon(v){
   if(v===undefined)return 'null';
   if(v===null||typeof v!=='object')return JSON.stringify(v);
@@ -539,6 +540,7 @@ async function loadGameState(){
       S.instances=(insts.data||[]).map(r=>r.raw_instance_data).filter(Boolean);
       S.chat=(chat.data||[]).slice().reverse().map(r=>r.message);
       normalizeState();
+      instTs={}; S.instances.forEach(i=>{if(i._ts)instTs[i.id]=i._ts;});
       lastSaved=computeSnapshot();
     }
   }catch(e){
@@ -597,7 +599,7 @@ async function flushSave(){
     const noteUp=[], instUp=[];
     (S.notes||[]).forEach(n=>{if(snap.notes[n.id]!==old.notes[n.id]){noteUp.push(noteRow(n));delta.notes.push(n);noteOwn('n:'+n.id,snap.notes[n.id]);}});
     Object.keys(old.notes).forEach(id=>{if(!(id in snap.notes))delta.notesDel.push(id);});
-    S.instances.forEach(i=>{if(snap.insts[i.id]!==old.insts[i.id]){instUp.push(instRow(i));delta.insts.push(i);noteOwn('i:'+i.id,snap.insts[i.id]);}});
+    S.instances.forEach(i=>{if(snap.insts[i.id]!==old.insts[i.id]){const ts=Math.max(Date.now(),(instTs[i.id]||0)+1);i._ts=ts;instTs[i.id]=ts;snap.insts[i.id]=canon(instRow(i));instUp.push(instRow(i));delta.insts.push(i);noteOwn('i:'+i.id,snap.insts[i.id]);}});
     Object.keys(old.insts).forEach(id=>{if(!(id in snap.insts))delta.instsDel.push(id);});
     chat=pendingChat.splice(0);
     delta.chat=chat.map(c=>({cid:c.raw_data.cid,html:c.message}));
@@ -672,17 +674,20 @@ function applyRemoteNote(n){
 }
 function applyRemoteInst(o){
   if(!o||!o.id||!lastSaved)return false;
+  const ts=o._ts||0;
+  if(ts&&ts<=(instTs[o.id]||0))return false;
   const cn=canon(instRow(o));
   if(cn===lastSaved.insts[o.id]||isOwnEcho('i:'+o.id,cn))return false;
   const i=S.instances.findIndex(x=>x.id===o.id);
   if(i>=0)S.instances[i]=o; else S.instances.push(o);
+  if(ts)instTs[o.id]=ts;
   touched.push(['i',o.id]); return true;
 }
 function applyRemoteDel(type,id){
   if(!id||!lastSaved)return false;
   if(type==='i'){
     if(!inst(id))return false;
-    S.instances=S.instances.filter(x=>x.id!==id); delete lastSaved.insts[id];
+    S.instances=S.instances.filter(x=>x.id!==id); delete lastSaved.insts[id]; delete instTs[id];
     if(selectedToken===id)selectedToken=null;
     return true;
   }
