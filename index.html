@@ -1017,20 +1017,28 @@ function rollWeaponElems(w,casterInst){
   });
   return out;
 }
+function weaponPhysDamage(wp,mult,statVal,dmgMult,tTpl,t,lines){
+  if(!(wp>0))return 0;
+  let d=applyMult(Math.ceil(wp*mult*statVal/100),dmgMult);
+  const ca=effectiveDef(tTpl,t).CA||0; d=Math.max(0,d-ca);
+  lines.push(`⚔ Physique (arme) : ${d}${ca?` (−${ca} CA)`:''}`);
+  return d;
+}
 function elemBonusDamage(list,mult,statVal,dmgMult,tTpl,t,lines){
   let sum=0;
   list.forEach(e=>{
     let d=applyMult(Math.ceil(e.total*mult*statVal/100),dmgMult);
+    const dm=effectiveDef(tTpl,t).DM||0; d=Math.max(0,d-dm);
     const res=(effectiveRes(tTpl,t)[e.el]||0)/100;
     d=Math.max(0,Math.ceil(d*(1-res))); sum+=d;
-    lines.push(`✨ + ${esc(e.el)} (arme) : ${d}${res?` (résistance ${Math.round(res*100)}%)`:''}`);
+    lines.push(`✨ + ${esc(e.el)} (arme) : ${d}${dm?` (−${dm} DM)`:''}${res?` (résistance ${Math.round(res*100)}%)`:''}`);
   });
   return sum;
 }
 function rollWithWeapon(formula,weaponUsed,casterInst){
   const r=roll(formula);
   broadcastDiceRoll(formulaSides(formula),r.rolls);
-  let total=r.total;
+  let total=r.total, wpTotal=0;
   let logLine=`🎲 ${esc(formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`;
   if(weaponUsed&&weaponUsed.damageFormula){
     const f=casterInst?equipStatFactor(casterInst,'arme'):1;
@@ -1038,13 +1046,13 @@ function rollWithWeapon(formula,weaponUsed,casterInst){
       const w=roll(weaponUsed.damageFormula);
       broadcastDiceRoll(formulaSides(weaponUsed.damageFormula),w.rolls);
       const wt=f<1?Math.ceil(w.total*f):w.total;
-      total+=wt;
+      total+=wt; wpTotal=wt;
       logLine+=` + arme « ${esc(weaponUsed.name)} »${f<1?' (abîmée, ÷2)':''} ${esc(weaponUsed.damageFormula)} : ${w.rolls.join(' + ')}${w.bonus?` + ${w.bonus}`:''} = ${wt}`;
     }else{
       logLine+=` + arme « ${esc(weaponUsed.name)} » : brisée (0 dégât)`;
     }
   }
-  return {total,logLine};
+  return {total,logLine,abTotal:r.total,wpTotal};
 }
 function effectiveDef(c,t){
   if(!c)return {CA:0,DM:0,'CA naturelle':0};
@@ -3008,13 +3016,14 @@ function resolveOpportunityAttack(attackerInst,targetInst){
     return;
   }
   const rw=rollWithWeapon(oa.formula,weaponUsed,attackerInst);
-  let damage=Math.ceil(rw.total*mult*(attackerTpl.stats[statKey]||0)/100);
+  let damage=Math.ceil(rw.abTotal*mult*(attackerTpl.stats[statKey]||0)/100);
   const def=isPhys?(effectiveDef(targetTpl,targetInst).CA||0):(effectiveDef(targetTpl,targetInst).DM||0);
   damage=Math.max(0,damage-def);
   if(oa.element&&oa.element!=='Neutre'){
     const resist=(effectiveRes(targetTpl,targetInst)[oa.element]||0)/100;
     damage=Math.max(0,Math.ceil(damage*(1-resist)));
   }
+  damage+=weaponPhysDamage(rw.wpTotal,mult,attackerTpl.stats[statKey]||0,'',targetTpl,targetInst,lines);
   const oe=rollWeaponElems(weaponUsed,attackerInst); oe.log.forEach(l=>lines.push(l));
   damage+=elemBonusDamage(oe.list,mult,attackerTpl.stats[statKey]||0,'',targetTpl,targetInst,lines);
   const absorbed=Math.min(targetInst.shield||0,damage); targetInst.shield-=absorbed; const hpDamage=damage-absorbed;
@@ -3098,7 +3107,7 @@ function resolveAbility(a,start,explicitTargetInstId){
       lines.push(`🎲 ${esc(a.formula)} : ${sharedRoll.rolls.join(' + ')}${sharedRoll.bonus?` + ${sharedRoll.bonus}`:''} = ${sharedRoll.total} <span class="tiny muted">(zone, jet unique)</span>`);
     }else{
       const rw=rollWithWeapon(a.formula,weaponUsed,casterInst);
-      sharedRoll={total:rw.total};
+      sharedRoll={total:rw.total,abTotal:rw.abTotal,wpTotal:rw.wpTotal};
       lines.push(rw.logLine+' <span class="tiny muted">(zone, jet unique)</span>');
       sharedElems=rollWeaponElems(weaponUsed,casterInst); sharedElems.log.forEach(l=>lines.push(l));
     }
@@ -3130,20 +3139,21 @@ function resolveAbility(a,start,explicitTargetInstId){
       continue;
     }
     if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);continue;}
-    let raw, elemRoll;
-    if(isAoE){raw=sharedRoll.total;elemRoll=sharedElems||{list:[]};}
-    else{const rw=rollWithWeapon(a.formula,weaponUsed,casterInst);raw=rw.total;lines.push(rw.logLine);elemRoll=rollWeaponElems(weaponUsed,casterInst);elemRoll.log.forEach(l=>lines.push(l));}
+    let raw, elemRoll, wpRaw=0;
+    if(isAoE){raw=sharedRoll.abTotal;wpRaw=sharedRoll.wpTotal;elemRoll=sharedElems||{list:[]};}
+    else{const rw=rollWithWeapon(a.formula,weaponUsed,casterInst);raw=rw.abTotal;wpRaw=rw.wpTotal;lines.push(rw.logLine);elemRoll=rollWeaponElems(weaponUsed,casterInst);elemRoll.log.forEach(l=>lines.push(l));}
     let damage=applyMult(Math.ceil(raw*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
     const def=(a.defense!=='none')?(effectiveDef(tTpl,t)[a.defense]||0):0;
     damage=Math.max(0,damage-def);
     const resist=(effectiveRes(tTpl,t)[a.element]||0)/100;
     damage=Math.max(0,Math.ceil(damage*(1-resist)));
+    const wpSum=weaponPhysDamage(wpRaw,mult,casterTpl.stats[a.stat]||0,a.dmgMult,tTpl,t,lines);
     const elemSum=elemBonusDamage(elemRoll.list,mult,casterTpl.stats[a.stat]||0,a.dmgMult,tTpl,t,lines);
-    damage+=elemSum;
+    damage+=wpSum+elemSum;
     const beforeShield=t.shield||0; const absorbed=Math.min(beforeShield,damage);
     t.shield-=absorbed; const hpDamage=damage-absorbed;
     t.hp=Math.max(0,t.hp-hpDamage);
-    lines.push(`✨ Dégâts totaux (${esc(a.element)}${elemSum?' + arme':''}) : ${damage}${def?` (−${def} défense)`:''}${resist?` (résistance ${Math.round(resist*100)}%)`:''}`);
+    lines.push(`✨ Dégâts totaux (${esc(a.element)}${(elemSum||wpSum)?' + arme':''}) : ${damage}${def?` (−${def} défense)`:''}${resist?` (résistance ${Math.round(resist*100)}%)`:''}`);
     if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
     lines.push(`❤️ ${esc(t.label)} : -${hpDamage} PV (${t.hp}/${t.hpMax})`);
     broadcastHud(t.id,{hp:-hpDamage,shield:absorbed>0?-absorbed:0});
