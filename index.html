@@ -478,20 +478,79 @@ async function loadProfiles(){
   }catch(e){ console.error('loadProfiles', e); }
   loadUiPrefsFromProfile();
 }
+/* ============================= SYNCHRONISATION SUPABASE (6 tables, écritures ciblées) ============================= */
+const SID='main';
+const SETTINGS_KEYS=['freeMovement','friendlyFire','hudEnabled','hudSettings','diceSettings','levelUpSettings','statTestIcons','characterCategories','noteCategories','notesReveal'];
+const COL_SPECS=[
+  {k:'combat',t:'game_sessions',pk:'id',c:'combat_state',get:()=>S.combat,set:v=>{S.combat=v;}},
+  {k:'settings',t:'game_sessions',pk:'id',c:'settings',get:()=>{const o={};SETTINGS_KEYS.forEach(k=>{o[k]=S[k]===undefined?null:S[k];});return o;},set:v=>{SETTINGS_KEYS.forEach(k=>{if(v[k]!==null&&v[k]!==undefined)S[k]=v[k];});}},
+  {k:'map',t:'game_maps',pk:'id',c:'map_data',get:()=>S.map,set:v=>{S.map=v;}},
+  {k:'zones',t:'game_maps',pk:'id',c:'persistent_zones',get:()=>S.persistentZones,set:v=>{S.persistentZones=v;}},
+  {k:'abilities',t:'game_rules_library',pk:'session_id',c:'abilities',get:()=>S.abilities,set:v=>{S.abilities=v;}},
+  {k:'equipment',t:'game_rules_library',pk:'session_id',c:'equipment',get:()=>S.equipment,set:v=>{S.equipment=v;}},
+  {k:'consumables',t:'game_rules_library',pk:'session_id',c:'consumables',get:()=>S.consumables,set:v=>{S.consumables=v;}},
+  {k:'afflictions',t:'game_rules_library',pk:'session_id',c:'afflictions',get:()=>S.afflictionDefs,set:v=>{S.afflictionDefs=v;}},
+  {k:'characters',t:'game_rules_library',pk:'session_id',c:'characters',get:()=>S.characters,set:v=>{S.characters=v;}}
+];
+let lastSaved=null;          // dernier état connu côté serveur (par clé), sert à ne sauvegarder que ce qui change
+let ownRecent={};            // empreintes de mes propres écritures récentes (pour ignorer leur écho)
+let pendingChat=[];          // messages de chat en attente d'insertion
+let seenChat=new Set();
+let touched=[];
+function canon(v){
+  if(v===undefined)return 'null';
+  if(v===null||typeof v!=='object')return JSON.stringify(v);
+  if(Array.isArray(v))return '['+v.map(canon).join(',')+']';
+  return '{'+Object.keys(v).filter(k=>v[k]!==undefined).sort().map(k=>JSON.stringify(k)+':'+canon(v[k])).join(',')+'}';
+}
+function noteRow(n){return {id:n.id,session_id:SID,title:n.title||'',content:n.text||'',category:n.categoryId||null,image:n.image||null,is_revealed:false};}
+function noteFromRow(r){return {id:r.id,title:r.title||'',text:r.content||'',categoryId:r.category||null,image:r.image||null};}
+function instRow(i){return {id:i.id,session_id:SID,character_id:i.charId,position_x:Math.round(i.x||0),position_y:Math.round(i.y||0),raw_instance_data:i};}
+function computeSnapshot(){
+  const snap={cols:{},notes:{},insts:{}};
+  COL_SPECS.forEach(s=>{snap.cols[s.k]=canon(s.get());});
+  (S.notes||[]).forEach(n=>{snap.notes[n.id]=canon(noteRow(n));});
+  S.instances.forEach(i=>{snap.insts[i.id]=canon(instRow(i));});
+  return snap;
+}
+function noteOwn(key,cn){const a=(ownRecent[key]=ownRecent[key]||[]);a.push(cn);if(a.length>6)a.shift();}
+function isOwnEcho(key,cn){return (ownRecent[key]||[]).includes(cn);}
 async function loadGameState(){
   try{
-    const { data, error } = await supabaseClient.from('game_state').select('data').eq('id','main').maybeSingle();
-    if(error) throw error;
-    if(data && data.data){ S=data.data; }
-    else { S=structuredClone(DEFAULT); await persistState(); }
+    const [sess,maps,rules,notes,insts,chat]=await Promise.all([
+      supabaseClient.from('game_sessions').select('*').eq('id',SID).maybeSingle(),
+      supabaseClient.from('game_maps').select('*').eq('id',SID).maybeSingle(),
+      supabaseClient.from('game_rules_library').select('*').eq('session_id',SID).maybeSingle(),
+      supabaseClient.from('game_notes').select('*').eq('session_id',SID),
+      supabaseClient.from('game_character_instances').select('*').eq('session_id',SID),
+      supabaseClient.from('game_chat').select('id,message').eq('session_id',SID).order('id',{ascending:false}).limit(120)
+    ]);
+    [sess,maps,rules,notes,insts,chat].forEach(r=>{if(r.error)throw r.error;});
+    if(!sess.data){
+      S=structuredClone(DEFAULT);
+      lastSaved={cols:{},notes:{},insts:{}};
+      normalizeState();
+      await flushSave();
+    }else{
+      S={};
+      const src={game_sessions:sess.data,game_maps:maps.data,game_rules_library:rules.data};
+      COL_SPECS.forEach(s=>{const v=src[s.t]?src[s.t][s.c]:null;if(v!==null&&v!==undefined)s.set(v);});
+      S.notes=(notes.data||[]).map(noteFromRow);
+      S.instances=(insts.data||[]).map(r=>r.raw_instance_data).filter(Boolean);
+      S.chat=(chat.data||[]).slice().reverse().map(r=>r.message);
+      normalizeState();
+      lastSaved=computeSnapshot();
+    }
   }catch(e){
     console.error('loadGameState', e);
-    toast('⚠️ Impossible de charger la partie en ligne, utilisation de la sauvegarde locale.');
+    lastSaved=null; // pas de sauvegarde en ligne tant que le chargement a échoué (évite d'écraser la base)
+    toast('⚠️ Impossible de charger la partie en ligne, utilisation de la sauvegarde locale (lecture seule côté serveur).');
     S=JSON.parse(localStorage.getItem('arcanum-vtt')||'null')||structuredClone(DEFAULT);
+    normalizeState();
   }
-  normalizeState();
   syncTurnSelection();
   lastShownNotesReveal=S.notesReveal?S.notesReveal.ts:null;
+  pushUndoCheckpoint();
 }
 let undoStack=[];
 function pushUndoCheckpoint(){
@@ -501,53 +560,77 @@ async function undoLast(){
   if(!isMJ()){toast('⛔ Seul le MJ peut annuler.');return;}
   if(undoStack.length<2){toast('⚠️ Rien à annuler.');return;}
   undoStack.pop();
+  const chat=S.chat;
   S=JSON.parse(undoStack[undoStack.length-1]);
+  S.chat=chat;
   normalizeState();
   selectedToken=null; activeAbility=null; multiSel=[];
   bumpRev();
   await flushSave(); render();
   toast('↺ Dernière modification annulée.');
 }
-/* ---- Sauvegarde : l'UI et l'undo restent instantanés (local uniquement), l'écriture réseau
-   Supabase est groupée (debounce) pour ne jamais bloquer/désynchroniser en cas d'actions rapides.
-   Chaque état porte un numéro de version (_rev) : un retour Realtime plus vieux que notre état
-   local est ignoré, ce qui supprime le rubberbanding en cas de réponses réseau en désordre. ---- */
 let saveDebounceTimer=null;
 let saveInFlight=false;
 let saveQueued=false;
 function bumpRev(){ S._rev=(S._rev||0)+1; }
+function queueChat(html){
+  const cid=Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+  seenChat.add(cid);
+  pendingChat.push({session_id:SID,sender:myDisplayName(),message:html,raw_data:{cid}});
+}
+/* flushSave : compare l'état local au dernier état serveur et n'envoie QUE les lignes/colonnes modifiées. */
 async function flushSave(){
   clearTimeout(saveDebounceTimer); saveDebounceTimer=null;
-  if(saveInFlight){ saveQueued=true; return; }
+  if(!lastSaved){pendingChat=[];return;}
+  if(saveInFlight){saveQueued=true;return;}
   saveInFlight=true;
-  const snapshot=S;
+  const old=lastSaved; let chat=[];
   try{
-    const { error } = await supabaseClient.from('game_state').upsert({id:'main',data:snapshot,updated_at:new Date().toISOString()});
-    if(error) console.error('persistState', error);
-  }catch(e){ console.error('persistState', e); }
+    const snap=computeSnapshot();
+    const rows={}, delta={cols:{},notes:[],notesDel:[],insts:[],instsDel:[],chat:[]};
+    COL_SPECS.forEach(s=>{
+      if(snap.cols[s.k]===old.cols[s.k])return;
+      const v=s.get(); delta.cols[s.k]=v;
+      const r=rows[s.t]=rows[s.t]||{[s.pk]:SID}; r[s.c]=v;
+      noteOwn('c:'+s.k,snap.cols[s.k]);
+    });
+    const noteUp=[], instUp=[];
+    (S.notes||[]).forEach(n=>{if(snap.notes[n.id]!==old.notes[n.id]){noteUp.push(noteRow(n));delta.notes.push(n);noteOwn('n:'+n.id,snap.notes[n.id]);}});
+    Object.keys(old.notes).forEach(id=>{if(!(id in snap.notes))delta.notesDel.push(id);});
+    S.instances.forEach(i=>{if(snap.insts[i.id]!==old.insts[i.id]){instUp.push(instRow(i));delta.insts.push(i);noteOwn('i:'+i.id,snap.insts[i.id]);}});
+    Object.keys(old.insts).forEach(id=>{if(!(id in snap.insts))delta.instsDel.push(id);});
+    chat=pendingChat.splice(0);
+    delta.chat=chat.map(c=>({cid:c.raw_data.cid,html:c.message}));
+    lastSaved=snap;
+    const ops=[];
+    Object.entries(rows).forEach(([t,r])=>ops.push(supabaseClient.from(t).upsert(r)));
+    if(noteUp.length)ops.push(supabaseClient.from('game_notes').upsert(noteUp));
+    if(delta.notesDel.length)ops.push(supabaseClient.from('game_notes').delete().in('id',delta.notesDel));
+    if(instUp.length)ops.push(supabaseClient.from('game_character_instances').upsert(instUp));
+    if(delta.instsDel.length)ops.push(supabaseClient.from('game_character_instances').delete().in('id',delta.instsDel));
+    if(chat.length)ops.push(supabaseClient.from('game_chat').insert(chat));
+    if(ops.length){
+      try{ const p={...delta}; if(JSON.stringify(p).length<230000)gameChannel?.send({type:'broadcast',event:'delta',payload:p}); }catch(e){}
+      const res=await Promise.all(ops);
+      const bad=res.find(r=>r&&r.error);
+      if(bad)throw bad.error;
+    }
+  }catch(e){
+    console.error('flushSave',e);
+    lastSaved=old; pendingChat=chat.concat(pendingChat);
+    toast('⚠️ Erreur de sauvegarde — nouvelle tentative à la prochaine action.');
+  }
   saveInFlight=false;
-  if(saveQueued){ saveQueued=false; flushSave(); }
-}
-function broadcastState(){
-  try{
-    const payload={s:S};
-    if(JSON.stringify(payload).length>230000)return; // trop lourd : Realtime base de données prend le relais
-    gameChannel?.send({type:'broadcast',event:'state',payload});
-  }catch(e){ console.error('broadcastState',e); }
+  if(saveQueued){saveQueued=false;flushSave();}
 }
 async function persistState(){
   bumpRev(); pushUndoCheckpoint();
   try{localStorage.setItem('arcanum-vtt', JSON.stringify(S));}catch(e){}
-  broadcastState();
   await flushSave();
 }
-/* saveState() : appelée partout après une action de jeu. Met à jour l'undo + le stockage local
-   instantanément, puis regroupe l'envoi Supabase (350ms après la dernière action) au lieu d'en
-   envoyer un par action. saveState(true) force un envoi immédiat (bouton "Sauvegarder"). */
 function saveState(immediate){
   bumpRev(); pushUndoCheckpoint();
   try{localStorage.setItem('arcanum-vtt', JSON.stringify(S));}catch(e){}
-  broadcastState();
   if(immediate){
     flushSave();
     toast('Sauvegarde effectuée');
@@ -566,27 +649,90 @@ function syncTurnSelection(){
     if(canControlInstance(currentId)) selectedToken=currentId;
   }
 }
+/* ---- Application des changements reçus d'autres clients ---- */
+function applyRemoteCol(k,val){
+  const s=COL_SPECS.find(x=>x.k===k); if(!s||val===null||val===undefined||!lastSaved)return false;
+  const cn=canon(val);
+  if(cn===lastSaved.cols[k]||isOwnEcho('c:'+k,cn))return false;
+  s.set(val); touched.push(['c',k]); return true;
+}
+function handleColRow(table,r){
+  let ch=false;
+  COL_SPECS.filter(s=>s.t===table).forEach(s=>{if(applyRemoteCol(s.k,r[s.c]))ch=true;});
+  return ch;
+}
+function applyRemoteNote(n){
+  if(!n||!lastSaved)return false;
+  const cn=canon(noteRow(n));
+  if(cn===lastSaved.notes[n.id]||isOwnEcho('n:'+n.id,cn))return false;
+  if(!S.notes)S.notes=[];
+  const i=S.notes.findIndex(x=>x.id===n.id);
+  if(i>=0)S.notes[i]=n; else S.notes.push(n);
+  touched.push(['n',n.id]); return true;
+}
+function applyRemoteInst(o){
+  if(!o||!o.id||!lastSaved)return false;
+  const cn=canon(instRow(o));
+  if(cn===lastSaved.insts[o.id]||isOwnEcho('i:'+o.id,cn))return false;
+  const i=S.instances.findIndex(x=>x.id===o.id);
+  if(i>=0)S.instances[i]=o; else S.instances.push(o);
+  touched.push(['i',o.id]); return true;
+}
+function applyRemoteDel(type,id){
+  if(!id||!lastSaved)return false;
+  if(type==='i'){
+    if(!inst(id))return false;
+    S.instances=S.instances.filter(x=>x.id!==id); delete lastSaved.insts[id];
+    if(selectedToken===id)selectedToken=null;
+    return true;
+  }
+  if(!(S.notes||[]).some(x=>x.id===id))return false;
+  S.notes=S.notes.filter(x=>x.id!==id); delete lastSaved.notes[id];
+  return true;
+}
+function applyRemoteChat(cid,html){
+  if(cid&&seenChat.has(cid))return false;
+  if(cid)seenChat.add(cid);
+  S.chat.push(html); if(S.chat.length>120)S.chat.shift();
+  return true;
+}
+function afterRemote(){
+  normalizeState();
+  touched.forEach(([t,k])=>{
+    if(t==='c'){const s=COL_SPECS.find(x=>x.k===k);if(s)lastSaved.cols[k]=canon(s.get());}
+    else if(t==='i'){const o=inst(k);if(o)lastSaved.insts[k]=canon(instRow(o));}
+    else if(t==='n'){const o=(S.notes||[]).find(x=>x.id===k);if(o)lastSaved.notes[k]=canon(noteRow(o));}
+  });
+  touched=[];
+  syncTurnSelection();
+  render();
+}
 function subscribeRealtime(){
   if(gameChannel){ supabaseClient.removeChannel(gameChannel); gameChannel=null; }
-  gameChannel=supabaseClient.channel('game_state_sync')
-    .on('postgres_changes',{event:'*',schema:'public',table:'game_state',filter:'id=eq.main'},payload=>{
-      if(payload.new && payload.new.data){
-        const incoming=payload.new.data;
-        // Écho de notre propre sauvegarde (ou réponse réseau en retard) : notre état local est déjà plus récent, on ignore.
-        if((incoming._rev||0)<=(S._rev||0))return;
-        S=incoming;
-        normalizeState();
-        syncTurnSelection();
-        render();
-      }
-    })
-    .on('broadcast',{event:'state'},payload=>{
-      const incoming=(payload.payload||{}).s;
-      if(!incoming||(incoming._rev||0)<=(S._rev||0))return;
-      S=incoming;
-      normalizeState();
-      syncTurnSelection();
-      render();
+  gameChannel=supabaseClient.channel('game_state_sync');
+  const pg=(table,cb)=>{gameChannel.on('postgres_changes',{event:'*',schema:'public',table},cb);};
+  pg('game_sessions',p=>{if(p.new&&handleColRow('game_sessions',p.new))afterRemote();});
+  pg('game_maps',p=>{if(p.new&&handleColRow('game_maps',p.new))afterRemote();});
+  pg('game_rules_library',p=>{if(p.new&&handleColRow('game_rules_library',p.new))afterRemote();});
+  pg('game_notes',p=>{
+    const c=p.eventType==='DELETE'?applyRemoteDel('n',p.old&&p.old.id):applyRemoteNote(p.new&&noteFromRow(p.new));
+    if(c)afterRemote();
+  });
+  pg('game_character_instances',p=>{
+    const c=p.eventType==='DELETE'?applyRemoteDel('i',p.old&&p.old.id):applyRemoteInst(p.new&&p.new.raw_instance_data);
+    if(c)afterRemote();
+  });
+  pg('game_chat',p=>{if(p.eventType==='INSERT'&&p.new&&applyRemoteChat(p.new.raw_data&&p.new.raw_data.cid,p.new.message))afterRemote();});
+  gameChannel
+    .on('broadcast',{event:'delta'},payload=>{
+      const d=payload.payload||{}; let ch=false;
+      Object.entries(d.cols||{}).forEach(([k,v])=>{if(applyRemoteCol(k,v))ch=true;});
+      (d.notes||[]).forEach(n=>{if(applyRemoteNote(n))ch=true;});
+      (d.notesDel||[]).forEach(id=>{if(applyRemoteDel('n',id))ch=true;});
+      (d.insts||[]).forEach(o=>{if(applyRemoteInst(o))ch=true;});
+      (d.instsDel||[]).forEach(id=>{if(applyRemoteDel('i',id))ch=true;});
+      (d.chat||[]).forEach(c=>{if(applyRemoteChat(c.cid,c.html))ch=true;});
+      if(ch)afterRemote();
     })
     .on('broadcast',{event:'fx'},payload=>{
       const d=payload.payload||{};
@@ -1249,7 +1395,7 @@ function outcome(d){
   if(d>=75)return ['Légère réussite',.5]; if(d>=50)return ['Légère réussite',.75]; if(d>=25)return ['Réussite',1];
   if(d>=5)return ['Grande réussite',1.5]; if(d>=2)return ['Réussite critique',2]; return ['Réussite ultime',4];
 }
-function addLog(html){S.chat.push(html);if(S.chat.length>120)S.chat.shift();}
+function addLog(html){S.chat.push(html);if(S.chat.length>120)S.chat.shift();queueChat(html);}
 function statTestLabel(stat){return (stat==='Artisanat'||stat==='Agilité')?`jet d'${stat}`:`jet de ${stat}`;}
 function statTestIcon(stat){const cfg=(S.statTestIcons||{})[stat]||{icon:'🎲',iconImage:null};return {icon:cfg.icon||'🎲',iconImage:cfg.iconImage||null};}
 function skillStatMod(tpl,stat){
