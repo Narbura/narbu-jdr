@@ -2866,6 +2866,7 @@ function setupMapInteractions(){
     if(dragCandidate){
       const {id,moved,origX,origY}=dragCandidate;
       const t=inst(id);
+      let zonesDone=false;
       if(moved&&t){
         if(S.freeMovement){
           addLog(`↦ ${esc(t.label)} déplacé librement sur la carte.`);
@@ -2876,21 +2877,23 @@ function setupMapInteractions(){
             toast('🚫 Case(s) déjà occupée(s) — choisis un autre déplacement.');
           }else if(S.combat.active&&S.combat.order[S.combat.turn]===id){
             const tpl=instTemplate(t);
-            const dist=Math.abs(t.x-origX)+Math.abs(t.y-origY);
+            const destX=t.x, destY=t.y;
+            const dist=Math.max(Math.abs(destX-origX),Math.abs(destY-origY)); // diagonale = 1 case
             const remaining=t.remainingMove??effectiveMove(tpl);
+            t.x=origX; t.y=origY;
             if(dist>remaining){
-              t.x=origX; t.y=origY;
               toast('🚫 Déplacement maximal atteint pour ce tour.');
             }else{
-              t.remainingMove=remaining-dist;
-              addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
-              checkOpportunityAttacks(id,{x:origX,y:origY,sizeW:sw,sizeH:sh});
+              t.remainingMove=remaining;
+              walkCombatPath(t,destX,destY);
+              if(inst(id))addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
             }
+            zonesDone=true;
           }else if(!S.combat.active){
             addLog(`↦ ${esc(t.label)} se déplace vers (${t.x+1}, ${t.y+1}).`);
           }
         }
-        if(S.freeMovement||t.x!==origX||t.y!==origY)applyZoneDamageOnMove(t);
+        if(!zonesDone&&(S.freeMovement||t.x!==origX||t.y!==origY))applyZoneDamageOnMove(t);
         saveState();
       }
       dragCandidate=null; render();
@@ -5790,6 +5793,22 @@ document.addEventListener('keydown',e=>{
   updateZonePreview();
 });
 const ARROW_DELTAS={ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0]};
+/* Déplacement en combat : case par case (diagonale = 1), avec attaques d'opportunité et dégâts de zones persistantes à chaque case */
+function walkCombatPath(t,tx,ty){
+  const sw=t.sizeW||1, sh=t.sizeH||1, id=t.id;
+  t.px=null; t.py=null;
+  while(t.x!==tx||t.y!==ty){
+    const nx=t.x+Math.sign(tx-t.x), ny=t.y+Math.sign(ty-t.y);
+    if(footprintOverlap(id,nx,ny,sw,sh)){toast('🚫 Chemin bloqué — déplacement interrompu.');break;}
+    const old={x:t.x,y:t.y,sizeW:sw,sizeH:sh};
+    t.x=nx; t.y=ny;
+    t.remainingMove=(t.remainingMove??0)-1;
+    checkOpportunityAttacks(id,old);
+    if(!inst(id))return;
+    applyZoneDamageOnMove(t);
+    if(!inst(id)||t.isKO)return;
+  }
+}
 function moveSelectedTokenBy(dx,dy){
   if(!selectedToken)return;
   const id=selectedToken, t=inst(id); if(!t)return;
