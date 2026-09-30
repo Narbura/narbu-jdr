@@ -1017,23 +1017,29 @@ function rollWeaponElems(w,casterInst){
   });
   return out;
 }
-function weaponPhysDamage(wp,mult,statVal,dmgMult,tTpl,t,lines){
+function weaponPhysDamage(wp,mult,statVal,dmgMult,lines){
   if(!(wp>0))return 0;
-  let d=applyMult(Math.ceil(wp*mult*statVal/100),dmgMult);
-  const ca=effectiveDef(tTpl,t).CA||0; d=Math.max(0,d-ca);
-  lines.push(`⚔ Physique (arme) : ${d}${ca?` (−${ca} CA)`:''}`);
+  const d=applyMult(Math.ceil(wp*mult*statVal/100),dmgMult);
+  lines.push(`⚔ Physique (arme) : ${d}`);
   return d;
 }
 function elemBonusDamage(list,mult,statVal,dmgMult,tTpl,t,lines){
-  let sum=0;
+  const parts=[];
   list.forEach(e=>{
     let d=applyMult(Math.ceil(e.total*mult*statVal/100),dmgMult);
-    const dm=effectiveDef(tTpl,t).DM||0; d=Math.max(0,d-dm);
     const res=(effectiveRes(tTpl,t)[e.el]||0)/100;
-    d=Math.max(0,Math.ceil(d*(1-res))); sum+=d;
-    lines.push(`✨ + ${esc(e.el)} (arme) : ${d}${dm?` (−${dm} DM)`:''}${res?` (résistance ${Math.round(res*100)}%)`:''}`);
+    d=Math.max(0,Math.ceil(d*(1-res)));
+    parts.push({v:d,pool:'DM'});
+    lines.push(`✨ + ${esc(e.el)} (arme) : ${d}${res?` (résistance ${Math.round(res*100)}%)`:''}`);
   });
-  return sum;
+  return parts;
+}
+/* La CA et la DM ne sont déduites qu'une seule fois sur l'ensemble des dégâts de leur catégorie */
+function finalizeDamage(parts,tTpl,t){
+  const d=effectiveDef(tTpl,t); let ca=0,dm=0,free=0;
+  parts.forEach(p=>{if(p.pool==='CA')ca+=p.v;else if(p.pool==='DM')dm+=p.v;else free+=p.v;});
+  const caR=Math.min(ca,d.CA||0), dmR=Math.min(dm,d.DM||0);
+  return {total:(ca-caR)+(dm-dmR)+free,ca:caR,dm:dmR,txt:(caR?` (−${caR} CA)`:'')+(dmR?` (−${dmR} DM)`:'')};
 }
 function rollWithWeapon(formula,weaponUsed,casterInst){
   const r=roll(formula);
@@ -3017,19 +3023,19 @@ function resolveOpportunityAttack(attackerInst,targetInst){
   }
   const rw=rollWithWeapon(oa.formula,weaponUsed,attackerInst);
   let damage=Math.ceil(rw.abTotal*mult*(attackerTpl.stats[statKey]||0)/100);
-  const def=isPhys?(effectiveDef(targetTpl,targetInst).CA||0):(effectiveDef(targetTpl,targetInst).DM||0);
-  damage=Math.max(0,damage-def);
   if(oa.element&&oa.element!=='Neutre'){
     const resist=(effectiveRes(targetTpl,targetInst)[oa.element]||0)/100;
     damage=Math.max(0,Math.ceil(damage*(1-resist)));
   }
-  damage+=weaponPhysDamage(rw.wpTotal,mult,attackerTpl.stats[statKey]||0,'',targetTpl,targetInst,lines);
+  const wpPart=weaponPhysDamage(rw.wpTotal,mult,attackerTpl.stats[statKey]||0,'',lines);
   const oe=rollWeaponElems(weaponUsed,attackerInst); oe.log.forEach(l=>lines.push(l));
-  damage+=elemBonusDamage(oe.list,mult,attackerTpl.stats[statKey]||0,'',targetTpl,targetInst,lines);
+  const ep=elemBonusDamage(oe.list,mult,attackerTpl.stats[statKey]||0,'',targetTpl,targetInst,lines);
+  const fin=finalizeDamage([{v:damage,pool:isPhys?'CA':'DM'},{v:wpPart,pool:'CA'},...ep],targetTpl,targetInst);
+  damage=fin.total;
   const absorbed=Math.min(targetInst.shield||0,damage); targetInst.shield-=absorbed; const hpDamage=damage-absorbed;
   targetInst.hp=Math.max(0,targetInst.hp-hpDamage);
   lines.push(rw.logLine);
-  lines.push(`✨ Dégâts (${esc(isPhys?'Physique':'Magique')} / ${esc(oa.element||'Neutre')}) : ${damage}${def?` (−${def} défense)`:''}`);
+  lines.push(`✨ Dégâts (${esc(isPhys?'Physique':'Magique')} / ${esc(oa.element||'Neutre')}) : ${damage}${fin.txt}`);
   if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
   lines.push(`❤️ ${esc(targetInst.label)} : -${hpDamage} PV (${targetInst.hp}/${targetInst.hpMax})`);
   broadcastHud(targetInst.id,{hp:-hpDamage,shield:absorbed>0?-absorbed:0});
@@ -3143,17 +3149,16 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(isAoE){raw=sharedRoll.abTotal;wpRaw=sharedRoll.wpTotal;elemRoll=sharedElems||{list:[]};}
     else{const rw=rollWithWeapon(a.formula,weaponUsed,casterInst);raw=rw.abTotal;wpRaw=rw.wpTotal;lines.push(rw.logLine);elemRoll=rollWeaponElems(weaponUsed,casterInst);elemRoll.log.forEach(l=>lines.push(l));}
     let damage=applyMult(Math.ceil(raw*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
-    const def=(a.defense!=='none')?(effectiveDef(tTpl,t)[a.defense]||0):0;
-    damage=Math.max(0,damage-def);
     const resist=(effectiveRes(tTpl,t)[a.element]||0)/100;
-    damage=Math.max(0,Math.ceil(damage*(1-resist)));
-    const wpSum=weaponPhysDamage(wpRaw,mult,casterTpl.stats[a.stat]||0,a.dmgMult,tTpl,t,lines);
-    const elemSum=elemBonusDamage(elemRoll.list,mult,casterTpl.stats[a.stat]||0,a.dmgMult,tTpl,t,lines);
-    damage+=wpSum+elemSum;
+    const abPart=Math.max(0,Math.ceil(damage*(1-resist)));
+    const wpPart=weaponPhysDamage(wpRaw,mult,casterTpl.stats[a.stat]||0,a.dmgMult,lines);
+    const elemParts=elemBonusDamage(elemRoll.list,mult,casterTpl.stats[a.stat]||0,a.dmgMult,tTpl,t,lines);
+    const fin=finalizeDamage([{v:abPart,pool:a.defense==='CA'?'CA':(a.defense==='DM'?'DM':null)},{v:wpPart,pool:'CA'},...elemParts],tTpl,t);
+    damage=fin.total;
     const beforeShield=t.shield||0; const absorbed=Math.min(beforeShield,damage);
     t.shield-=absorbed; const hpDamage=damage-absorbed;
     t.hp=Math.max(0,t.hp-hpDamage);
-    lines.push(`✨ Dégâts totaux (${esc(a.element)}${(elemSum||wpSum)?' + arme':''}) : ${damage}${def?` (−${def} défense)`:''}${resist?` (résistance ${Math.round(resist*100)}%)`:''}`);
+    lines.push(`✨ Dégâts totaux (${esc(a.element)}${(wpPart||elemParts.length)?' + arme':''}) : ${damage}${fin.txt}${resist?` (résistance ${Math.round(resist*100)}%)`:''}`);
     if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
     lines.push(`❤️ ${esc(t.label)} : -${hpDamage} PV (${t.hp}/${t.hpMax})`);
     broadcastHud(t.id,{hp:-hpDamage,shield:absorbed>0?-absorbed:0});
