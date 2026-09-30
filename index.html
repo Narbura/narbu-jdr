@@ -1565,7 +1565,7 @@ function render(){
 function updateTargetingBanner(){
   const banner=document.getElementById('targetingBanner'); if(!banner)return;
   if(activeAbility==='__dissipation__'&&currentPage==='table'){
-    banner.innerHTML=`🧹 <b>Dissipation</b> — clique sur un jeton à purger (Échap pour annuler)`;
+    banner.innerHTML=`🧹 <b>Dissipation</b> — clique sur un jeton à purger (retire aussi toutes les zones persistantes) (Échap pour annuler)`;
     banner.classList.add('show');
     return;
   }
@@ -1644,7 +1644,7 @@ function tablePage(){
       }else{
         abilitiesHtml='<span class="tiny muted">Vous ne contrôlez pas ce personnage.</span>';
       }
-      const mjExtra=isMJ()?`<button class="btn ghost" onclick="openManageAfflictions('${selInst.id}')" title="Gérer les afflictions de ce jeton">🩸 Afflictions</button><button class="btn ${activeAbility==='__dissipation__'?'primary':''}" onclick="startDissipation()" title="Purger toutes les afflictions d'un jeton">🧹 Dissipation</button>`:'';
+      const mjExtra=isMJ()?`<button class="btn ghost" onclick="openManageAfflictions('${selInst.id}')" title="Gérer les afflictions de ce jeton">🩸 Afflictions</button><button class="btn ${activeAbility==='__dissipation__'?'primary':''}" onclick="startDissipation()" title="Purger toutes les afflictions d'un jeton">🧹 Dissipation</button><button class="btn" onclick="applyRest(0.5)" title="Repos court : +50% PV et mana des joueurs sur la carte">🏕️ Repos court</button><button class="btn" onclick="applyRest(1)" title="Repos long : PV et mana des joueurs restaurés à 100%">🛏️ Repos long</button>`:'';
       return abilitiesHtml+mjExtra;
     })()}<button class="btn ghost fs-hide" style="margin-left:auto;flex-shrink:0;position:sticky;right:0" onclick="toggleBottomBar()" title="${bottomHidden?'Afficher':'Masquer'} les raccourcis">${bottomHidden?'▲':'▶'}</button></div>
   </div>
@@ -3391,11 +3391,31 @@ function startDissipation(){
   activeAbility='__dissipation__'; hoverCell=null; render();
   toast('🎯 Dissipation : clique sur un jeton à purger (Échap pour annuler)');
 }
+function applyRest(ratio){
+  if(!isMJ())return;
+  if(S.combat.active){toast('⛔ Repos impossible pendant le combat.');return;}
+  const players=S.instances.filter(t=>instTemplate(t)?.type==='player'&&!t.isKO);
+  if(!players.length){toast('⚠️ Aucun joueur sur la carte.');return;}
+  const lines=[`${ratio>=1?'🛏️ <b>Repos long</b>':'🏕️ <b>Repos court</b>'} — PV et mana restaurés à ${Math.round(ratio*100)}%.`];
+  players.forEach(t=>{
+    const hpGain=Math.min(t.hpMax-t.hp,Math.ceil(t.hpMax*ratio));
+    const manaGain=Math.min(t.manaMax-t.mana,Math.ceil(t.manaMax*ratio));
+    t.hp+=Math.max(0,hpGain); t.mana+=Math.max(0,manaGain);
+    if(hpGain>0||manaGain>0){
+      lines.push(`${esc(t.label)} : ${hpGain>0?`+${hpGain} PV`:''}${hpGain>0&&manaGain>0?' · ':''}${manaGain>0?`+${manaGain} mana`:''}`);
+      broadcastHud(t.id,{hp:Math.max(0,hpGain),mana:Math.max(0,manaGain)});
+    }
+  });
+  addLog(lines.join('<br>'));
+  saveState(); render();
+}
 function applyDissipation(targetInstId){
   const t=inst(targetInstId); if(!t)return;
   const had=(t.afflictions||[]).length;
   t.afflictions=[];
-  addLog(`🧹 Dissipation appliquée sur <b>${esc(t.label)}</b> (${had} affliction(s) retirée(s)).`);
+  const nbZones=(S.persistentZones||[]).length;
+  S.persistentZones=[];
+  addLog(`🧹 Dissipation appliquée sur <b>${esc(t.label)}</b> (${had} affliction(s) retirée(s), ${nbZones} zone(s) persistante(s) retirée(s) de la carte).`);
   activeAbility=null; hoverCell=null;
   saveState(); render();
 }
