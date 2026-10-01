@@ -3857,13 +3857,15 @@ function toggleCharMonsterFields(){
   show('char_player_only_fields',t==='player');
   show('char_bio_fields',t!=='merchant');
   show('charTabMerchantBtn',t==='merchant');
+  show('charTabEquipBtn',t==='player');
 }
 function switchCharModalTab(tab){
-  const g=document.getElementById('charTabGeneral'), o=document.getElementById('charTabOpp');
-  if(g)g.style.display=tab==='general'?'':'none';
-  if(o)o.style.display=tab==='opp'?'':'none';
-  const mc=document.getElementById('charTabMerchant'); if(mc)mc.style.display=tab==='merchant'?'':'none';
+  ['General','Stats','Equip','Abil','Opp','Merchant'].forEach(n=>{const el=document.getElementById('charTab'+n);if(el)el.style.display=n.toLowerCase()===tab?'':'none';});
   document.querySelectorAll('#charModalTabs .tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+}
+function filterCharAbilityList(){
+  const q=(document.getElementById('cab_search')?.value||'').trim().toLowerCase();
+  document.querySelectorAll('#charTabAbil .ability-char-item[data-name]').forEach(el=>{el.style.display=el.dataset.name.includes(q)?'grid':'none';});
 }
 function oppAttackHtml(base){
   const oa=base.oppAttack||{formula:'',type:'Physique',element:'Neutre',impactImage:null,impactFrames:1,impactRows:1,animFps:60};
@@ -3908,6 +3910,7 @@ function openCharacter(id){
   const mp=moneySplit(base.money||0);
   const moneyBagHtml=`<div class="field full"><label>💰 Argent (or / argent / cuivre)</label><div class="row" style="gap:6px"><input type="hidden" id="c_money_orig" value="${base.money||0}"><input id="c_gold" type="number" min="0" value="${mp.g}" style="width:90px"><span class="tiny muted">or</span><input id="c_silver" type="number" min="0" value="${mp.s}" style="width:70px"><span class="tiny muted">arg</span><input id="c_copper" type="number" min="0" value="${mp.c}" style="width:70px"><span class="tiny muted">cu</span></div></div>`+(id?`<div class="field full"><label>🎒 Sac (objets possédés, non équipés)</label><div style="margin-bottom:8px">${(base.bag&&base.bag.length)?base.bag.map(b=>{const it=equip(b.eqId);if(!it)return '';return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px"><span>${iconInlineHtml(it)} ${esc(it.name)}${(b.qty||1)>1?' ×'+b.qty:''}${it.durabilityMax?` <small class="muted">(🔧 ${b.dur}/${it.durabilityMax})</small>`:''}</span><button class="btn ghost" style="padding:4px 8px" onclick="removeCharBagItem('${id}','${b.uid}')" title="Retirer">🗑️</button></div>`;}).join(''):'<p class="tiny muted">Sac vide.</p>'}</div><input id="c_addbag_search" placeholder="🔎 Rechercher un équipement…" oninput="filterBagPick()" style="margin-bottom:6px"><select id="c_addbag_cat" onchange="filterBagPick()" style="margin-bottom:6px"><option value="">Toutes catégories</option>${EQUIP_CATEGORIES.map(([k,l])=>opt(k,l,'')).join('')}${DIVERS_CATS.map(([k,l])=>opt('div_'+k,'↳ Divers : '+l,'')).join('')}</select><div class="row" style="gap:6px;align-items:flex-start"><select id="c_addbag_select" size="6" style="flex:1">${bagPickOptionsHtml()}</select><button class="btn" type="button" onclick="addCharBagItem('${id}')">＋ Ajouter</button></div></div>`:'');
   const knownLine=id?(known.length?`<p class="tiny muted">Capacités liées : ${known.map(a=>`${iconInlineHtml(a)} ${esc(a.name)}`).join(', ')} <span style="opacity:.7">(à gérer depuis la page ✨ Capacités)</span></p>`:'<p class="tiny muted">Aucune capacité liée à ce personnage pour l’instant (page ✨ Capacités).</p>'):'';
+  const abilLinkHtml=`<div class="field full"><label>✨ Capacités liées (coche pour ajouter / décocher pour retirer)</label><input id="cab_search" placeholder="🔎 Rechercher une capacité…" oninput="filterCharAbilityList()" style="margin-bottom:6px"><div style="max-height:320px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px">${S.abilities.length?S.abilities.map(a=>`<label class="ability-char-item" data-name="${esc(a.name.toLowerCase())}"><input type="checkbox" class="cab-check" value="${a.id}" ${(a.characterIds||[]).includes(id)?'checked':''}> <span>${iconInlineHtml(a)} ${esc(a.name)} <small class="muted">(${esc(a.type)})</small></span></label>`).join(''):'<p class="tiny muted">Aucune capacité créée.</p>'}</div></div>`;
   const bioHtml=`
   <div class="field full">
     <label>Image de profil (Bio &amp; Info)</label>
@@ -3923,7 +3926,10 @@ function openCharacter(id){
   <div class="field full"><label>Description</label>${richEditorHtml('c_bio',base.bio||'','280px')}</div>`;
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une fiche</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
   <div class="tabs" id="charModalTabs">
-    <button type="button" class="tab active" data-tab="general" onclick="switchCharModalTab('general')">🪪 Fiche</button>
+    <button type="button" class="tab active" data-tab="general" onclick="switchCharModalTab('general')">🪪 Description</button>
+    <button type="button" class="tab" data-tab="stats" onclick="switchCharModalTab('stats')">📊 Statistiques</button>
+    <button type="button" class="tab" id="charTabEquipBtn" data-tab="equip" onclick="switchCharModalTab('equip')" style="display:${base.type==='player'?'':'none'}">🎒 Équipement</button>
+    <button type="button" class="tab" data-tab="abil" onclick="switchCharModalTab('abil')">✨ Capacités</button>
     <button type="button" class="tab" data-tab="opp" onclick="switchCharModalTab('opp')">⚔ Attaque d'opportunité</button>
     <button type="button" class="tab" id="charTabMerchantBtn" data-tab="merchant" onclick="switchCharModalTab('merchant')" style="display:${base.type==='merchant'?'':'none'}">🛒 Commerce</button>
   </div>
@@ -3942,14 +3948,17 @@ function openCharacter(id){
     ${imagePickerHtml('c_iconimage','c_icon_preview')}
   </div>
   <div class="field"><label>Type</label><select id="c_type" onchange="toggleCharMonsterFields()">${typeOpts}</select></div>
-  <div class="field"><label>Déplacement (cases/tour)</label><input id="c_move" type="number" value="${base.move??6}"></div>
-  <div class="field"><label>Taille par défaut du token (largeur × hauteur, en cases)</label><div class="row"><input id="c_sizew" type="number" min="1" max="20" value="${base.sizeW||1}"><span>×</span><input id="c_sizeh" type="number" min="1" max="20" value="${base.sizeH||1}"></div></div>
   <div class="field full"><label>Joueur propriétaire (peut déplacer / lancer les sorts de ce personnage)</label><select id="c_owner">${ownerOpts}</select></div>
   <div class="field full"><label>Catégorie (dossier dans la bibliothèque)</label><select id="c_category">${catOpts}</select></div>
   <div class="field full"><label>Visibilité des PV / mana / bouclier</label><select id="c_hidden">
     <option value="false" ${!base.hidden?'selected':''}>👁 Visible des joueurs</option>
     <option value="true" ${base.hidden?'selected':''}>🙈 Caché des joueurs (MJ uniquement)</option>
   </select></div>
+  <div id="char_bio_fields" style="grid-column:1/-1;display:${base.type==='merchant'?'none':''}">${bioHtml}</div>
+</div></div>
+  <div id="charTabStats" style="display:none"><div class="form">
+  <div class="field"><label>Déplacement (cases/tour)</label><input id="c_move" type="number" value="${base.move??6}"></div>
+  <div class="field"><label>Taille par défaut du token (largeur × hauteur, en cases)</label><div class="row"><input id="c_sizew" type="number" min="1" max="20" value="${base.sizeW||1}"><span>×</span><input id="c_sizeh" type="number" min="1" max="20" value="${base.sizeH||1}"></div></div>
   <div class="field full" id="char_monster_durability_fields" style="display:${base.type==='enemy'?'':'none'}">
     <div class="row" style="gap:10px;flex-wrap:wrap">
       <div class="field"><label>Durabilité critique (dégâts sur l'équipement en cas de coup critique)</label><input id="c_critdur" type="number" min="0" value="${base.critDurabilityDmg||0}"></div>
@@ -3972,8 +3981,6 @@ function openCharacter(id){
   <div class="field"><label>Social</label><input id="s_soc" type="number" value="${base.stats.Social??0}"></div>
   <div class="field"><label>Artisanat</label><input id="s_craft" type="number" value="${base.stats.Artisanat??0}"></div>
   ${curResHtml}
-  <div id="char_player_only_fields" style="grid-column:1/-1;display:${base.type==='player'?'':'none'}">${moneyBagHtml}</div>
-  ${skillsMgmtHtml}
   <div class="field"><label>Classe d'armure</label><input id="d_ca" type="number" value="${base.def.CA??0}"></div>
   <div class="field"><label>Défense magique</label><input id="d_dm" type="number" value="${base.def.DM??0}"></div>
   <div class="field"><label>Résistance Feu (%)</label><input id="r_fire" type="number" value="${base.res.Feu??0}"></div>
@@ -3985,10 +3992,14 @@ function openCharacter(id){
   <div class="field"><label>Résistance Lumière (%)</label><input id="r_lumiere" type="number" value="${base.res.Lumière??0}"></div>
   <div class="field"><label>Résistance Ténèbres (%)</label><input id="r_tenebres" type="number" value="${base.res.Ténèbres??0}"></div>
   <div class="field"><label>Résistance Poison (%)</label><input id="r_poison" type="number" value="${base.res.Poison??0}"></div>
-  <div id="char_bio_fields" style="grid-column:1/-1;display:${base.type==='merchant'?'none':''}">${bioHtml}</div>
+</div></div>
+  <div id="charTabEquip" style="display:none"><div class="form">
+  <div id="char_player_only_fields" style="grid-column:1/-1;display:${base.type==='player'?'':'none'}">${moneyBagHtml}</div>
   ${equipmentSlotsHtml(base,id)}
-  </div>
-  ${knownLine}</div>
+</div></div>
+  <div id="charTabAbil" style="display:none"><div class="form">
+  ${skillsMgmtHtml}
+${abilLinkHtml}</div></div>
   <div id="charTabOpp" style="display:none">${oppAttackHtml(base)}</div>
   <div id="charTabMerchant" style="display:none">${merchantPaneHtml()}</div>
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveCharacter('${id||''}')">Enregistrer</button></div>`;
@@ -4045,6 +4056,7 @@ function saveCharacter(id){
     EQUIP_SLOTS.forEach(([k])=>{const el=document.getElementById('eqslot_'+k);if(el)c.equipmentSlots[k]=el.value||null;});
         EQUIP_SLOTS.forEach(([k])=>{if(oldSlots[k]!==c.equipmentSlots[k]&&c.eqDur)delete c.eqDur[k];});
   }
+  document.querySelectorAll('.cab-check').forEach(el=>{const ab=S.abilities.find(x=>x.id===el.value);if(!ab)return;ab.characterIds=ab.characterIds||[];const has=ab.characterIds.includes(c.id);if(el.checked&&!has)ab.characterIds.push(c.id);else if(!el.checked&&has)ab.characterIds=ab.characterIds.filter(x=>x!==c.id);});
   if(!id)S.characters.push(c);
   S.instances.filter(i=>i.charId===c.id).forEach(i=>{
     i.hpMax=c.resourcesMax.Vie; i.manaMax=c.resourcesMax.Mana; i.shieldMax=c.resourcesMax.Bouclier;
@@ -4851,7 +4863,9 @@ function myCharacterCard(c){
   const bioTabHtml=`
     ${xpBlock}
     <div style="margin-bottom:12px">${c.profileImage?`<img src="${esc(c.profileImage)}" style="max-width:100%;border-radius:10px;display:block">`:'<p class="tiny muted">Aucune image.</p>'}</div>
-    <div class="stat" style="margin-bottom:8px"><label>Description</label><div class="tiny rte-view" style="margin-top:4px">${c.bio||'Aucune description.'}</div></div>
+    <div class="stat" style="margin-bottom:8px"><label>Bio</label><div class="tiny rte-view" style="margin-top:4px">${c.bio||'Aucune description.'}</div></div>
+`;
+  const equipTabHtml=`
     ${moneyBlockHtml}
     ${c.type==='player'?`<div class="stat"><label>🎒 Équipement équipé</label><div style="margin-top:6px">${equippedHtml||'<p class="tiny muted">Aucun équipement.</p>'}</div><p class="tiny muted" style="margin-top:4px">🛡 Résistance naturelle (auto) : CA +${nat.ca} · DM +${nat.dm}</p></div>
     <div class="stat" style="margin-top:8px"><label>⚖ Poids porté</label><strong>${totalWeight.toFixed(1)} kg</strong> / Force ${forceVal} kg${overWeight?`<span style="color:var(--danger)">${weightMalusText(totalWeight,forceVal)}</span>`:''}</div>`:''}`;
@@ -4875,9 +4889,10 @@ function myCharacterCard(c){
     </div>
     <div class="tabs">
       <button class="tab ${tab==='bio'?'active':''}" onclick="switchMySheetTab('${c.id}','bio')">🪪 Bio &amp; Info</button>
+      ${c.type==='player'?`<button class="tab ${tab==='equip'?'active':''}" onclick="switchMySheetTab('${c.id}','equip')">🎒 Équipement</button>`:''}
       <button class="tab ${tab==='stats'?'active':''}" onclick="switchMySheetTab('${c.id}','stats')">📊 Caractéristiques &amp; Capacités</button>
     </div>
-    ${tab==='bio'?bioTabHtml:statsTabHtml}
+    ${tab==='stats'?statsTabHtml:(tab==='equip'&&c.type==='player')?equipTabHtml:bioTabHtml}
   </div>`;
 }
 
