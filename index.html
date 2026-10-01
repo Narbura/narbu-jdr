@@ -165,6 +165,7 @@ button,select,.nav,.btn{touch-action:manipulation}
   <button class="nav" data-page="dice">🎲 <span>Dés</span></button>
   <button class="nav" data-page="mysheet">🪪 <span>Ma fiche</span></button>
   <button class="nav" data-page="hotbar">🎯 <span>Mes Compétences</span></button>
+  <button class="nav" data-page="shortcuts">⚡ <span>Raccourcis</span></button>
   <div class="spacer"></div>
   <div class="server" id="serverInfo">Connexion en cours…</div>
   <button class="btn ghost" style="width:100%" onclick="openNicknameModal()">✏️ Changer de pseudo</button>
@@ -462,7 +463,7 @@ function normalizeState(){
 let S=JSON.parse(localStorage.getItem('arcanum-vtt')||'null')||structuredClone(DEFAULT);
 normalizeState();
 
-const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',equipment:'Équipement',dice:'Dés',library:'Bibliothèque',mysheet:'Ma fiche',hotbar:'Mes Compétences',levelup:'Changement de niveau'};
+const PAGE_TITLES={table:'Table de jeu',characters:'Personnages',abilities:'Capacités',equipment:'Équipement',dice:'Dés',library:'Bibliothèque',mysheet:'Ma fiche',hotbar:'Mes Compétences',shortcuts:'Raccourcis',levelup:'Changement de niveau'};
 
 let currentPage='table';
 let selectedToken=null;
@@ -1430,7 +1431,16 @@ function outcome(d){
   if(d>=75)return ['Légère réussite',.5]; if(d>=50)return ['Légère réussite',.75]; if(d>=25)return ['Réussite',1];
   if(d>=5)return ['Grande réussite',1.5]; if(d>=2)return ['Réussite critique',2]; return ['Réussite ultime',4];
 }
-function addLog(html){S.chat.push(html);if(S.chat.length>120)S.chat.shift();queueChat(html);}
+function addLog(html,compact){const st=compact===true?html+'<!--CC-->':(compact?html+'<!--C-->'+compact:html);S.chat.push(st);if(S.chat.length>120)S.chat.shift();queueChat(st);}
+function chatCompact(){return localStorage.getItem('narbudr-chat-compact')==='1';}
+function toggleChatCompact(){localStorage.setItem('narbudr-chat-compact',chatCompact()?'0':'1');render();}
+function chatEntriesHtml(){const cp=chatCompact();const out=[];S.chat.slice().reverse().forEach(e=>{const s=String(e);let v;if(s.includes('<!--CC-->'))v=s.replace('<!--CC-->','');else if(s.includes('<!--C-->')){const q=s.split('<!--C-->');v=cp?q[1]:q[0];}else v=cp?null:s;if(v)out.push('<div>'+v+'</div>');});return out.join('')||'<p class="muted tiny">Aucun événement pour l’instant.</p>';}
+const TB_ITEMS=[['fullscreen','⛶ Plein écran',false],['grid','▦ Grille',false],['hud','🎯 HUD',true],['ff','⚔ Tir allié',true],['free','🎯 Placement libre',true],['combat','⚔ Boutons de combat',false],['chat','💬 Chat',false]];
+function tbHidden(){try{return JSON.parse(localStorage.getItem('narbudr-tb-hidden')||'[]');}catch(e){return [];}}
+function tbShow(k){return !tbHidden().includes(k);}
+function tbAnyVisible(){return TB_ITEMS.filter(i=>!i[2]||isMJ()).some(i=>tbShow(i[0]));}
+function toggleTbItem(k,on){let h=tbHidden().filter(x=>x!==k);if(!on)h.push(k);localStorage.setItem('narbudr-tb-hidden',JSON.stringify(h));render();}
+function shortcutsPage(){return `<div class="card" style="max-width:520px"><h2>⚡ Raccourcis de la barre du haut</h2><p class="tiny muted">Coche ce que tu veux afficher au-dessus de la carte (réglage propre à ton écran). Si tout est décoché, la flèche de pliage disparaît.</p>${TB_ITEMS.filter(i=>!i[2]||isMJ()).map(i=>`<label class="ability-char-item"><input type="checkbox" ${tbShow(i[0])?'checked':''} onchange="toggleTbItem('${i[0]}',this.checked)"><span>${i[1]}</span></label>`).join('')}</div>`;}
 function statTestLabel(stat){return (stat==='Artisanat'||stat==='Agilité')?`jet d'${stat}`:`jet de ${stat}`;}
 function statTestIcon(stat){const cfg=(S.statTestIcons||{})[stat]||{icon:'🎲',iconImage:null};return {icon:cfg.icon||'🎲',iconImage:cfg.iconImage||null};}
 function skillStatMod(tpl,stat){
@@ -1448,7 +1458,7 @@ function rollStatTest(stat){
   const mod=skillStatMod(tpl,stat); const d=Math.max(1,raw+mod);
   broadcastDiceRoll(100,[raw]);
   const success=d<=value;
-  addLog(`🎲 <b>${esc(casterInst.label)}</b> — ${statTestLabel(stat)} : d100 = <b>${d}</b>${mod?` (jet ${raw}, compétence ${mod>0?'+':''}${mod})`:''} vs ${value} → ${success?'<span style="color:#62d394">✅ Réussite</span>':'<span style="color:#ef6262">❌ Échec</span>'}`);
+  addLog(`🎲 <b>${esc(casterInst.label)}</b> — ${statTestLabel(stat)} : d100 = <b>${d}</b>${mod?` (jet ${raw}, compétence ${mod>0?'+':''}${mod})`:''} vs ${value} → ${success?'<span style="color:#62d394">✅ Réussite</span>':'<span style="color:#ef6262">❌ Échec</span>'}`,true);
   saveState(); render();
 }
 /* ---- Hotbar (raccourcis grille, préférence locale par personnage) ---- */
@@ -1737,6 +1747,7 @@ function render(){
   else if(currentPage==='library')c.innerHTML=libraryPage();
   else if(currentPage==='mysheet')c.innerHTML=mySheetPage();
   else if(currentPage==='hotbar')c.innerHTML=hotbarPage();
+  else if(currentPage==='shortcuts')c.innerHTML=shortcutsPage();
   updateTargetingBanner();
   updateUserBadge();
   syncSheetInputs();
@@ -1775,8 +1786,8 @@ function tablePage(){
   return `<div class="map-layout" id="mapLayout">
   <div class="card map-card">
     <div class="map-toolbar ${toolbarHidden?'is-hidden':''}">${toolbarHidden?'':`
-      <button class="btn" onclick="toggleFullscreen()" ${uiCtx('ui_fullscreen')}>${hkTag('ui_fullscreen')}${stageFullscreen?'✕ Quitter le plein écran':'⛶ Plein écran'}</button>
-      <button class="btn" id="gridToggleBtn" onclick="toggleGridVisible()" ${uiCtx('ui_grid')} title="Afficher/masquer la grille · Clic droit : raccourci">${hkTag('ui_grid')}${gridVisible?'▦':'⬜'} Grille</button>
+      ${tbShow('fullscreen')?`<button class="btn" onclick="toggleFullscreen()" ${uiCtx('ui_fullscreen')}>${hkTag('ui_fullscreen')}${stageFullscreen?'✕ Quitter le plein écran':'⛶ Plein écran'}</button>`:''}
+      ${tbShow('grid')?`<button class="btn" id="gridToggleBtn" onclick="toggleGridVisible()" ${uiCtx('ui_grid')} title="Afficher/masquer la grille · Clic droit : raccourci">${hkTag('ui_grid')}${gridVisible?'▦':'⬜'} Grille</button>
       <div style="position:relative;display:inline-block">
         <button class="btn ghost" title="Réglage de l'opacité de la grille" onclick="toggleGridOpacityPopover()">⚙</button>
         <div id="gridOpacityPopover" class="grid-opacity-popover" style="display:${gridPopoverOpen?'block':'none'}">
@@ -1785,10 +1796,11 @@ function tablePage(){
           <p class="tiny muted" style="margin:6px 0 0">Ce réglage n'affecte que ton propre écran.</p>
         </div>
       </div>
-      ${isMJ()?`<button class="btn ${S.hudEnabled?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleHudEnabled()" ${uiCtx('ui_hud')} title="${isMJ()?'Activer/désactiver le HUD flottant (dégâts/soins) et les pop-ups de critiques':'Seul le MJ peut activer cette option'}">${hkTag('ui_hud')}🎯 HUD${S.hudEnabled?' : ON':''}</button>`:''}
-      ${isMJ()?`<button class="btn ${S.friendlyFire?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleFriendlyFire()" ${uiCtx('ui_ff')} title="${isMJ()?'Autoriser/interdire les attaques entre alliés (joueurs entre eux, monstres entre eux)':'Seul le MJ peut activer cette option'}">${hkTag('ui_ff')}⚔ Tir allié${S.friendlyFire?' : ON':''}</button>`:''}
-      ${isMJ()?`<button class="btn ${S.freeMovement?'primary':''}" ${(isMJ()&&!S.combat.active)?'':'disabled'} onclick="toggleFreeMovement()" ${uiCtx('ui_free')} title="${S.combat.active?'Indisponible pendant le combat — les tokens sont alignés sur la grille':(isMJ()?'Activer/désactiver le placement libre des tokens (hors combat)':'Seul le MJ peut activer cette option')}">${hkTag('ui_free')}🎯 Placement libre${S.freeMovement?' : ON':''}</button>`:''}
-      ${combatControls}`}<button class="btn ghost fs-hide" style="margin-left:auto;flex-shrink:0" onclick="toggleToolbar()" title="${toolbarHidden?'Afficher':'Masquer'} les options">${toolbarHidden?'▼':'▶'}</button>
+`:''}
+      ${isMJ()&&tbShow('hud')?`<button class="btn ${S.hudEnabled?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleHudEnabled()" ${uiCtx('ui_hud')} title="${isMJ()?'Activer/désactiver le HUD flottant (dégâts/soins) et les pop-ups de critiques':'Seul le MJ peut activer cette option'}">${hkTag('ui_hud')}🎯 HUD${S.hudEnabled?' : ON':''}</button>`:''}
+      ${isMJ()&&tbShow('ff')?`<button class="btn ${S.friendlyFire?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleFriendlyFire()" ${uiCtx('ui_ff')} title="${isMJ()?'Autoriser/interdire les attaques entre alliés (joueurs entre eux, monstres entre eux)':'Seul le MJ peut activer cette option'}">${hkTag('ui_ff')}⚔ Tir allié${S.friendlyFire?' : ON':''}</button>`:''}
+      ${isMJ()&&tbShow('free')?`<button class="btn ${S.freeMovement?'primary':''}" ${(isMJ()&&!S.combat.active)?'':'disabled'} onclick="toggleFreeMovement()" ${uiCtx('ui_free')} title="${S.combat.active?'Indisponible pendant le combat — les tokens sont alignés sur la grille':(isMJ()?'Activer/désactiver le placement libre des tokens (hors combat)':'Seul le MJ peut activer cette option')}">${hkTag('ui_free')}🎯 Placement libre${S.freeMovement?' : ON':''}</button>`:''}
+      ${tbShow('combat')?combatControls:''}${tbShow('chat')?`<button class="btn ${chatCompact()?'primary':''}" onclick="toggleChatCompact()" title="Chat simplifié : uniquement messages, jets et dégâts">💬 Chat${chatCompact()?' : ON':''}</button>`:''}`}${tbAnyVisible()?`<button class="btn ghost fs-hide" style="margin-left:auto;flex-shrink:0" onclick="toggleToolbar()" title="${toolbarHidden?'Afficher':'Masquer'} les options">${toolbarHidden?'▼':'▶'}</button>`:''}
     </div>
     <div class="map-wrap" id="mapWrap">
       <div class="map-drop-hint" id="mapDropHint">➕ Déposer sur la carte</div>
@@ -2514,7 +2526,7 @@ function deleteCharacterCascade(id){
   saveState(); closeModal(); render();
 }
 function chatPanel(){
-  const entries=S.chat.length?S.chat.slice().reverse().map(e=>`<div>${e}</div>`).join(''):'<p class="muted tiny">Aucun événement pour l’instant.</p>';
+  const entries=chatEntriesHtml();
   return `<h2>💬 Chat &amp; journal</h2>
   <div class="chat-form"><input id="chat_input" maxlength="200" placeholder="/r 2d20+5 ou message…" value="${esc(chatDraft)}" oninput="chatDraft=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();sendChat();}"><button class="btn primary" onclick="sendChat()">➤</button></div>
   <div class="log">${entries}</div>`;
@@ -2565,11 +2577,11 @@ function sendChat(){
     const lines=r.parts.map(p=>p.rolls
       ?`🎲 ${p.label} : ${p.rolls.join(' + ')}${p.rolls.length>1?` = ${Math.abs(p.sum)}`:''}`
       :`➕ Bonus : ${p.sum>0?'+':''}${p.sum}`);
-    addLog(`🎲 <b>${name}</b> — /r ${esc(r.expr)}<br>${lines.join('<br>')}<br>🎯 Total : <b>${r.total}</b>`);
+    addLog(`🎲 <b>${name}</b> — /r ${esc(r.expr)}<br>${lines.join('<br>')}<br>🎯 Total : <b>${r.total}</b>`,true);
   }else if(text.startsWith('/')){
     toast('⚠️ Commande inconnue. Utilise /r [expression].');return;
   }else{
-    addLog(`💬 <b>${name}</b> : ${esc(text)}`);
+    addLog(`💬 <b>${name}</b> : ${esc(text)}`,true);
   }
   chatDraft='';
   persistState(); render();
@@ -3228,7 +3240,7 @@ function resolveOpportunityAttack(attackerInst,targetInst){
     gameChannel?.send({type:'broadcast',event:'oppfx',payload:{targetId:targetInst.id,image:oa.impactImage,frames:oa.impactFrames,rows:oa.impactRows,fps:oa.animFps,auto:oa.spriteAuto}});
   }
   if(targetInst.hp<=0){lines.push(`💀 <b>${esc(targetInst.label)} est KO</b>.`);handleInstanceDeath(targetInst,attackerInst);}
-  addLog(lines.join('<br>'));
+  addLog(lines.join('<br>'),damage>0?`${esc(attackerInst.label)} inflige ${damage} dégâts à ${esc(targetInst.label)}`:'');
 }
 function resolveAbility(a,start,explicitTargetInstId){
   const casterInst=selectedToken?inst(selectedToken):null;
@@ -3275,6 +3287,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   const targets=affected(a,start,explicitTargetInstId);
   playAbilityFX(a,casterInst,targets,start);
   gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,casterId:casterInst.id,targetIds:targets.map(t=>t.id),start}});
+  const cl=[];
   const lines=[`⚔ <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b>`];
   if(a.desc)lines.push(a.desc);
   if(a.manaCost>0)lines.push(`💧 Coût en mana : ${a.manaCost} (reste ${casterInst.mana}/${casterInst.manaMax})`);
@@ -3343,6 +3356,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
     lines.push(`❤️ ${esc(t.label)} : -${hpDamage} PV (${t.hp}/${t.hpMax})`);
     broadcastHud(t.id,{hp:-hpDamage,shield:absorbed>0?-absorbed:0});
+    if(damage>0)cl.push(`${esc(casterInst.label)} inflige ${damage} dégâts à ${esc(t.label)}`);
     applyMonsterDurabilityHit(casterTpl,t,tTpl,label,lines);
     if(t.hp<=0){
       lines.push(`💀 <b>${esc(t.label)} est KO</b>.`);
@@ -3350,7 +3364,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     }
   }
 
-  addLog(lines.join('<br>'));
+  addLog(lines.join('<br>'),cl.join('<br>'));
   activeAbility=null; hoverCell=null;
   if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
   saveState(); render();
