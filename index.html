@@ -251,6 +251,7 @@ async function logout(){
 }
 
 /* ============================= DONNÉES DE BASE ============================= */
+var migrationDirty=false;
 const DEFAULT={
   characters:[
     {id:'p1',name:'Zephyr',type:'player',icon:'🧙',move:6,ownerId:null,hidden:false,stats:{Force:40,Magie:76,Agilité:82,Vitesse:41,Artisanat:34},resourcesMax:{Vie:290,Mana:215,Bouclier:100},def:{CA:16,DM:5,'CA naturelle':12},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0,Poison:0}},
@@ -377,6 +378,8 @@ function normalizeState(){
     if(!Array.isArray(c.inactiveSkills))c.inactiveSkills=[];
     if(!Array.isArray(c.consumablesOwned))c.consumablesOwned=[];
     if(!Array.isArray(c.bag))c.bag=[];
+    mergeBag(c);
+    if(c.type==='merchant'){if(!c.merchant||typeof c.merchant!=='object')c.merchant={buy:[],sell:[]};if(!Array.isArray(c.merchant.buy))c.merchant.buy=[];if(!Array.isArray(c.merchant.sell))c.merchant.sell=[];}
     if(!(c.money>=0))c.money=0;
     if(c.type==='player'){
       if(!c.equipmentSlots)c.equipmentSlots={};
@@ -387,6 +390,21 @@ function normalizeState(){
   // Migration : ancienne durabilité stockée sur les jetons -> fiche du personnage
   S.instances.forEach(t=>{ if(t.eqDur){ const c=char(t.charId); if(c){ Object.keys(t.eqDur).forEach(k=>{ if(c.eqDur[k]===undefined)c.eqDur[k]=t.eqDur[k]; }); } delete t.eqDur; } });
   if(!S.equipment)S.equipment=[];
+  if((S.consumables||[]).length||S.characters.some(c=>(c.consumablesOwned||[]).length)){
+    (S.consumables||[]).forEach(cn=>{
+      if(!S.equipment.some(e=>e.id===cn.id))S.equipment.push({id:cn.id,name:cn.name,icon:cn.icon||'🧪',iconImage:cn.iconImage||null,itemType:'divers',category:'divers',diversCat:'consommable',useResource:cn.resource==='Mana'?'Mana':'Vie',useAmount:cn.amount||10});
+    });
+    S.characters.forEach(c=>{
+      (c.consumablesOwned||[]).forEach(o=>{
+        if(!(o.qty>0)||!S.equipment.some(e=>e.id===o.id))return;
+        c.bag=c.bag||[];
+        const ex=c.bag.find(b=>b.eqId===o.id&&b.dur==null);
+        if(ex)ex.qty=(ex.qty||1)+o.qty; else c.bag.push({uid:'b'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),eqId:o.id,dur:null,qty:o.qty});
+      });
+      c.consumablesOwned=[];
+    });
+    S.consumables=[]; migrationDirty=true;
+  }
   S.equipment.forEach(e=>{
     if(!e.res)e.res={};
     ELEMENT_RES_KEYS.forEach(k=>{if(e.res[k]===undefined)e.res[k]=0;});
@@ -400,13 +418,14 @@ function normalizeState(){
     if(e.weaponStat===undefined)e.weaponStat='Force';
     if(e.poids===undefined)e.poids=0;
     if(e.price===undefined)e.price=0;
+    if(e.itemType==='divers'&&e.diversCat===undefined)e.diversCat='autres';
     if(e.description===undefined)e.description='';
     if(e.durabilityMax===undefined)e.durabilityMax=0;
     if(!e.elemDamage)e.elemDamage={};
   });
   S.characters.forEach(c=>{
     const d=c.equipmentSlots&&c.equipmentSlots.diversIds;
-    if(Array.isArray(d)&&d.length){d.forEach(id=>{if(equip(id))bagAdd(c,id,null);});c.equipmentSlots.diversIds=[];}
+    if(Array.isArray(d)&&d.length){d.forEach(id=>{if(equip(id))bagAdd(c,id,null);});c.equipmentSlots.diversIds=[];migrationDirty=true;}
   });
   S.abilities.forEach(a=>{
     if(a.element==='Gel')a.element='Glace';
@@ -544,12 +563,14 @@ async function loadGameState(){
       S={};
       const src={game_sessions:sess.data,game_maps:maps.data,game_rules_library:rules.data};
       COL_SPECS.forEach(s=>{const v=src[s.t]?src[s.t][s.c]:null;if(v!==null&&v!==undefined)s.set(v);});
+      migrationDirty=false;
       S.notes=(notes.data||[]).map(noteFromRow);
       S.instances=(insts.data||[]).map(r=>r.raw_instance_data).filter(Boolean);
       S.chat=(chat.data||[]).slice().reverse().map(r=>r.message);
       normalizeState();
       instTs={}; S.instances.forEach(i=>{if(i._ts)instTs[i.id]=i._ts;});
       lastSaved=computeSnapshot();
+      if(migrationDirty&&isMJ()){migrationDirty=false;lastSaved.cols.equipment='';lastSaved.cols.characters='';lastSaved.cols.consumables='';setTimeout(flushSave,300);}
     }
   }catch(e){
     console.error('loadGameState', e);
@@ -1467,9 +1488,8 @@ function hotbarItemLookup(charId,itemId){
   const a=S.abilities.find(x=>x.id===itemId);
   if(a)return {icon:a,label:a.name,onclick:a.type==='Passif'?`toggleAuraForCaster('${a.id}')`:`startAbility('${a.id}')`};
   const c=char(charId);
-  const owned=(c?.consumablesOwned||[]).find(o=>o.id===itemId);
-  if(owned){
-    const def=(S.consumables||[]).find(x=>x.id===itemId);
+  if(c&&consumableStacks(c).some(b=>b.eqId===itemId)){
+    const def=equip(itemId);
     if(def)return {icon:def,label:def.name,onclick:`useConsumable('${charId}','${itemId}')`};
   }
   return null;
@@ -2373,7 +2393,7 @@ function charItemHtml(c){
   const count=S.instances.filter(i=>i.charId===c.id).length;
   return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="assetDragStart(event,'${c.id}')"`:''} onclick="openCharacter('${c.id}')" title="${mj?'Glisser sur la carte pour créer un token, cliquer pour modifier la fiche':'Fiche (lecture seule)'}">
     <div class="asset-icon">${iconBoxHtml(c,'7px')}</div>
-    <div class="asset-info"><b>${esc(c.name)}</b><small>${c.type==='player'?'Joueur':'Monstre'}${count?` · ${count} sur la carte`:''}</small></div>
+    <div class="asset-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)}${count?` · ${count} sur la carte`:''}</small></div>
     ${mj?`<button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();confirmDeleteCharacter('${c.id}')" title="Supprimer définitivement">🗑️</button>`:''}
   </div>`;
 }
@@ -3635,14 +3655,12 @@ function promptSetHotkey(charId,abilityId){
   setHotkeyMap(m);
   render();
 }
+function consumableStacks(c){return ((c&&c.bag)||[]).filter(b=>{const e=equip(b.eqId);return e&&e.itemType==='divers'&&e.diversCat==='consommable'&&e.useAmount>0&&(b.qty||1)>0;});}
 function consumablesButtonsHtml(selInst){
   const tpl=instTemplate(selInst); if(!tpl)return '';
-  const owned=(tpl.consumablesOwned||[]).filter(o=>o.qty>0);
-  if(!owned.length)return '';
-  return owned.map(o=>{
-    const def=(S.consumables||[]).find(x=>x.id===o.id); if(!def)return '';
-    const hk=myHotkeyFor(tpl.id,o.id);
-    return `<button class="btn" onclick="useConsumable('${tpl.id}','${o.id}')" oncontextmenu="event.preventDefault();promptSetHotkey('${tpl.id}','${o.id}')" title="Utiliser (${o.qty} restant(s))${hk?` · Raccourci : ${hk}`:''} · Clic droit : assigner un raccourci">${hk?`<b>[${esc(hk)}]</b> `:''}${iconInlineHtml(def)} ${esc(def.name)} ×${o.qty}</button>`;
+  return consumableStacks(tpl).map(b=>{
+    const def=equip(b.eqId), hk=myHotkeyFor(tpl.id,b.eqId);
+    return `<button class="btn" onclick="useConsumable('${tpl.id}','${b.eqId}')" oncontextmenu="event.preventDefault();promptSetHotkey('${tpl.id}','${b.eqId}')" title="Utiliser (${b.qty||1} restant(s))${hk?` · Raccourci : ${hk}`:''} · Clic droit : assigner un raccourci">${hk?`<b>[${esc(hk)}]</b> `:''}${iconInlineHtml(def)} ${esc(def.name)} ×${b.qty||1}</button>`;
   }).join('');
 }
 function startAbility(id){
@@ -3761,7 +3779,7 @@ function charactersPage(){
     const count=S.instances.filter(i=>i.charId===c.id).length;
     const nbAb=characterAbilities(c.id).length;
     const ownerLabel=c.ownerId?(displayNameOf(profiles.find(p=>p.id===c.ownerId))||'Joueur inconnu'):(c.type==='player'?'Non assigné':'MJ / PNJ');
-    return `<div class="ability"><div class="icon">${iconBoxHtml(c,'9px')}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${c.type==='player'?'Joueur':'Monstre'} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button>`:''}</div>`;
+    return `<div class="ability"><div class="icon">${iconBoxHtml(c,'9px')}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button>`:''}</div>`;
   }).join('')}
   </div>
   <div class="card"><h2>Principe de la fiche</h2><p class="muted">Une fiche définit les valeurs de base (statistiques, ressources maximales, défenses, résistances), le joueur propriétaire et sa visibilité. Chaque token posé sur la carte est une instance indépendante avec ses propres PV / mana / bouclier actuels et sa propre position.</p>
@@ -3832,11 +3850,19 @@ function updateWeightPreview(){
   const disp=document.getElementById('c_weight_display');
   if(disp)disp.value=`${w.toFixed(1)} kg / Force ${force} kg${weightMalusText(w,force)}`;
 }
-function toggleCharMonsterFields(){const el=document.getElementById('char_monster_durability_fields');if(el)el.style.display=document.getElementById('c_type').value==='enemy'?'':'none';}
+function toggleCharMonsterFields(){
+  const t=document.getElementById('c_type').value;
+  const show=(id,v)=>{const el=document.getElementById(id);if(el)el.style.display=v?'':'none';};
+  show('char_monster_durability_fields',t==='enemy');
+  show('char_player_only_fields',t==='player');
+  show('char_bio_fields',t!=='merchant');
+  show('charTabMerchantBtn',t==='merchant');
+}
 function switchCharModalTab(tab){
   const g=document.getElementById('charTabGeneral'), o=document.getElementById('charTabOpp');
   if(g)g.style.display=tab==='general'?'':'none';
   if(o)o.style.display=tab==='opp'?'':'none';
+  const mc=document.getElementById('charTabMerchant'); if(mc)mc.style.display=tab==='merchant'?'':'none';
   document.querySelectorAll('#charModalTabs .tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
 }
 function oppAttackHtml(base){
@@ -3872,22 +3898,15 @@ function openCharacter(id){
   const c=id?char(id):null;
   const base=c||{name:'Nouveau personnage',icon:'🧙',iconImage:null,type:'player',move:6,ownerId:null,hidden:false,categoryId:currentCharCategory,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10,Constitution:4,Endurance:0,Social:0,Artisanat:0},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0,Poison:0},oppAttack:{formula:'',type:'Physique',element:'Neutre',impactImage:null,impactFrames:1,impactRows:1,animFps:60}};
   const catOpts=`<option value="">— Racine —</option>`+(S.characterCategories||[]).map(cc=>`<option value="${esc(cc.id)}" ${base.categoryId===cc.id?'selected':''}>${esc(cc.name)}</option>`).join('');
-  const typeOpts=[['player','Joueur'],['enemy','Monstre / PNJ']].map(([v,l])=>opt(v,l,base.type)).join('');
+  const typeOpts=[['player','Joueur'],['enemy','Monstre / PNJ'],['merchant','Commerçant']].map(([v,l])=>opt(v,l,base.type)).join('');
+  merchDraft=structuredClone(base.merchant||{buy:[],sell:[]}); merchDraft.buy=merchDraft.buy||[]; merchDraft.sell=merchDraft.sell||[]; merchSearch=''; merchCat='';
   const ownerOpts=`<option value="">— MJ / PNJ (aucun joueur) —</option>`+profiles.map(p=>`<option value="${esc(p.id)}" ${base.ownerId===p.id?'selected':''}>${esc(displayNameOf(p))}</option>`).join('');
   const known=id?characterAbilities(id):[];
   const insts=id?S.instances.filter(i=>i.charId===id):[];
   const curResHtml=id?`<div class="field full"><label>Ressources actuelles (jetons sur la carte — synchronisées en direct)</label>${insts.length?insts.map(i=>`<div class="row" style="margin-bottom:6px;flex-wrap:wrap"><span style="flex:1">${esc(i.label)}</span><span class="tiny muted">❤️ PV</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="hp" value="${i.hp}" oninput="this.dataset.dirty='1'"><span class="tiny muted">💧 Mana</span><input type="number" min="0" style="width:80px" data-inst="${i.id}" data-field="mana" value="${i.mana}" oninput="this.dataset.dirty='1'"><span class="tiny muted">↔ Taille</span><input type="number" min="1" max="20" style="width:55px" data-inst="${i.id}" data-field="sizew" value="${i.sizeW||1}" oninput="this.dataset.dirty='1'" title="Largeur en cases"><span class="tiny muted">×</span><input type="number" min="1" max="20" style="width:55px" data-inst="${i.id}" data-field="sizeh" value="${i.sizeH||1}" oninput="this.dataset.dirty='1'" title="Hauteur en cases"></div>`).join(''):'<p class="tiny muted">Aucun jeton de ce personnage sur la carte.</p>'}<p class="tiny muted">La taille est annulée automatiquement si elle chevauche un autre jeton ou dépasse la carte.</p></div>`:'';
-  const consumablesMgmtHtml=id?`<div class="field full"><label>🧪 Consommables possédés</label>
-  <div style="margin-bottom:8px">${(base.consumablesOwned&&base.consumablesOwned.length)?base.consumablesOwned.map(o=>{const def=(S.consumables||[]).find(x=>x.id===o.id);if(!def)return '';return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px"><span>${iconInlineHtml(def)} ${esc(def.name)} × ${o.qty}</span><button class="btn ghost" style="padding:4px 8px" onclick="removeCharConsumable('${id}','${o.id}')" title="Retirer tout">🗑️</button></div>`;}).join(''):'<p class="tiny muted">Aucun consommable.</p>'}</div>
-  <div class="row" style="gap:6px">
-    <select id="c_addconsumable_select"><option value="">— Choisir un consommable —</option>${(S.consumables||[]).map(cn=>`<option value="${esc(cn.id)}">${esc(cn.name)}</option>`).join('')}</select>
-    <button class="btn" type="button" onclick="addCharConsumablePrompt('${id}')">＋ Ajouter</button>
-  </div>
-  ${!(S.consumables||[]).length?'<p class="tiny muted">Aucun consommable défini (page 🎒 Équipement).</p>':''}
-  </div>`:'';
   const skillsMgmtHtml=id?(()=>{const sk=known.filter(a=>a.type==='Compétence');if(!sk.length)return '';return `<div class="field full"><label>🎓 Compétences (coché = active)</label>${sk.map(a=>`<label class="ability-char-item"><input type="checkbox" class="skill-active-check" value="${esc(a.id)}" ${(base.inactiveSkills||[]).includes(a.id)?'':'checked'}> <span>${iconInlineHtml(a)} ${esc(a.name)} <small class="muted">(Niv. ${a.level||1}${a.skillStat&&a.skillMod?' · '+esc(a.skillStat)+' '+(a.skillMod>0?'+':'')+a.skillMod:''})</small></span></label>`).join('')}</div>`;})():'';
   const mp=moneySplit(base.money||0);
-  const moneyBagHtml=`<div class="field full"><label>💰 Argent (or / argent / cuivre)</label><div class="row" style="gap:6px"><input type="hidden" id="c_money_orig" value="${base.money||0}"><input id="c_gold" type="number" min="0" value="${mp.g}" style="width:90px"><span class="tiny muted">or</span><input id="c_silver" type="number" min="0" value="${mp.s}" style="width:70px"><span class="tiny muted">arg</span><input id="c_copper" type="number" min="0" value="${mp.c}" style="width:70px"><span class="tiny muted">cu</span></div></div>`+(id?`<div class="field full"><label>🎒 Sac (objets possédés, non équipés)</label><div style="margin-bottom:8px">${(base.bag&&base.bag.length)?base.bag.map(b=>{const it=equip(b.eqId);if(!it)return '';return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px"><span>${iconInlineHtml(it)} ${esc(it.name)}${it.durabilityMax?` <small class="muted">(🔧 ${b.dur}/${it.durabilityMax})</small>`:''}</span><button class="btn ghost" style="padding:4px 8px" onclick="removeCharBagItem('${id}','${b.uid}')" title="Retirer">🗑️</button></div>`;}).join(''):'<p class="tiny muted">Sac vide.</p>'}</div><div class="row" style="gap:6px"><select id="c_addbag_select"><option value="">— Choisir un équipement —</option>${(S.equipment||[]).map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('')}</select><button class="btn" type="button" onclick="addCharBagItem('${id}')">＋ Ajouter</button></div></div>`:'');
+  const moneyBagHtml=`<div class="field full"><label>💰 Argent (or / argent / cuivre)</label><div class="row" style="gap:6px"><input type="hidden" id="c_money_orig" value="${base.money||0}"><input id="c_gold" type="number" min="0" value="${mp.g}" style="width:90px"><span class="tiny muted">or</span><input id="c_silver" type="number" min="0" value="${mp.s}" style="width:70px"><span class="tiny muted">arg</span><input id="c_copper" type="number" min="0" value="${mp.c}" style="width:70px"><span class="tiny muted">cu</span></div></div>`+(id?`<div class="field full"><label>🎒 Sac (objets possédés, non équipés)</label><div style="margin-bottom:8px">${(base.bag&&base.bag.length)?base.bag.map(b=>{const it=equip(b.eqId);if(!it)return '';return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px"><span>${iconInlineHtml(it)} ${esc(it.name)}${(b.qty||1)>1?' ×'+b.qty:''}${it.durabilityMax?` <small class="muted">(🔧 ${b.dur}/${it.durabilityMax})</small>`:''}</span><button class="btn ghost" style="padding:4px 8px" onclick="removeCharBagItem('${id}','${b.uid}')" title="Retirer">🗑️</button></div>`;}).join(''):'<p class="tiny muted">Sac vide.</p>'}</div><div class="row" style="gap:6px"><select id="c_addbag_select"><option value="">— Choisir un équipement —</option>${(S.equipment||[]).map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('')}</select><button class="btn" type="button" onclick="addCharBagItem('${id}')">＋ Ajouter</button></div></div>`:'');
   const knownLine=id?(known.length?`<p class="tiny muted">Capacités liées : ${known.map(a=>`${iconInlineHtml(a)} ${esc(a.name)}`).join(', ')} <span style="opacity:.7">(à gérer depuis la page ✨ Capacités)</span></p>`:'<p class="tiny muted">Aucune capacité liée à ce personnage pour l’instant (page ✨ Capacités).</p>'):'';
   const bioHtml=`
   <div class="field full">
@@ -3906,6 +3925,7 @@ function openCharacter(id){
   <div class="tabs" id="charModalTabs">
     <button type="button" class="tab active" data-tab="general" onclick="switchCharModalTab('general')">🪪 Fiche</button>
     <button type="button" class="tab" data-tab="opp" onclick="switchCharModalTab('opp')">⚔ Attaque d'opportunité</button>
+    <button type="button" class="tab" id="charTabMerchantBtn" data-tab="merchant" onclick="switchCharModalTab('merchant')" style="display:${base.type==='merchant'?'':'none'}">🛒 Commerce</button>
   </div>
   <div id="charTabGeneral"><div class="form">
   <div class="field"><label>Nom</label><input id="c_name" value="${esc(base.name)}"></div>
@@ -3952,8 +3972,7 @@ function openCharacter(id){
   <div class="field"><label>Social</label><input id="s_soc" type="number" value="${base.stats.Social??0}"></div>
   <div class="field"><label>Artisanat</label><input id="s_craft" type="number" value="${base.stats.Artisanat??0}"></div>
   ${curResHtml}
-  ${consumablesMgmtHtml}
-  ${moneyBagHtml}
+  <div id="char_player_only_fields" style="grid-column:1/-1;display:${base.type==='player'?'':'none'}">${moneyBagHtml}</div>
   ${skillsMgmtHtml}
   <div class="field"><label>Classe d'armure</label><input id="d_ca" type="number" value="${base.def.CA??0}"></div>
   <div class="field"><label>Défense magique</label><input id="d_dm" type="number" value="${base.def.DM??0}"></div>
@@ -3966,11 +3985,12 @@ function openCharacter(id){
   <div class="field"><label>Résistance Lumière (%)</label><input id="r_lumiere" type="number" value="${base.res.Lumière??0}"></div>
   <div class="field"><label>Résistance Ténèbres (%)</label><input id="r_tenebres" type="number" value="${base.res.Ténèbres??0}"></div>
   <div class="field"><label>Résistance Poison (%)</label><input id="r_poison" type="number" value="${base.res.Poison??0}"></div>
-  ${bioHtml}
+  <div id="char_bio_fields" style="grid-column:1/-1;display:${base.type==='merchant'?'none':''}">${bioHtml}</div>
   ${equipmentSlotsHtml(base,id)}
   </div>
   ${knownLine}</div>
   <div id="charTabOpp" style="display:none">${oppAttackHtml(base)}</div>
+  <div id="charTabMerchant" style="display:none">${merchantPaneHtml()}</div>
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveCharacter('${id||''}')">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
 }
@@ -3989,6 +4009,7 @@ function saveCharacter(id){
   c.ownerId=document.getElementById('c_owner').value||null;
   c.categoryId=document.getElementById('c_category').value||null;
   c.hidden=document.getElementById('c_hidden').value==='true';
+  if(c.type==='merchant')c.merchant=merchDraft;
   c.critDurabilityDmg=Math.max(0,parseNum(document.getElementById('c_critdur').value)||0);
   c.ultimateDurabilityDmg=Math.max(0,parseNum(document.getElementById('c_ultdur').value)||0);
   c.profileImage=document.getElementById('c_profileimage').value.trim()||null;
@@ -4137,7 +4158,7 @@ function openAbility(id){
   const defOpts=[['DM',"Défense magique"],['CA',"Classe d'armure"],['none','Aucune']].map(([v,l])=>opt(v,l,a.defense)).join('');
   const areaOpts=[['single','Cible unique'],['square','Carré'],['circle','Cercle (aperçu)'],['line','Ligne droite'],['cone','Cône'],['self','Autour de soi']].map(([v,l])=>opt(v,l,a.area)).join('');
   const linkedIds=a.characterIds||[];
-  const charListHtml=S.characters.length?S.characters.map(c=>`<label class="ability-char-item" data-name="${esc(c.name.toLowerCase())}"><input type="checkbox" class="ac-check" value="${c.id}" ${linkedIds.includes(c.id)?'checked':''}> <span>${iconInlineHtml(c)} ${esc(c.name)} <small class="muted">(${c.type==='player'?'Joueur':'Monstre'})</small></span></label>`).join(''):'<p class="tiny muted">Aucun personnage créé pour l’instant (page 🧙 Personnages).</p>';
+  const charListHtml=S.characters.length?S.characters.map(c=>`<label class="ability-char-item" data-name="${esc(c.name.toLowerCase())}"><input type="checkbox" class="ac-check" value="${c.id}" ${linkedIds.includes(c.id)?'checked':''}> <span>${iconInlineHtml(c)} ${esc(c.name)} <small class="muted">(${charTypeLabel(c)})</small></span></label>`).join(''):'<p class="tiny muted">Aucun personnage créé pour l’instant (page 🧙 Personnages).</p>';
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une capacité</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
   <div class="form">
   <div class="field"><label>Nom</label><input id="a_name" value="${esc(a.name)}"></div>
@@ -4412,16 +4433,12 @@ function equipmentPage(){
     <input id="equip_search_input" placeholder="🔎 Rechercher par nom…" value="${esc(equipSearchQuery)}" oninput="onEquipSearchInput(this.value)" style="flex:1">
     <select id="equip_cat_filter" onchange="onEquipCatFilter(this.value)">
       <option value="">Toutes catégories</option>
-      ${EQUIP_CATEGORIES.map(([k,l])=>opt(k,l,equipCategoryFilter)).join('')}
+      ${EQUIP_CATEGORIES.map(([k,l])=>opt(k,l,equipCategoryFilter)).join('')}${DIVERS_CATS.map(([k,l])=>opt('div_'+k,'↳ Divers : '+l,equipCategoryFilter)).join('')}
     </select>
   </div>
   <div id="equipResultsContainer">${equipResultsHtml()}</div>
   </div>
   <div class="card"><h2>Principe</h2><p class="muted">Chaque équipement appartient à une catégorie (tête, torse, jambes, pieds, main, amulette, anneau ou arme) : seuls les équipements de la bonne catégorie sont proposés pour chaque emplacement d'une fiche joueur. Les armures apportent Classe d'armure / Défense magique / résistances, cumulées avec la Résistance Naturelle. Les armes apportent des dégâts (ex : 2d20) qui s'ajoutent automatiquement à la formule des capacités lancées par le personnage qui les porte. Les monstres ne sont pas concernés.</p></div></div>
-  <div class="card" style="margin-top:16px"><div class="row between"><h2>🧪 Consommables</h2><button class="btn primary" onclick="openConsumableDef()">＋ Nouveau consommable</button></div>
-  <p class="tiny muted">Définis ici les modèles de consommables (ex : Potion de mana). Assigne-les ensuite à un personnage depuis sa fiche (page 🧙 Personnages).</p>
-  <div id="consumableResultsContainer">${consumableDefResultsHtml()}</div>
-  </div>
   <div class="card" style="margin-top:16px"><div class="row between"><h2>🩸 Afflictions</h2><button class="btn primary" onclick="openAfflictionDef()">＋ Nouvelle affliction</button></div>
   <p class="tiny muted">Fiche des afflictions (Brûlure, Gelé, Poison…) : % de dégâts/tour (fixe ou évolutif), tour annulé, immobilisation. Applique-les à un jeton depuis la table de jeu (bouton 🩸 Afflictions quand un jeton est sélectionné).</p>
   <div id="afflictionResultsContainer">${afflictionDefResultsHtml()}</div>
@@ -4548,89 +4565,22 @@ function deleteAfflictionDef(id){
   S.afflictionDefs=(S.afflictionDefs||[]).filter(x=>x.id!==id);
   saveState(); render();
 }
-function consumableDefResultsHtml(){
-  const items=S.consumables||[];
-  if(!items.length)return '<p class="tiny muted">Aucun consommable défini.</p>';
-  return items.map(cn=>`<div class="ability"><div class="icon">${iconBoxHtml(cn,'9px')}</div><div class="ability-info"><b>${esc(cn.name)}</b><small>Restaure ${cn.amount} ${cn.resource==='Mana'?'💧 Mana':'❤️ PV'}</small></div><button class="btn" onclick="openConsumableDef('${cn.id}')">Modifier</button><button class="btn ghost" onclick="deleteConsumableDef('${cn.id}')" title="Supprimer">🗑️</button></div>`).join('');
-}
-function openConsumableDef(id){
-  if(!isMJ())return;
-  const cn=id?(S.consumables||[]).find(x=>x.id===id):{id:'cs'+Date.now(),name:'Nouveau consommable',icon:'🧪',iconImage:null,resource:'Vie',amount:10};
-  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} un consommable</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
-  <div class="form">
-  <div class="field"><label>Nom</label><input id="cn_name" value="${esc(cn.name)}"></div>
-  <div class="field"><label>Icône (emoji)</label><input id="cn_icon" value="${esc(cn.icon)}"></div>
-  <div class="field full">
-    <label>Icône personnalisée (remplace l'emoji)</label>
-    <div class="icon-dropzone" onclick="document.getElementById('cn_icon_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'cn_iconimage','cn_icon_preview')">
-      <div id="cn_icon_preview" class="icon-preview">${cn.iconImage?`<img src="${esc(cn.iconImage)}">`:`<span>${esc(cn.icon)}</span>`}</div>
-      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir</p>
-      <input type="file" id="cn_icon_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'cn_iconimage','cn_icon_preview')">
-    </div>
-    <input type="hidden" id="cn_iconimage" value="${esc(cn.iconImage||'')}">
-    ${cn.iconImage?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('cn_iconimage','cn_icon_preview',document.getElementById('cn_icon').value)">↺ Revenir à l'emoji</button>`:''}
-    ${imagePickerHtml('cn_iconimage','cn_icon_preview')}
-  </div>
-  <div class="field"><label>Ressource restaurée</label><select id="cn_resource">${opt('Vie','❤️ PV',cn.resource)}${opt('Mana','💧 Mana',cn.resource)}</select></div>
-  <div class="field"><label>Valeur fixe restaurée</label><input id="cn_amount" type="number" min="1" value="${cn.amount}"></div>
-  </div>
-  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveConsumableDef('${id||''}')">Enregistrer</button></div>`;
-  document.getElementById('modalBg').classList.add('open');
-}
-function saveConsumableDef(id){
-  if(!isMJ())return;
-  if(!S.consumables)S.consumables=[];
-  const target=id?S.consumables.find(x=>x.id===id):{id:'cs'+Date.now()};
-  target.name=document.getElementById('cn_name').value||'Consommable';
-  target.icon=document.getElementById('cn_icon').value||'🧪';
-  target.iconImage=document.getElementById('cn_iconimage').value.trim()||null;
-  target.resource=document.getElementById('cn_resource').value;
-  target.amount=Math.max(1,parseNum(document.getElementById('cn_amount').value)||10);
-  if(!id)S.consumables.push(target);
-  saveState(); closeModal(); render();
-}
-function deleteConsumableDef(id){
-  if(!isMJ())return;
-  if(!confirm('Supprimer ce consommable ? Il sera retiré des fiches des personnages.'))return;
-  S.characters.forEach(c=>{c.consumablesOwned=(c.consumablesOwned||[]).filter(x=>x.id!==id);});
-  S.consumables=(S.consumables||[]).filter(x=>x.id!==id);
-  saveState(); render();
-}
-function addCharConsumablePrompt(charId){
-  const sel=document.getElementById('c_addconsumable_select'); const defId=sel?sel.value:'';
-  if(!defId){toast('⚠️ Choisis un consommable.');return;}
-  const qty=parseInt(prompt('Combien en ajouter ?','1'),10);
-  if(!qty||qty<1)return;
-  const c=char(charId); if(!c)return;
-  c.consumablesOwned=c.consumablesOwned||[];
-  let entry=c.consumablesOwned.find(x=>x.id===defId);
-  if(entry)entry.qty+=qty; else c.consumablesOwned.push({id:defId,qty});
-  saveState();
-  openCharacter(charId);
-}
-function removeCharConsumable(charId,defId){
-  if(!isMJ())return;
-  const c=char(charId); if(!c)return;
-  c.consumablesOwned=(c.consumablesOwned||[]).filter(x=>x.id!==defId);
-  saveState();
-  openCharacter(charId);
-}
-function useConsumable(charId,defId){
+function useConsumable(charId,eqId){
   if(!canControlChar(charId))return;
   const c=char(charId); if(!c)return;
-  const entry=(c.consumablesOwned||[]).find(x=>x.id===defId);
-  if(!entry||entry.qty<=0){toast('⚠️ Aucune charge restante.');return;}
-  const def=(S.consumables||[]).find(x=>x.id===defId); if(!def){toast('⚠️ Consommable introuvable.');return;}
+  const st=(c.bag||[]).find(b=>b.eqId===eqId&&(b.qty||1)>0), def=equip(eqId);
+  if(!st||!def){toast('⚠️ Aucune charge restante.');return;}
   const targets=S.instances.filter(i=>i.charId===charId);
   if(!targets.length){toast('⚠️ Ce personnage n’a pas de jeton sur la carte.');return;}
+  const amt=def.useAmount||0, isMana=def.useResource==='Mana';
   targets.forEach(t=>{
-    if(def.resource==='Mana'){t.mana=Math.min(t.manaMax,t.mana+def.amount);broadcastHud(t.id,{mana:def.amount});}
-    else {t.hp=Math.min(t.hpMax,t.hp+def.amount);broadcastHud(t.id,{hp:def.amount});}
+    if(isMana){t.mana=Math.min(t.manaMax,t.mana+amt);broadcastHud(t.id,{mana:amt});}
+    else{t.hp=Math.min(t.hpMax,t.hp+amt);broadcastHud(t.id,{hp:amt});}
   });
-  entry.qty-=1;
-  if(entry.qty<=0)c.consumablesOwned=c.consumablesOwned.filter(x=>x.id!==defId);
-  addLog(`🧪 <b>${esc(c.name)}</b> utilise <b>${esc(def.name)}</b> (+${def.amount} ${def.resource==='Mana'?'💧 Mana':'❤️ PV'}).`);
-  saveState(); render();
+  st.qty=(st.qty||1)-1;
+  if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);
+  addLog(`🧪 <b>${esc(c.name)}</b> utilise <b>${esc(def.name)}</b> (+${amt} ${isMana?'💧 Mana':'❤️ PV'}).`);
+  saveState(); render(); if(sheetModalChar===charId)refreshSheetModal();
 }
 function onEquipSearchInput(v){equipSearchQuery=v;const c=document.getElementById('equipResultsContainer');if(c)c.innerHTML=equipResultsHtml();}
 function onEquipCatFilter(v){equipCategoryFilter=v;const c=document.getElementById('equipResultsContainer');if(c)c.innerHTML=equipResultsHtml();}
@@ -4638,14 +4588,14 @@ function equipResultsHtml(){
   const q=equipSearchQuery.trim().toLowerCase();
   let items=(S.equipment||[]);
   if(q)items=items.filter(e=>e.name.toLowerCase().includes(q));
-  if(equipCategoryFilter)items=items.filter(e=>e.category===equipCategoryFilter);
+  if(equipCategoryFilter)items=items.filter(e=>equipFilterMatch(e,equipCategoryFilter));
   if(!items.length)return '<p class="tiny muted">Aucun équipement ne correspond.</p>';
   return items.map(e=>{
     const catLabel=(EQUIP_CATEGORIES.find(c=>c[0]===e.category)||['','?'])[1];
     const baseDesc=e.itemType==='weapon'
       ? `⚔ Arme · ${esc(catLabel)} · Dégâts : ${esc(e.damageFormula||'—')}${weaponElemText(e)} · Stat : ${esc(e.weaponStat||'Force')} · ${e.poids||0} kg`
       : e.itemType==='divers'
-      ? `🎒 Divers · ${e.poids||0} kg${e.description?` · ${esc(e.description).slice(0,60)}`:''}`
+      ? `🎒 Divers (${diversCatLabel(e)}) · ${e.poids||0} kg${e.description?` · ${esc(e.description).slice(0,60)}`:''}`
       : (()=>{const resTxt=ELEMENT_RES_KEYS.filter(k=>e.res[k]).map(k=>`${k} +${e.res[k]}%`).join(', ')||'Aucune résistance';return `🛡 Armure · ${esc(catLabel)} · CA +${e.ca||0} · DM +${e.dm||0} · ${resTxt} · ${e.poids||0} kg`;})();
     const desc=baseDesc+(e.durabilityMax?` · 🔧 Durabilité ${e.durabilityMax}`:'')+(e.price?` · 💰 ${fmtMoney(e.price)}`:'');
     return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b><small>${desc}</small></div><button class="btn" onclick="openEquipment('${e.id}')">Modifier</button><button class="btn ghost" onclick="confirmDeleteEquipment('${e.id}')" title="Supprimer">🗑️</button></div>`;
@@ -4669,6 +4619,8 @@ function openEquipment(id){
   <div class="field"><label>Poids (kg)</label><input id="eq_poids" type="number" min="0" step="0.1" value="${e.poids||0}"></div>
   <div class="field full"><label>💰 Prix (or / argent / cuivre)</label><div class="row" style="gap:6px"><input id="eq_p_gold" type="number" min="0" value="${moneySplit(e.price||0).g}" style="width:90px"><span class="tiny muted">or</span><input id="eq_p_silver" type="number" min="0" value="${moneySplit(e.price||0).s}" style="width:70px"><span class="tiny muted">arg</span><input id="eq_p_copper" type="number" min="0" value="${moneySplit(e.price||0).c}" style="width:70px"><span class="tiny muted">cu</span></div></div>
   <div class="field" id="eq_category_field" style="display:${(isWeapon||isDivers)?'none':''}"><label>Catégorie (emplacement)</label><select id="eq_category" onchange="toggleDurabilityField()">${catOpts}</select></div>
+  <div class="field" id="eq_diverscat_field" style="display:${isDivers?'':'none'}"><label>Catégorie divers</label><select id="eq_diverscat" onchange="toggleEquipTypeFields()">${DIVERS_CATS.map(([k,l])=>opt(k,l,e.diversCat||'autres')).join('')}</select></div>
+  <div class="field full" id="eq_consumable_fields" style="display:${(isDivers&&e.diversCat==='consommable')?'':'none'}"><div class="row" style="gap:10px"><div class="field"><label>Ressource restaurée à l'utilisation</label><select id="eq_useres">${opt('Vie','❤️ PV',e.useResource||'Vie')}${opt('Mana','💧 Mana',e.useResource||'Vie')}</select></div><div class="field"><label>Valeur fixe restaurée</label><input id="eq_useamt" type="number" min="1" value="${e.useAmount||10}"></div></div></div>
   <div class="field" id="eq_durability_field" style="display:${(isWeapon||(!isDivers&&e.category!=='anneau'&&e.category!=='amulette'))?'':'none'}"><label>Durabilité maximale (vide ou 0 = indestructible)</label><input id="eq_durabilitymax" type="number" min="0" value="${e.durabilityMax||''}"></div>
   <div class="field full">
     <label>Icône personnalisée (petite, listes)</label>
@@ -4734,6 +4686,8 @@ function toggleEquipTypeFields(){
   document.getElementById('eq_armor_fields').style.display=(!isWeapon&&!isDivers)?'contents':'none';
   document.getElementById('eq_category_field').style.display=(isWeapon||isDivers)?'none':'';
   document.getElementById('eq_desc_field').style.display=isDivers?'':'none';
+  document.getElementById('eq_diverscat_field').style.display=isDivers?'':'none';
+  document.getElementById('eq_consumable_fields').style.display=(isDivers&&document.getElementById('eq_diverscat').value==='consommable')?'':'none';
   toggleDurabilityField();
 }
 function toggleDurabilityField(){
@@ -4765,6 +4719,9 @@ function saveEquipment(id){
     target.res={Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0,Poison:0};
   }else if(target.itemType==='divers'){
     target.category='divers';
+    target.diversCat=document.getElementById('eq_diverscat').value||'autres';
+    target.useResource=document.getElementById('eq_useres').value==='Mana'?'Mana':'Vie';
+    target.useAmount=Math.max(1,parseNum(document.getElementById('eq_useamt').value)||10);
     target.damageFormula='';
     target.ca=0; target.dm=0;
     target.description=document.getElementById('eq_description').value||'';
@@ -4795,7 +4752,7 @@ function saveEquipment(id){
 function confirmDeleteEquipment(id){
   if(!isMJ())return;
   if(!confirm('Supprimer cet équipement ? Il sera automatiquement déséquipé de tous les personnages.'))return;
-  S.characters.forEach(c=>{if(c.equipmentSlots){EQUIP_SLOTS.forEach(([k])=>{if(c.equipmentSlots[k]===id)c.equipmentSlots[k]=null;});}});
+  S.characters.forEach(c=>{if(c.equipmentSlots){EQUIP_SLOTS.forEach(([k])=>{if(c.equipmentSlots[k]===id)c.equipmentSlots[k]=null;});}c.bag=(c.bag||[]).filter(b=>b.eqId!==id);if(c.merchant)c.merchant.buy=(c.merchant.buy||[]).filter(b=>b.eqId!==id);});
   S.equipment=(S.equipment||[]).filter(x=>x.id!==id);
   saveState(); render();
   toast('🗑️ Équipement supprimé.');
@@ -4829,6 +4786,7 @@ function showTokenMenu(x,y,instId){
   const t=inst(instId); const tpl=t&&instTemplate(t); if(!tpl)return;
   let items='';
   if(isMJ())items+=`<button class="btn ghost" onclick="broadcastLevelUp('${instId}')">🎉 Tester l’animation de niveau</button><button class="btn ghost" onclick="openSheetModal('${tpl.id}')">📄 Consulter la fiche du personnage</button><button class="btn ghost" onclick="openCharacter('${tpl.id}')">✏️ Modifier la fiche du personnage</button>`;
+  if(!isMJ()&&tpl.type==='merchant'&&currentUser&&S.characters.some(c=>c.ownerId===currentUser.id&&c.type==='player'))items+=`<button class="btn ghost" onclick="openMerchantModal('${instId}','buy')">🛒 Acheter</button><button class="btn ghost" onclick="openMerchantModal('${instId}','sell')">💰 Vendre</button>`;
   if(!isMJ()&&tpl.type==='player'&&currentUser&&S.characters.some(c=>c.ownerId===currentUser.id&&c.type==='player'&&c.id!==tpl.id))items+=`<button class="btn ghost" onclick="openTradeModal('${instId}')">🤝 Échanger</button>`;
   if(tpl.type==='player'){const on=getShowXpSet().includes(tpl.id);items+=`<button class="btn ghost" onclick="toggleShowXp('${tpl.id}')">${on?'🙈 Cacher l’expérience':'⭐ Afficher l’expérience'}</button>`;}
   if(!items)return;
@@ -4886,11 +4844,7 @@ function myCharacterCard(c){
       return `<div class="row between" style="padding:8px;background:#20232a;border-radius:8px;margin-bottom:6px"><span>${esc(i.label)} — case (${i.x+1}, ${i.y+1})</span><span class="tiny">❤️ ${i.hp}/${i.hpMax} · 💧 ${i.mana}/${i.manaMax} · 🛡 ${i.shield}/${i.shieldMax}${afTxt}${seTxt}</span></div>`;
     }).join('')
     : `<p class="tiny muted">Ce personnage n'est pas actuellement sur la carte.</p>`;
-  const consumablesHtml=(c.consumablesOwned&&c.consumablesOwned.length)?c.consumablesOwned.map(o=>{
-    const def=(S.consumables||[]).find(x=>x.id===o.id); if(!def)return '';
-    return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px"><span>${iconInlineHtml(def)} ${esc(def.name)} × ${o.qty} <small class="muted">(+${def.amount} ${def.resource==='Mana'?'💧 Mana':'❤️ PV'})</small></span><button class="btn" style="padding:4px 8px" onclick="useConsumable('${c.id}','${o.id}')">Utiliser</button></div>`;
-  }).join(''):'<p class="tiny muted">Aucun consommable.</p>';
-  const bagListHtml=(c.bag&&c.bag.length)?c.bag.map(b=>{const it=equip(b.eqId);if(!it)return '';const durTxt=it.durabilityMax?` · 🔧 ${b.dur}/${it.durabilityMax}`:'';return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px;gap:8px"><span>${iconInlineHtml(it)} <b>${esc(it.name)}</b> <small class="muted">(${it.poids||0} kg)</small><br><span class="tiny muted">${equipSummary(it)}${durTxt}</span></span>${(canAlloc&&targetSlotFor(c,it))?`<button class="btn" style="padding:4px 8px" onclick="equipFromBag('${c.id}','${b.uid}')">Équiper</button>`:''}</div>`;}).join(''):'<p class="tiny muted">Sac vide.</p>';
+  const bagListHtml=(c.bag&&c.bag.length)?c.bag.map(b=>{const it=equip(b.eqId);if(!it)return '';const q=b.qty||1;const durTxt=it.durabilityMax?` · 🔧 ${b.dur}/${it.durabilityMax}`:'';const isCons=it.itemType==='divers'&&it.diversCat==='consommable'&&it.useAmount>0;const btns=canAlloc?((targetSlotFor(c,it)?`<button class="btn" style="padding:4px 8px" onclick="equipFromBag('${c.id}','${b.uid}')">Équiper</button>`:'')+(isCons?`<button class="btn" style="padding:4px 8px" onclick="useConsumable('${c.id}','${b.eqId}')">Utiliser</button>`:'')):'';return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px;gap:8px"><span>${iconInlineHtml(it)} <b>${esc(it.name)}</b>${q>1?` ×${q}`:''} <small class="muted">(${fmtNum((it.poids||0)*q)} kg)</small><br><span class="tiny muted">${equipSummary(it)}${durTxt}</span></span><span class="row" style="gap:4px">${btns}</span></div>`;}).join(''):'<p class="tiny muted">Sac vide.</p>';
   const moneyBlockHtml=c.type==='player'?`<div class="stat" style="margin-bottom:8px"><label>💰 Argent</label><strong>${fmtMoney(c.money||0)}</strong></div><div class="stat" style="margin-bottom:8px"><label>🎒 Sac (non équipé)</label><div style="margin-top:6px">${bagListHtml}</div></div>`:'';
   const lvl=c.level||1, xpNow=c.xp||0, xpNeed=xpNeeded(lvl);
   const xpBlock=c.type==='player'?`<div class="stat" style="margin-bottom:8px"><label>⭐ Niveau ${lvl}</label><div class="mini-bar" style="width:100%;height:8px"><i style="width:${pct(xpNow,xpNeed)}%;background:#e7b85c"></i></div><div class="tiny muted" style="margin-top:4px">XP : ${fmtNum(xpNow)} / ${fmtNum(xpNeed)} · Reste ${fmtNum(xpNeed-xpNow)} pour le niveau ${lvl+1}</div></div>`:'';
@@ -4898,7 +4852,7 @@ function myCharacterCard(c){
     ${xpBlock}
     <div style="margin-bottom:12px">${c.profileImage?`<img src="${esc(c.profileImage)}" style="max-width:100%;border-radius:10px;display:block">`:'<p class="tiny muted">Aucune image.</p>'}</div>
     <div class="stat" style="margin-bottom:8px"><label>Description</label><div class="tiny rte-view" style="margin-top:4px">${c.bio||'Aucune description.'}</div></div>
-    ${moneyBlockHtml}<div class="stat" style="margin-bottom:8px"><label>🧪 Consommables</label><div style="margin-top:6px">${consumablesHtml}</div></div>
+    ${moneyBlockHtml}
     ${c.type==='player'?`<div class="stat"><label>🎒 Équipement équipé</label><div style="margin-top:6px">${equippedHtml||'<p class="tiny muted">Aucun équipement.</p>'}</div><p class="tiny muted" style="margin-top:4px">🛡 Résistance naturelle (auto) : CA +${nat.ca} · DM +${nat.dm}</p></div>
     <div class="stat" style="margin-top:8px"><label>⚖ Poids porté</label><strong>${totalWeight.toFixed(1)} kg</strong> / Force ${forceVal} kg${overWeight?`<span style="color:var(--danger)">${weightMalusText(totalWeight,forceVal)}</span>`:''}</div>`:''}`;
   const statsTabHtml=`
@@ -4916,7 +4870,7 @@ function myCharacterCard(c){
   return `<div class="card">
     <div class="row between" style="margin-bottom:14px">
       <div class="row"><div class="icon" style="width:44px;height:44px;font-size:22px;border-radius:12px;background:#2b1d3b;display:grid;place-items:center;overflow:hidden">${iconBoxHtml(c,'12px')}</div>
-      <div><h2 style="margin:0">${esc(c.name)}</h2><span class="tiny muted">${c.type==='player'?'Joueur':'Monstre'} · Déplacement ${effectiveMove(c)} case(s)/tour${overWeight?' ⚠️':''}</span></div></div>
+      <div><h2 style="margin:0">${esc(c.name)}</h2><span class="tiny muted">${charTypeLabel(c)} · Déplacement ${effectiveMove(c)} case(s)/tour${overWeight?' ⚠️':''}</span></div></div>
       <span class="pill">🔒 Lecture seule</span>
     </div>
     <div class="tabs">
@@ -4934,7 +4888,7 @@ let hotbarPoolTypeFilter='';
 function hotbarPoolEntries(){
   const c=char(hotbarEditChar);
   const abilities=characterAbilities(hotbarEditChar).filter(a=>a.type!=='Compétence');
-  const consumables=(c.consumablesOwned||[]).filter(o=>o.qty>0).map(o=>({id:o.id,def:(S.consumables||[]).find(x=>x.id===o.id)})).filter(x=>x.def);
+  const consumables=consumableStacks(c).map(b=>({id:b.eqId,def:equip(b.eqId)}));
   let entries=[
     ...STAT_TESTS.map(st=>({id:'stat_'+st,label:statTestLabel(st),icon:statTestIcon(st),type:'Test'})),
     ...abilities.map(a=>({id:a.id,label:a.name,icon:a,type:a.type})),
@@ -6038,7 +5992,7 @@ document.addEventListener('keydown',e=>{
     return;
   }
   const tpl=instTemplate(selInst);
-  const owns=tpl&&(tpl.consumablesOwned||[]).find(o=>o.id===itemId&&o.qty>0);
+  const owns=tpl&&consumableStacks(tpl).some(b=>b.eqId===itemId);
   if(owns){
     e.preventDefault();
     useConsumable(tpl.id,itemId);
@@ -6145,11 +6099,11 @@ document.addEventListener('keydown',e=>{
 function moneySplit(cu){cu=Math.max(0,Math.floor(+cu||0));return {g:Math.floor(cu/10000),s:Math.floor(cu%10000/100),c:cu%100};}
 function fmtMoney(cu){const m=moneySplit(cu),p=[];if(m.g)p.push(m.g+' or');if(m.s)p.push(m.s+' arg');if(m.c||!p.length)p.push(m.c+' cu');return p.join(' · ');}
 function readMoney(pre){const v=k=>parseNum(document.getElementById(pre+k)?.value)||0;return Math.max(0,Math.round(v('gold')*10000+v('silver')*100+v('copper')));}
-function bagWeight(c){return ((c&&c.bag)||[]).reduce((w,b)=>{const e=equip(b.eqId);return w+(e?(e.poids||0):0);},0);}
+function bagWeight(c){return ((c&&c.bag)||[]).reduce((w,b)=>{const e=equip(b.eqId);return w+(e?(e.poids||0)*(b.qty||1):0);},0);}
 function equipSummary(e){
   const catLabel=(EQUIP_CATEGORIES.find(c=>c[0]===e.category)||['','?'])[1];
   if(e.itemType==='weapon')return `⚔ ${esc(catLabel)} · Dégâts ${esc(e.damageFormula||'—')}${weaponElemText(e)}`;
-  if(e.itemType==='divers')return `🎒 Divers${e.description?' · '+esc(e.description).slice(0,60):''}`;
+  if(e.itemType==='divers')return `🎒 ${esc(diversCatLabel(e))}${(e.diversCat==='consommable'&&e.useAmount)?` · +${e.useAmount} ${e.useResource==='Mana'?'💧 Mana':'❤️ PV'}`:''}${e.description?' · '+esc(e.description).slice(0,60):''}`;
   const resTxt=ELEMENT_RES_KEYS.filter(k=>e.res&&e.res[k]).map(k=>`${k} +${e.res[k]}%`).join(', ');
   return `🛡 ${esc(catLabel)} · CA +${e.ca||0} · DM +${e.dm||0}${resTxt?' · '+resTxt:''}`;
 }
@@ -6158,10 +6112,23 @@ function targetSlotFor(c,e){
   if(e.category==='anneau'){const s=c.equipmentSlots||{};return !s.anneau1?'anneau1':(!s.anneau2?'anneau2':'anneau1');}
   return EQUIP_SLOTS.some(([k])=>k===e.category)?e.category:null;
 }
-function bagAdd(c,eqId,dur){
+function bagAdd(c,eqId,dur,qty){
   const e=equip(eqId); if(!e)return;
+  qty=Math.max(1,Math.floor(+qty||1));
   c.bag=c.bag||[];
-  c.bag.push({uid:'b'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),eqId,dur:e.durabilityMax?(dur==null?e.durabilityMax:dur):null});
+  const d=e.durabilityMax?(dur==null?e.durabilityMax:dur):null;
+  const ex=c.bag.find(b=>b.eqId===eqId&&(b.dur==null?null:b.dur)===d);
+  if(ex)ex.qty=(ex.qty||1)+qty;
+  else c.bag.push({uid:'b'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),eqId,dur:d,qty});
+}
+function mergeBag(c){
+  const out=[];
+  (c.bag||[]).forEach(b=>{
+    if(!(b.qty>=1))b.qty=1;
+    const ex=out.find(x=>x.eqId===b.eqId&&(x.dur==null?null:x.dur)===(b.dur==null?null:b.dur));
+    if(ex)ex.qty+=b.qty; else out.push(b);
+  });
+  c.bag=out;
 }
 /* Équipe l'objet (l'ancien va dans le sac avec sa durabilité actuelle). dur=null => durabilité max. */
 function placeItem(c,eqId,dur){
@@ -6189,7 +6156,7 @@ function equipFromBag(cid,uid){
   const i=(c.bag||[]).findIndex(b=>b.uid===uid); if(i<0)return;
   const b=c.bag[i], e=equip(b.eqId); if(!e)return;
   if(!targetSlotFor(c,e)){toast('⚠️ Cet objet ne peut pas être équipé.');return;}
-  c.bag.splice(i,1);
+  if((b.qty||1)>1)b.qty--; else c.bag.splice(i,1);
   const r=placeItem(c,b.eqId,b.dur);
   addLog(`🎽 <b>${esc(c.name)}</b> équipe <b>${esc(e.name)}</b>${r.replaced?` (<b>${esc(r.replaced.name)}</b> retourne dans le sac)`:''}.`);
   saveState(); refreshSheet(cid);
@@ -6198,7 +6165,8 @@ function addCharBagItem(cid){
   if(!isMJ())return;
   const id=document.getElementById('c_addbag_select')?.value; if(!id){toast('⚠️ Choisis un équipement.');return;}
   const c=char(cid); if(!c)return;
-  bagAdd(c,id,null); saveState(); openCharacter(cid);
+  const qty=parseInt(prompt('Quantité à ajouter ?','1'),10); if(!qty||qty<1)return;
+  bagAdd(c,id,null,qty); saveState(); openCharacter(cid);
 }
 function removeCharBagItem(cid,uid){
   if(!isMJ())return;
@@ -6281,6 +6249,47 @@ function openTradeModal(instId){
   refreshTradeModal();
   document.getElementById('modalBg').classList.add('open');
 }
+const DIVERS_CATS=[['plantes','Plantes'],['materiaux','Matériaux'],['drop','Drops de monstres'],['consommable','Consommables'],['autres','Autres']];
+const SELL_KEYS=[['div_plantes','Plantes'],['div_materiaux','Matériaux'],['div_drop','Drops de monstres'],['div_consommable','Consommables'],['div_autres','Autres divers'],['arme','Armes'],['armure','Armures']];
+function diversCatLabel(e){return (DIVERS_CATS.find(c=>c[0]===(e.diversCat||'autres'))||['','Autres'])[1];}
+function equipFilterMatch(e,f){if(!f)return true;if(f.startsWith('div_'))return e.itemType==='divers'&&(e.diversCat||'autres')===f.slice(4);return e.category===f;}
+function sellKeyOf(e){if(!e)return null;if(e.itemType==='weapon')return 'arme';if(e.itemType==='divers')return 'div_'+(e.diversCat||'autres');return 'armure';}
+function charTypeLabel(c){return c.type==='player'?'Joueur':(c.type==='merchant'?'Commerçant':'Monstre');}
+/* ---- Commerçant : onglet de la fiche (MJ) ---- */
+let merchDraft=null, merchSearch='', merchCat='', merchState=null;
+function merchBuyListHtml(){
+  return merchDraft.buy.map((b,i)=>{
+    const e=equip(b.eqId); if(!e)return '';
+    const m=moneySplit(b.price==null?(e.price||0):b.price);
+    const inp=(k,v,w)=>`<input id="mp_${i}_${k}" type="number" min="0" value="${v}" style="width:${w}px" onchange="setMerchPrice(${i})">`;
+    return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px;gap:6px;flex-wrap:wrap"><span>${iconInlineHtml(e)} ${esc(e.name)} <small id="mpl_${i}">${b.price==null?'<span class="muted">(prix par défaut)</span>':'<span style="color:var(--gold)">(prix perso)</span>'}</small></span><span class="row" style="gap:4px">${inp('gold',m.g,60)}<span class="tiny muted">or</span>${inp('silver',m.s,50)}<span class="tiny muted">arg</span>${inp('copper',m.c,50)}<span class="tiny muted">cu</span><button type="button" class="btn ghost" style="padding:4px 8px" onclick="resetMerchPrice(${i})" title="Remettre le prix par défaut">↺</button><button type="button" class="btn ghost" style="padding:4px 8px" onclick="removeMerchItem(${i})" title="Retirer">🗑️</button></span></div>`;
+  }).join('')||'<p class="tiny muted">Aucun article en vente.</p>';
+}
+function merchResultsHtml(){
+  const q=merchSearch.trim().toLowerCase(), used=merchDraft.buy.map(b=>b.eqId);
+  const items=(S.equipment||[]).filter(e=>!used.includes(e.id)&&(!q||e.name.toLowerCase().includes(q))&&equipFilterMatch(e,merchCat));
+  return items.length?items.slice(0,80).map(e=>`<div class="asset-item" style="cursor:default"><div class="asset-icon">${iconInlineHtml(e,20)}</div><div class="asset-info"><b>${esc(e.name)}</b><small>${fmtMoney(e.price||0)}</small></div><button type="button" class="btn" style="padding:4px 8px" onclick="addMerchItem('${e.id}')">＋</button></div>`).join(''):'<p class="tiny muted">Aucun équipement.</p>';
+}
+function merchantPaneHtml(){
+  const catOpts='<option value="">Toutes catégories</option>'+EQUIP_CATEGORIES.map(([k,l])=>opt(k,l,merchCat)).join('')+DIVERS_CATS.map(([k,l])=>opt('div_'+k,'↳ Divers : '+l,merchCat)).join('');
+  const sell=SELL_KEYS.map(([k,l])=>`<label class="ability-char-item"><input type="checkbox" ${merchDraft.sell.includes(k)?'checked':''} onchange="toggleMerchSell('${k}',this.checked)"><span>${l}</span></label>`).join('');
+  return `<h3 style="font-size:13px;margin:0 0 8px">🛒 Achat — ce que le commerçant vend aux joueurs</h3>
+  <div id="merchBuyList">${merchBuyListHtml()}</div>
+  <div class="row" style="gap:8px;margin:10px 0 6px"><input id="merch_search" placeholder="🔎 Ajouter un équipement (recherche)…" oninput="merchSearch=this.value;refreshMerchResults()" style="flex:1"><select id="merch_cat" onchange="merchCat=this.value;refreshMerchResults()">${catOpts}</select></div>
+  <div id="merchResults" style="max-height:200px;overflow:auto">${merchResultsHtml()}</div>
+  <h3 style="font-size:13px;margin:16px 0 8px">💰 Vente — ce que le commerçant rachète (50 % du prix, arrondi au supérieur)</h3>${sell}`;
+}
+function refreshMerchResults(){const c=document.getElementById('merchResults');if(c)c.innerHTML=merchResultsHtml();}
+function refreshMerchBuy(){const c=document.getElementById('merchBuyList');if(c)c.innerHTML=merchBuyListHtml();refreshMerchResults();}
+function addMerchItem(id){merchDraft.buy.push({eqId:id,price:null});refreshMerchBuy();}
+function removeMerchItem(i){merchDraft.buy.splice(i,1);refreshMerchBuy();}
+function resetMerchPrice(i){merchDraft.buy[i].price=null;refreshMerchBuy();}
+function setMerchPrice(i){
+  merchDraft.buy[i].price=readMoney('mp_'+i+'_');
+  const l=document.getElementById('mpl_'+i); if(l)l.innerHTML='<span style="color:var(--gold)">(prix perso)</span>';
+}
+function toggleMerchSell(k,on){const i=merchDraft.sell.indexOf(k);if(on&&i<0)merchDraft.sell.push(k);if(!on&&i>=0)merchDraft.sell.splice(i,1);}
+/* ---- Échanges entre joueurs (avec quantités) ---- */
 function refreshTradeModal(){
   const tgt=char(tradeState.targetId); if(!tgt)return;
   const mine=S.characters.filter(c=>c.ownerId===currentUser?.id&&c.type==='player'&&c.id!==tgt.id);
@@ -6288,11 +6297,11 @@ function refreshTradeModal(){
   if(!mine.some(c=>c.id===tradeState.srcId))tradeState.srcId=mine[0].id;
   const src=char(tradeState.srcId);
   const sel=mine.length>1?`<div class="field" style="margin-bottom:8px"><label>Donneur</label><select onchange="tradeState.srcId=this.value;refreshTradeModal()">${mine.map(m=>opt(m.id,m.name,src.id)).join('')}</select></div>`:'';
-  const bag=(src.bag||[]).map(b=>{const e=equip(b.eqId);if(!e)return '';return `<label class="ability-char-item"><input type="checkbox" class="trade-check" value="${b.uid}"><span>${iconInlineHtml(e)} ${esc(e.name)}${e.durabilityMax?` <small class="muted">(🔧 ${b.dur}/${e.durabilityMax})</small>`:''}</span></label>`;}).join('')||'<p class="tiny muted">Sac vide (retire d’abord un objet équipé depuis 🪪 Ma fiche).</p>';
+  const bag=(src.bag||[]).map(b=>{const e=equip(b.eqId);if(!e)return '';const q=b.qty||1;return `<div class="row between" style="padding:3px 0"><span>${iconInlineHtml(e)} ${esc(e.name)}${q>1?` ×${q}`:''}${e.durabilityMax?` <small class="muted">(🔧 ${b.dur}/${e.durabilityMax})</small>`:''}</span><input type="number" class="trade-qty" data-uid="${b.uid}" min="0" max="${q}" value="0" style="width:60px" title="Quantité à donner"></div>`;}).join('')||'<p class="tiny muted">Sac vide (retire d’abord un objet équipé depuis 🪪 Ma fiche).</p>';
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>🤝 Donner à ${esc(tgt.name)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>${sel}
   <div class="stat" style="margin-bottom:10px"><label>💰 Ton argent</label><strong>${fmtMoney(src.money||0)}</strong></div>
   <div class="field"><label>Argent à donner</label><div class="row" style="gap:6px"><input id="t_gold" type="number" min="0" value="0" style="width:90px"><span class="tiny muted">or</span><input id="t_silver" type="number" min="0" value="0" style="width:70px"><span class="tiny muted">arg</span><input id="t_copper" type="number" min="0" value="0" style="width:70px"><span class="tiny muted">cu</span></div></div>
-  <div class="field" style="margin-top:10px"><label>Objets du sac à donner</label><div style="max-height:180px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px">${bag}</div></div>
+  <div class="field" style="margin-top:10px"><label>Objets du sac à donner (indique la quantité)</label><div style="max-height:200px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px">${bag}</div></div>
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="confirmTrade()">Donner</button></div>`;
 }
 function confirmTrade(){
@@ -6301,16 +6310,76 @@ function confirmTrade(){
   if(!src||!tgt||!canControlChar(src.id))return;
   const amt=readMoney('t_');
   if(amt>(src.money||0)){toast('🚫 Pas assez d’argent.');return;}
-  const uids=[...document.querySelectorAll('.trade-check:checked')].map(el=>el.value);
-  const items=(src.bag||[]).filter(b=>uids.includes(b.uid));
-  if(!amt&&!items.length){toast('⚠️ Rien à donner.');return;}
+  const moves=[...document.querySelectorAll('.trade-qty')].map(el=>({uid:el.dataset.uid,q:Math.floor(parseNum(el.value))||0})).filter(m=>m.q>0);
+  for(const m of moves){const st=(src.bag||[]).find(b=>b.uid===m.uid);if(!st||m.q>(st.qty||1)){toast('🚫 Quantité invalide.');return;}}
+  if(!amt&&!moves.length){toast('⚠️ Rien à donner.');return;}
   src.money=(src.money||0)-amt; tgt.money=(tgt.money||0)+amt;
-  src.bag=(src.bag||[]).filter(b=>!uids.includes(b.uid));
-  tgt.bag=(tgt.bag||[]).concat(items);
   const parts=[]; if(amt)parts.push(fmtMoney(amt));
-  items.forEach(b=>{const e=equip(b.eqId);if(e)parts.push(esc(e.name));});
+  moves.forEach(m=>{
+    const st=src.bag.find(b=>b.uid===m.uid), e=equip(st.eqId);
+    bagAdd(tgt,st.eqId,st.dur,m.q); st.qty=(st.qty||1)-m.q;
+    if(e)parts.push((m.q>1?m.q+'× ':'')+esc(e.name));
+  });
+  src.bag=src.bag.filter(b=>b.qty>0);
   addLog(`🤝 <b>${esc(src.name)}</b> donne à <b>${esc(tgt.name)}</b> : ${parts.join(', ')}.`);
   saveState(); closeModal(); render();
+}
+/* ---- Commerçant : fenêtre achat / vente (joueurs) ---- */
+function openMerchantModal(instId,mode){
+  const t=inst(instId), tpl=t&&instTemplate(t); if(!tpl||tpl.type!=='merchant')return;
+  const mine=S.characters.filter(c=>c.ownerId===currentUser?.id&&c.type==='player');
+  if(!mine.length){toast('⚠️ Tu n’as aucun personnage.');return;}
+  merchState={tplId:tpl.id,mode,charId:mine[0].id};
+  refreshMerchantModal();
+  document.getElementById('modalBg').classList.add('open');
+}
+function refreshMerchantModal(){
+  const tpl=char(merchState.tplId); if(!tpl)return;
+  const mine=S.characters.filter(c=>c.ownerId===currentUser?.id&&c.type==='player');
+  const c=char(merchState.charId)||mine[0]; if(!c)return; merchState.charId=c.id;
+  const m=tpl.merchant||{buy:[],sell:[]}, buy=merchState.mode==='buy';
+  const sel=mine.length>1?`<div class="field" style="margin-bottom:8px"><label>Personnage</label><select onchange="merchState.charId=this.value;refreshMerchantModal()">${mine.map(x=>opt(x.id,x.name,c.id)).join('')}</select></div>`:'';
+  let body;
+  if(buy){
+    body=(m.buy||[]).map((b,i)=>{
+      const e=equip(b.eqId); if(!e)return '';
+      const price=b.price==null?(e.price||0):b.price;
+      return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b><small>${equipSummary(e)} · ${e.poids||0} kg${e.durabilityMax?' · 🔧 '+e.durabilityMax:''}</small></div><div style="text-align:right"><div class="tiny">💰 ${fmtMoney(price)} / unité</div><div class="row" style="gap:4px;justify-content:flex-end"><input id="mq_${i}" type="number" min="1" value="1" style="width:55px"><button class="btn primary" onclick="merchantBuy(${i})">Acheter</button></div></div></div>`;
+    }).join('')||'<p class="tiny muted">Ce commerçant ne vend rien.</p>';
+  }else{
+    body=(c.bag||[]).filter(b=>{const e=equip(b.eqId);return e&&(m.sell||[]).includes(sellKeyOf(e));}).map(b=>{
+      const e=equip(b.eqId), q=b.qty||1, unit=Math.ceil((e.price||0)/2);
+      return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b>${q>1?` ×${q}`:''}<small>${equipSummary(e)}${e.durabilityMax?` · 🔧 ${b.dur}/${e.durabilityMax}`:''}</small></div><div style="text-align:right"><div class="tiny">💰 ${fmtMoney(unit)} / unité</div><div class="row" style="gap:4px;justify-content:flex-end"><input id="ms_${b.uid}" type="number" min="1" max="${q}" value="1" style="width:55px"><button class="btn primary" onclick="merchantSell('${b.uid}')">Vendre</button></div></div></div>`;
+    }).join('')||'<p class="tiny muted">Tu n’as rien à vendre à ce commerçant.</p>';
+  }
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${esc(tpl.name)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>${sel}
+  <div class="tabs"><button class="tab ${buy?'active':''}" onclick="merchState.mode='buy';refreshMerchantModal()">🛒 Acheter</button><button class="tab ${buy?'':'active'}" onclick="merchState.mode='sell';refreshMerchantModal()">💰 Vendre</button></div>
+  <div class="stat" style="margin-bottom:10px"><label>💰 Ton argent</label><strong>${fmtMoney(c.money||0)}</strong></div>${body}
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`;
+}
+function merchantBuy(i){
+  if(tradeLocked())return;
+  const tpl=char(merchState.tplId), c=char(merchState.charId); if(!tpl||!c||!canControlChar(c.id))return;
+  const b=((tpl.merchant||{}).buy||[])[i], e=b&&equip(b.eqId);
+  if(!e){toast('⚠️ Article indisponible.');refreshMerchantModal();return;}
+  const q=Math.max(1,Math.floor(parseNum(document.getElementById('mq_'+i)?.value)||1));
+  const total=(b.price==null?(e.price||0):b.price)*q;
+  if((c.money||0)<total){toast('🚫 Pas assez d’argent.');return;}
+  c.money-=total; bagAdd(c,b.eqId,null,q);
+  addLog(`🛒 <b>${esc(c.name)}</b> achète ${q>1?q+'× ':''}<b>${esc(e.name)}</b> à <b>${esc(tpl.name)}</b> (${fmtMoney(total)}).`);
+  saveState(); render(); refreshMerchantModal();
+}
+function merchantSell(uid){
+  if(tradeLocked())return;
+  const tpl=char(merchState.tplId), c=char(merchState.charId); if(!tpl||!c||!canControlChar(c.id))return;
+  const st=(c.bag||[]).find(b=>b.uid===uid), e=st&&equip(st.eqId);
+  if(!e||!((tpl.merchant||{}).sell||[]).includes(sellKeyOf(e))){toast('⚠️ Le commerçant ne rachète pas cet objet.');refreshMerchantModal();return;}
+  const q=Math.min(st.qty||1,Math.max(1,Math.floor(parseNum(document.getElementById('ms_'+uid)?.value)||1)));
+  const total=Math.ceil((e.price||0)/2)*q;
+  c.money=(c.money||0)+total; st.qty=(st.qty||1)-q;
+  if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);
+  addLog(`💰 <b>${esc(c.name)}</b> vend ${q>1?q+'× ':''}<b>${esc(e.name)}</b> à <b>${esc(tpl.name)}</b> (${fmtMoney(total)}).`);
+  saveState(); render(); refreshMerchantModal();
 }
 
 /* ============================= NAVIGATION / INIT ============================= */
