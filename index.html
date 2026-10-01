@@ -3804,13 +3804,27 @@ function equipmentDurabilityHtml(charId){
     }
     return `<div class="row between" style="padding:4px 0"><span>${esc(label)} — ${esc(item.name)} : <b>${cur}/${item.durabilityMax}</b>${state}</span><button type="button" class="btn ghost" style="padding:3px 8px" onclick="repairEqDurabilitySlot('${c.id}','${k}')">🔧 Réparer</button></div>`;
   }).join('');
-  return rows||'<p class="tiny muted">Aucun équipement destructible équipé.</p>';
+  return rows?rows+`<div style="margin-top:6px"><button type="button" class="btn" onclick="repairAllEqDurability('${c.id}')">🔧 Tout réparer</button></div>`:'<p class="tiny muted">Aucun équipement destructible équipé.</p>';
+}
+function refreshEqDurBox(charId){const b=document.getElementById('eqDurBox');if(b)b.innerHTML=equipmentDurabilityHtml(charId);}
+function repairAllEqDurability(charId){
+  if(!isMJ())return;
+  const c=char(charId); if(!c)return;
+  EQUIP_SLOTS.forEach(([k])=>repairEqDurability(c,k));
+  saveState(); refreshEqDurBox(charId);
+  toast('🔧 Tout l\'équipement est réparé.');
+}
+function reopenCharacter(id){
+  const m=document.getElementById('modal');
+  const act=document.querySelector('#charModalTabs .tab.active')?.dataset.tab||'general';
+  const top=m.scrollTop;
+  openCharacter(id); switchCharModalTab(act); m.scrollTop=top;
 }
 function repairEqDurabilitySlot(charId,slotKey){
   if(!isMJ())return;
   const c=char(charId); if(!c)return;
   repairEqDurability(c,slotKey);
-  saveState(); openCharacter(charId);
+  saveState(); refreshEqDurBox(charId);
   toast('🔧 Équipement réparé.');
 }
 function equipmentSlotsHtml(base,charId){
@@ -3830,7 +3844,7 @@ function equipmentSlotsHtml(base,charId){
   </div>
   <p class="tiny muted">La Résistance Naturelle n'est pas un équipement : elle se recalcule automatiquement (Constitution/10 et Magie/10, arrondis au supérieur).</p>
   <input type="hidden" id="c_bagweight" value="${bagWeight(base)}"><div class="field"><label>⚖ Poids total porté</label><input id="c_weight_display" value="${w.toFixed(1)} kg / Force ${force} kg${weightMalusText(w,force)}" readonly style="opacity:.6"></div>
-  ${charId?`<div class="field full"><label>🔧 Durabilité de l'équipement</label>${equipmentDurabilityHtml(charId)}</div>`:''}
+  ${charId?`<div class="field full"><label>🔧 Durabilité de l'équipement</label><div id="eqDurBox">${equipmentDurabilityHtml(charId)}</div></div>`:''}
   </div>`;
 }
 function filterDiversList(){
@@ -6181,12 +6195,12 @@ function addCharBagItem(cid){
   const id=document.getElementById('c_addbag_select')?.value; if(!id){toast('⚠️ Choisis un équipement.');return;}
   const c=char(cid); if(!c)return;
   const qty=parseInt(prompt('Quantité à ajouter ?','1'),10); if(!qty||qty<1)return;
-  bagAdd(c,id,null,qty); saveState(); openCharacter(cid);
+  bagAdd(c,id,null,qty); saveState(); reopenCharacter(cid);
 }
 function removeCharBagItem(cid,uid){
   if(!isMJ())return;
   const c=char(cid); if(!c)return;
-  c.bag=(c.bag||[]).filter(b=>b.uid!==uid); saveState(); openCharacter(cid);
+  c.bag=(c.bag||[]).filter(b=>b.uid!==uid); saveState(); reopenCharacter(cid);
 }
 /* ---- Boutique ---- */
 let shopSel=[], shopSearch='', shopModalOpen=false, shopChar=null;
