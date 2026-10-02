@@ -2534,7 +2534,7 @@ function chatPanel(){
 function combatPanel(){
   if(!S.combat.active)return `<div class="combat-panel"><h2>⚔ Combat</h2><p class="muted tiny">Le MJ démarre le combat. L'initiative est déterminée par 1d20 + Vitesse (égalité : 1d100).</p></div>`;
   const current=inst(S.combat.order[S.combat.turn]);
-  return `<div class="combat-panel"><div class="row between"><h2>⚔ Initiative</h2>${isMJ()?'<button class="btn" onclick="nextTurn()">Tour suivant</button>':((current&&canControlInstance(current.id))?'<button class="btn" onclick="endMyTurn()">⏭ Fin de tour</button>':'')}</div>
+  return `<div class="combat-panel"><div class="row between" style="min-height:40px"><h2 style="margin:0">⚔ Initiative</h2>${isMJ()?'<button class="btn" onclick="nextTurn()">Tour suivant</button>':((current&&canControlInstance(current.id))?'<button class="btn" onclick="endMyTurn()">⏭ Fin de tour</button>':'')}</div>
   <div class="initiative-list">${S.combat.order.map((id,i)=>{const t=inst(id);return `<div class="initiative-row ${i===S.combat.turn?'current':''}"><span>${i===S.combat.turn?'▶ ':''}${esc(t?.label||id)}</span><b>${S.combat.initiatives[id]}</b></div>`;}).join('')}</div>
   <div class="tiny muted" style="margin-top:6px">Déplacement restant : ${current?.remainingMove??'—'}</div></div>`;
 }
