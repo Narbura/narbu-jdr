@@ -1782,7 +1782,7 @@ function tablePage(){
   const mj=isMJ();
   const combatControls = mj
     ? (S.combat.active?`<button class="btn" onclick="endCombat()" ${uiCtx('ui_end')}>${hkTag('ui_end')}⏹ Fin du combat</button><button class="btn" onclick="nextTurn()" ${uiCtx('ui_next')}>${hkTag('ui_next')}⏭ Tour suivant</button>`:`<button class="btn primary" onclick="startCombat()" ${uiCtx('ui_start')}>${hkTag('ui_start')}⚔ Démarrer le combat</button>`)
-    : (S.combat.active?`<span class="pill">⚔ Combat en cours</span>`:'');
+    : (S.combat.active?`<span class="pill">⚔ Combat en cours</span>${(()=>{const ci=inst(S.combat.order[S.combat.turn]);return ci&&canControlInstance(ci.id)?`<button class="btn" onclick="endMyTurn()">⏭ Fin de tour</button>`:'';})()}`:'');
   return `<div class="map-layout" id="mapLayout">
   <div class="card map-card">
     <div class="map-toolbar ${toolbarHidden?'is-hidden':''}">${toolbarHidden?'':`
@@ -3928,7 +3928,7 @@ function openCharacter(id){
   const c=id?char(id):null;
   const base=c||{name:'Nouveau personnage',icon:'🧙',iconImage:null,type:'player',move:6,ownerId:null,hidden:false,categoryId:currentCharCategory,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10,Constitution:4,Endurance:0,Social:0,Artisanat:0},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0,Poison:0},oppAttack:{formula:'',type:'Physique',element:'Neutre',impactImage:null,impactFrames:1,impactRows:1,animFps:60}};
   const catOpts=`<option value="">— Racine —</option>`+(S.characterCategories||[]).map(cc=>`<option value="${esc(cc.id)}" ${base.categoryId===cc.id?'selected':''}>${esc(cc.name)}</option>`).join('');
-  const typeOpts=[['player','Joueur'],['enemy','Monstre / PNJ'],['merchant','Commerçant']].map(([v,l])=>opt(v,l,base.type)).join('');
+  const typeOpts=[['player','Joueur'],['enemy','Monstre / PNJ'],['merchant','Commerçant'],['blacksmith','Forgeron']].map(([v,l])=>opt(v,l,base.type)).join('');
   merchDraft=structuredClone(base.merchant||{buy:[],sell:[]}); merchDraft.buy=merchDraft.buy||[]; merchDraft.sell=merchDraft.sell||[]; merchSearch=''; merchCat='';
   const ownerOpts=`<option value="">— MJ / PNJ (aucun joueur) —</option>`+profiles.map(p=>`<option value="${esc(p.id)}" ${base.ownerId===p.id?'selected':''}>${esc(displayNameOf(p))}</option>`).join('');
   const known=id?characterAbilities(id):[];
@@ -4612,6 +4612,9 @@ function useConsumable(charId,eqId){
   if(!st||!def){toast('⚠️ Aucune charge restante.');return;}
   const targets=S.instances.filter(i=>i.charId===charId);
   if(!targets.length){toast('⚠️ Ce personnage n’a pas de jeton sur la carte.');return;}
+  const turnId=S.combat.active?S.combat.order[S.combat.turn]:null;
+  const myTurnInst=turnId&&targets.find(t=>t.id===turnId);
+  if(S.combat.active&&!isMJ()&&!myTurnInst){toast('⏳ Ce n’est pas le tour de ce personnage.');return;}
   const amt=def.useAmount||0, isMana=def.useResource==='Mana';
   targets.forEach(t=>{
     if(isMana){t.mana=Math.min(t.manaMax,t.mana+amt);broadcastHud(t.id,{mana:amt});}
@@ -4620,6 +4623,7 @@ function useConsumable(charId,eqId){
   st.qty=(st.qty||1)-1;
   if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);
   addLog(`🧪 <b>${esc(c.name)}</b> utilise <b>${esc(def.name)}</b> (+${amt} ${isMana?'💧 Mana':'❤️ PV'}).`);
+  if(myTurnInst)advanceTurn();
   saveState(); render(); if(sheetModalChar===charId)refreshSheetModal();
 }
 function onEquipSearchInput(v){equipSearchQuery=v;const c=document.getElementById('equipResultsContainer');if(c)c.innerHTML=equipResultsHtml();}
@@ -4827,6 +4831,7 @@ function showTokenMenu(x,y,instId){
   let items='';
   if(isMJ())items+=`<button class="btn ghost" onclick="broadcastLevelUp('${instId}')">🎉 Tester l’animation de niveau</button><button class="btn ghost" onclick="openSheetModal('${tpl.id}')">📄 Consulter la fiche du personnage</button><button class="btn ghost" onclick="openCharacter('${tpl.id}')">✏️ Modifier la fiche du personnage</button>`;
   if(!isMJ()&&tpl.type==='merchant'&&currentUser&&S.characters.some(c=>c.ownerId===currentUser.id&&c.type==='player'))items+=`<button class="btn ghost" onclick="openMerchantModal('${instId}','buy')">🛒 Acheter</button><button class="btn ghost" onclick="openMerchantModal('${instId}','sell')">💰 Vendre</button>`;
+  if(!isMJ()&&tpl.type==='blacksmith'&&currentUser&&S.characters.some(c=>c.ownerId===currentUser.id&&c.type==='player'))items+=`<button class="btn ghost" onclick="openSmithModal('${instId}')">🔧 Réparer</button>`;
   if(!isMJ()&&tpl.type==='player'&&currentUser&&S.characters.some(c=>c.ownerId===currentUser.id&&c.type==='player'&&c.id!==tpl.id))items+=`<button class="btn ghost" onclick="openTradeModal('${instId}')">🤝 Échanger</button>`;
   if(tpl.type==='player'){const on=getShowXpSet().includes(tpl.id);items+=`<button class="btn ghost" onclick="toggleShowXp('${tpl.id}')">${on?'🙈 Cacher l’expérience':'⭐ Afficher l’expérience'}</button>`;}
   if(!items)return;
@@ -6297,7 +6302,7 @@ const SELL_KEYS=[['div_plantes','Plantes'],['div_materiaux','Matériaux'],['div_
 function diversCatLabel(e){return (DIVERS_CATS.find(c=>c[0]===(e.diversCat||'autres'))||['','Autres'])[1];}
 function equipFilterMatch(e,f){if(!f)return true;if(f.startsWith('div_'))return e.itemType==='divers'&&(e.diversCat||'autres')===f.slice(4);return e.category===f;}
 function sellKeyOf(e){if(!e)return null;if(e.itemType==='weapon')return 'arme';if(e.itemType==='divers')return 'div_'+(e.diversCat||'autres');return 'armure';}
-function charTypeLabel(c){return c.type==='player'?'Joueur':(c.type==='merchant'?'Commerçant':'Monstre');}
+function charTypeLabel(c){return c.type==='player'?'Joueur':(c.type==='merchant'?'Commerçant':(c.type==='blacksmith'?'Forgeron':'Monstre'));}
 /* ---- Commerçant : onglet de la fiche (MJ) ---- */
 let merchDraft=null, merchSearch='', merchCat='', merchState=null;
 function merchBuyListHtml(){
@@ -6434,6 +6439,63 @@ function merchantSell(uid){
   if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);
   addLog(`💰 <b>${esc(c.name)}</b> vend ${q>1?q+'× ':''}<b>${esc(e.name)}</b> à <b>${esc(tpl.name)}</b> (${fmtMoney(total)}).`);
   saveState(); render(); refreshMerchantModal();
+}
+
+/* ---- Fin de tour (joueur) ---- */
+function endMyTurn(){
+  if(!S.combat.active)return;
+  const cur=inst(S.combat.order[S.combat.turn]);
+  if(!cur||!canControlInstance(cur.id)){toast('⏳ Ce n’est pas ton tour.');return;}
+  addLog(`⏭ <b>${esc(cur.label)}</b> met fin à son tour.`);
+  advanceTurn(); saveState(); render();
+}
+/* ---- Forgeron : réparation ---- */
+let smithState=null;
+function repairCost(e){return Math.ceil((e.price||0)/2);}
+function openSmithModal(instId){
+  const t=inst(instId), tpl=t&&instTemplate(t); if(!tpl||tpl.type!=='blacksmith')return;
+  const mine=S.characters.filter(c=>c.ownerId===currentUser?.id&&c.type==='player');
+  if(!mine.length){toast('⚠️ Tu n’as aucun personnage.');return;}
+  smithState={tplId:tpl.id,charId:mine[0].id};
+  refreshSmithModal();
+  document.getElementById('modalBg').classList.add('open');
+}
+function smithRow(e,cur,label,fn,ok){
+  return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b><small>${esc(label)} · 🔧 ${cur}/${e.durabilityMax}</small></div><div style="text-align:right"><div class="tiny">💰 ${fmtMoney(repairCost(e))}</div><button class="btn primary" ${ok?'':'disabled'} onclick="${fn}">Réparer</button></div></div>`;
+}
+function refreshSmithModal(){
+  const tpl=char(smithState.tplId); if(!tpl)return;
+  const mine=S.characters.filter(c=>c.ownerId===currentUser?.id&&c.type==='player');
+  const c=char(smithState.charId)||mine[0]; if(!c)return; smithState.charId=c.id;
+  const sel=mine.length>1?`<div class="field" style="margin-bottom:8px"><label>Personnage</label><select onchange="smithState.charId=this.value;refreshSmithModal()">${mine.map(x=>opt(x.id,x.name,c.id)).join('')}</select></div>`:'';
+  let rows='';
+  EQUIP_SLOTS.forEach(([k,label])=>{
+    const e=equip(c.equipmentSlots?.[k]); if(!e||!e.durabilityMax)return;
+    const cur=getEqDurability(c,k); if(cur>=e.durabilityMax)return;
+    rows+=smithRow(e,cur,label,`smithRepair('slot','${k}')`,(c.money||0)>=repairCost(e));
+  });
+  (c.bag||[]).forEach(b=>{
+    const e=equip(b.eqId); if(!e||!e.durabilityMax||b.dur==null||b.dur>=e.durabilityMax)return;
+    rows+=smithRow(e,b.dur,'Sac'+((b.qty||1)>1?' ×'+b.qty:''),`smithRepair('bag','${b.uid}')`,(c.money||0)>=repairCost(e));
+  });
+  if(!rows)rows='<p class="tiny muted">Aucun équipement à réparer.</p>';
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>🔧 ${esc(tpl.name)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>${sel}<div class="stat" style="margin-bottom:10px"><label>💰 Ton argent</label><strong>${fmtMoney(c.money||0)}</strong></div>${rows}<div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`;
+}
+function smithRepair(kind,key){
+  if(tradeLocked())return;
+  const tpl=char(smithState.tplId), c=char(smithState.charId); if(!tpl||!c||!canControlChar(c.id))return;
+  let e,b;
+  if(kind==='slot')e=equip(c.equipmentSlots?.[key]);
+  else{b=(c.bag||[]).find(x=>x.uid===key);e=b&&equip(b.eqId);}
+  if(!e||!e.durabilityMax){refreshSmithModal();return;}
+  const cost=repairCost(e);
+  if((c.money||0)<cost){toast('🚫 Pas assez d’argent.');return;}
+  c.money-=cost;
+  if(kind==='slot')repairEqDurability(c,key);
+  else if((b.qty||1)>1){b.qty--;bagAdd(c,b.eqId,null,1);}
+  else{b.dur=e.durabilityMax;mergeBag(c);}
+  addLog(`🔧 <b>${esc(c.name)}</b> fait réparer <b>${esc(e.name)}</b> chez <b>${esc(tpl.name)}</b> (${fmtMoney(cost)}).`);
+  saveState(); render(); refreshSmithModal();
 }
 
 /* ============================= NAVIGATION / INIT ============================= */
