@@ -3861,7 +3861,7 @@ function charPageRows(){const mj=isMJ();const q=charPageQuery.trim().toLowerCase
     const count=S.instances.filter(i=>i.charId===c.id).length;
     const nbAb=characterAbilities(c.id).length;
     const ownerLabel=c.ownerId?(displayNameOf(profiles.find(p=>p.id===c.ownerId))||'Joueur inconnu'):(c.type==='player'?'Non assigné':'MJ / PNJ');
-    return `<div class="ability"><div class="icon">${iconBoxHtml(c,'9px')}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button><button class="btn ghost" onclick="duplicateCharacter('${c.id}')" title="Dupliquer">📋</button>`:''}</div>`;
+    return `<div class="ability"><div class="icon">${iconBoxHtml(c,'9px')}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button><button class="btn ghost" onclick="duplicateCharacter('${c.id}')" title="Dupliquer">📋</button><button class="btn ghost" onclick="confirmDeleteCharacter('${c.id}')" title="Supprimer définitivement">🗑️</button>`:''}</div>`;
   }).join('')||'<p class="tiny muted">Aucun résultat.</p>';}
 function onCharPageSearch(v){charPageQuery=v;const c=document.getElementById('charPageResults');if(c)c.innerHTML=charPageRows();}
 let charPageQuery='';
@@ -4261,7 +4261,7 @@ function abilityResultsHtml(){
       : a.type==='Persistant'
       ? `Zone persistante · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?`Ligne (zone ${a.zoneRange||a.range} cases)`:a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3} (zone ${a.zoneRange||a.range} cases)`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · ${a.duration} tour(s) · Portée origine ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
       : `${esc(a.type)}${a.hotkey?` [${esc(a.hotkey)}]`:''} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`;
-    return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine} · Niv. ${a.level||1}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button><button class="btn ghost" onclick="duplicateAbility('${a.id}')" title="Dupliquer">📋</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
+    return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine} · Niv. ${a.level||1}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button><button class="btn ghost" onclick="duplicateAbility('${a.id}')" title="Dupliquer">📋</button><button class="btn ghost" onclick="deleteAbility('${a.id}')" title="Supprimer">🗑️</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
   }).join('');
 }
 function openAbility(id){
@@ -4734,6 +4734,16 @@ function duplicateCharacter(id){
   S.characters.push(c);
   S.abilities.forEach(a=>{if((a.characterIds||[]).includes(id))a.characterIds.push(c.id);});
   saveState(); render(); toast('📋 Copié : '+c.name);
+}
+function deleteAbility(id){
+  if(!isMJ())return;
+  const a=S.abilities.find(x=>x.id===id); if(!a)return;
+  if(!confirm('Supprimer définitivement la capacité « '+a.name+' » ?'))return;
+  S.abilities=S.abilities.filter(x=>x.id!==id);
+  S.instances.forEach(t=>{t.activeAuras=(t.activeAuras||[]).filter(x=>x!==id);if(t.cooldowns)delete t.cooldowns[id];});
+  if(activeAbility===id)activeAbility=null;
+  addLog(`🗑️ Le MJ supprime la capacité « ${esc(a.name)} ».`);
+  saveState(); render(); toast('🗑️ Capacité supprimée.');
 }
 function duplicateAbility(id){
   if(!isMJ())return;
