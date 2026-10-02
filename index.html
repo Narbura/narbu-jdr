@@ -2407,7 +2407,7 @@ function charItemHtml(c){
   return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="assetDragStart(event,'${c.id}')"`:''} onclick="openCharacter('${c.id}')" title="${mj?'Glisser sur la carte pour créer un token, cliquer pour modifier la fiche':'Fiche (lecture seule)'}">
     <div class="asset-icon">${iconBoxHtml(c,'7px')}</div>
     <div class="asset-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)}${count?` · ${count} sur la carte`:''}</small></div>
-    ${mj?`<button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();confirmDeleteCharacter('${c.id}')" title="Supprimer définitivement">🗑️</button>`:''}
+    ${mj?`<button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();duplicateCharacter('${c.id}')" title="Dupliquer">📋</button><button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();confirmDeleteCharacter('${c.id}')" title="Supprimer définitivement">🗑️</button>`:''}
   </div>`;
 }
 function charBreadcrumb(catId){
@@ -3794,7 +3794,7 @@ function charactersPage(){
     const count=S.instances.filter(i=>i.charId===c.id).length;
     const nbAb=characterAbilities(c.id).length;
     const ownerLabel=c.ownerId?(displayNameOf(profiles.find(p=>p.id===c.ownerId))||'Joueur inconnu'):(c.type==='player'?'Non assigné':'MJ / PNJ');
-    return `<div class="ability"><div class="icon">${iconBoxHtml(c,'9px')}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button>`:''}</div>`;
+    return `<div class="ability"><div class="icon">${iconBoxHtml(c,'9px')}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button><button class="btn ghost" onclick="duplicateCharacter('${c.id}')" title="Dupliquer">📋</button>`:''}</div>`;
   }).join('')}
   </div>
   <div class="card"><h2>Principe de la fiche</h2><p class="muted">Une fiche définit les valeurs de base (statistiques, ressources maximales, défenses, résistances), le joueur propriétaire et sa visibilité. Chaque token posé sur la carte est une instance indépendante avec ses propres PV / mana / bouclier actuels et sa propre position.</p>
@@ -3853,6 +3853,7 @@ function equipmentSlotsHtml(base,charId){
   const nat=naturalRes(base);
   const w=characterTotalWeight(base), force=base.stats?.Force||0;
   return `<div class="field full"><label>🎒 Équipement (seul le MJ peut équiper)</label>
+  <input id="eq_slot_search" placeholder="🔎 Rechercher un équipement dans les listes…" oninput="filterEquipSlots()" style="margin-bottom:6px">
   <div class="statgrid" style="grid-template-columns:repeat(3,1fr)">
   ${EQUIP_SLOTS.map(([k,label])=>`<div class="field"><label>${esc(label)}</label><select id="eqslot_${k}" onchange="${k==='arme'?'updateShieldAvailability()':'updateWeightPreview()'}">${eqOpts(slots[k],k)}</select></div>`).join('')}
   <div class="field"><label>Résistance Naturelle (auto)</label><input value="CA +${nat.ca} · DM +${nat.dm}" readonly style="opacity:.6"></div>
@@ -3861,6 +3862,13 @@ function equipmentSlotsHtml(base,charId){
   <input type="hidden" id="c_bagweight" value="${bagWeight(base)}"><div class="field"><label>⚖ Poids total porté</label><input id="c_weight_display" value="${w.toFixed(1)} kg / Force ${force} kg${weightMalusText(w,force)}" readonly style="opacity:.6"></div>
   ${charId?`<div class="field full"><label>🔧 Durabilité de l'équipement</label><div id="eqDurBox">${equipmentDurabilityHtml(charId)}</div></div>`:''}
   </div>`;
+}
+function filterEquipSlots(){
+  const q=(document.getElementById('eq_slot_search')?.value||'').trim().toLowerCase();
+  EQUIP_SLOTS.forEach(([k])=>{
+    const sel=document.getElementById('eqslot_'+k); if(!sel)return;
+    [...sel.options].forEach(o=>{o.hidden=!!q&&!!o.value&&!o.selected&&!o.textContent.toLowerCase().includes(q);});
+  });
 }
 function filterDiversList(){
   const q=(document.getElementById('divers_search')?.value||'').trim().toLowerCase();
@@ -4629,6 +4637,31 @@ function useConsumable(charId,eqId){
   if(myTurnInst)advanceTurn();
   saveState(); render(); if(sheetModalChar===charId)refreshSheetModal();
 }
+function copyName(name,list){
+  const base=String(name).replace(/\d+$/,'');
+  let n=2; while(list.some(x=>x.name===base+n))n++;
+  return base+n;
+}
+function duplicateEquipment(id){
+  if(!isMJ())return;
+  const e=equip(id); if(!e)return;
+  const c=structuredClone(e);
+  c.id='eq'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+  c.name=copyName(e.name,S.equipment);
+  S.equipment.push(c);
+  saveState(); render(); toast('📋 Copié : '+c.name);
+}
+function duplicateCharacter(id){
+  if(!isMJ())return;
+  const o=char(id); if(!o)return;
+  const c=structuredClone(o);
+  c.id='c'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+  c.name=copyName(o.name,S.characters);
+  c.ownerId=null;
+  S.characters.push(c);
+  S.abilities.forEach(a=>{if((a.characterIds||[]).includes(id))a.characterIds.push(c.id);});
+  saveState(); render(); toast('📋 Copié : '+c.name);
+}
 function onEquipSearchInput(v){equipSearchQuery=v;const c=document.getElementById('equipResultsContainer');if(c)c.innerHTML=equipResultsHtml();}
 function onEquipCatFilter(v){equipCategoryFilter=v;const c=document.getElementById('equipResultsContainer');if(c)c.innerHTML=equipResultsHtml();}
 function equipResultsHtml(){
@@ -4645,7 +4678,7 @@ function equipResultsHtml(){
       ? `🎒 Divers (${diversCatLabel(e)}) · ${e.poids||0} kg${e.description?` · ${esc(e.description).slice(0,60)}`:''}`
       : (()=>{const resTxt=ELEMENT_RES_KEYS.filter(k=>e.res[k]).map(k=>`${k} +${e.res[k]}%`).join(', ')||'Aucune résistance';return `🛡 Armure · ${esc(catLabel)} · CA +${e.ca||0} · DM +${e.dm||0} · ${resTxt} · ${e.poids||0} kg`;})();
     const desc=baseDesc+(e.durabilityMax?` · 🔧 Durabilité ${e.durabilityMax}`:'')+(e.price?` · 💰 ${fmtMoney(e.price)}`:'');
-    return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b><small>${desc}</small></div><button class="btn" onclick="openEquipment('${e.id}')">Modifier</button><button class="btn ghost" onclick="confirmDeleteEquipment('${e.id}')" title="Supprimer">🗑️</button></div>`;
+    return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b><small>${desc}</small></div><button class="btn" onclick="openEquipment('${e.id}')">Modifier</button><button class="btn ghost" onclick="duplicateEquipment('${e.id}')" title="Dupliquer">📋</button><button class="btn ghost" onclick="confirmDeleteEquipment('${e.id}')" title="Supprimer">🗑️</button></div>`;
   }).join('');
 }
 function openEquipment(id){
