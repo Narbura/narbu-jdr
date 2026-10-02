@@ -573,6 +573,7 @@ async function loadGameState(){
       instTs={}; S.instances.forEach(i=>{if(i._ts)instTs[i.id]=i._ts;});
       lastSaved=computeSnapshot();
       if(migrationDirty&&isMJ()){migrationDirty=false;lastSaved.cols.equipment='';lastSaved.cols.characters='';lastSaved.cols.consumables='';setTimeout(flushSave,300);}
+      if(isMJ()&&migrateMana())setTimeout(flushSave,300);
     }
   }catch(e){
     console.error('loadGameState', e);
@@ -1091,10 +1092,22 @@ function confirmStatPoints(cid){
   addLog(`✨ <b>${esc(c.name)}</b> répartit ses points de caractéristique.`);
   saveState(); refreshSheet(cid);
 }
+function migrateMana(){
+  let ch=false;
+  S.characters.forEach(c=>{
+    if(c.manaAuto)return;
+    c.manaAuto=true; c.resourcesMax=c.resourcesMax||{};
+    c.resourcesMax.Mana=Math.round((c.stats?.Magie||0)*5);
+    S.instances.filter(i=>i.charId===c.id).forEach(i=>{i.manaMax=c.resourcesMax.Mana;i.mana=Math.min(i.mana,i.manaMax);});
+    ch=true;
+  });
+  return ch;
+}
 function syncConstitution(c){
   c.resourcesMax=c.resourcesMax||{};
   c.resourcesMax.Vie=maxHpFromCon(c.stats.Constitution);
-  S.instances.filter(i=>i.charId===c.id).forEach(i=>{i.hpMax=c.resourcesMax.Vie;i.hp=Math.min(i.hp,i.hpMax);});
+  c.resourcesMax.Mana=Math.round((c.stats.Magie||0)*5); c.manaAuto=true;
+  S.instances.filter(i=>i.charId===c.id).forEach(i=>{i.hpMax=c.resourcesMax.Vie;i.hp=Math.min(i.hp,i.hpMax);i.manaMax=c.resourcesMax.Mana;i.mana=Math.min(i.mana,i.manaMax);});
 }
 /* Si le niveau baisse : annule les gains de stats (les plus récents d'abord) tant que les points dépensés dépassent ceux du niveau */
 function reconcileLevelPoints(c){
@@ -1273,18 +1286,19 @@ function characterTotalWeight(c){
 }
 function weightMalusText(w,force){
   if(w>force*3)return ' ⚠️ il vous semble impossible de vous déplacer correctement avec un équipement aussi lourd';
-  if(w>force*2)return ' ⚠️ Votre équipement est très lourd pour vous, malus de -4 de déplacement';
-  if(w>force)return ' ⚠️ Votre équipement est lourd pour vous, malus de -1 de déplacement';
+  if(w>force*2)return ' ⚠️ Votre équipement est très lourd pour vous, déplacement divisé par 4';
+  if(w>force)return ' ⚠️ Votre équipement est lourd pour vous, déplacement divisé par 2';
   return '';
 }
+function baseMove(v){return Math.ceil((parseNum(v)||0)/10)+1;}
 function effectiveMove(c){
   if(!c)return 0;
-  const base=c.move??6;
+  const base=baseMove(c.stats?.Vitesse);
   if(c.type!=='player')return base;
   const w=characterTotalWeight(c), force=c.stats?.Force||0;
   if(w>force*3)return 0;
-  if(w>force*2)return Math.max(0,base-4);
-  if(w>force)return Math.max(0,base-1);
+  if(w>force*2)return Math.ceil(base/4);
+  if(w>force)return Math.ceil(base/2);
   return base;
 }
 
@@ -1454,6 +1468,7 @@ function rollStatTest(stat){
   if(!canControlInstance(casterInst.id)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
   if(casterInst.isKO){toast('💀 Ce personnage est inconscient.');return;}
   const tpl=instTemplate(casterInst); if(!tpl)return;
+  if(tpl.type!=='player'){toast('⚠️ Tests réservés aux personnages joueurs.');return;}
   const value=tpl.stats?.[stat]||0;
   const r=roll('1d100'); const raw=r.total;
   const mod=skillStatMod(tpl,stat); const d=Math.max(1,raw+mod);
@@ -1828,7 +1843,7 @@ function tablePage(){
           return `<button class="btn ${activeAbility===a.id?'primary':''}" onclick="startAbility('${a.id}')" oncontextmenu="event.preventDefault();promptSetHotkey('${selInst.charId}','${a.id}')" title="${a.type==='Transformation'?`Transformation immédiate · Mana : ${a.manaCost||0}`:`Portée : ${a.range?a.range+' cases':'illimitée'} · Mana : ${a.manaCost||0}`}${hk?` · Raccourci : ${hk}`:''} · Clic droit : assigner un raccourci">${hk?`<b>[${esc(hk)}]</b> `:''}${iconInlineHtml(a)} ${esc(a.name)}</button>`;
         }).join(''):'<span class="tiny muted">Ce personnage ne connaît aucune capacité (à assigner dans sa fiche).</span>';
         const statTpl=instTemplate(selInst);
-        abilitiesHtml+=STAT_TESTS.map(st=>{
+        abilitiesHtml+=(statTpl?.type!=='player'?[]:STAT_TESTS).map(st=>{
           const hk=myHotkeyFor(selInst.charId,'stat_'+st);
           return `<button class="btn" onclick="rollStatTest('${st}')" oncontextmenu="event.preventDefault();promptSetHotkey('${selInst.charId}','stat_${st}')" title="${esc(statTestLabel(st))} (${statTpl?.stats?.[st]||0})${hk?` · Raccourci : ${hk}`:''} · Clic droit : assigner un raccourci">${hk?`<b>[${esc(hk)}]</b> `:''}${iconInlineHtml(statTestIcon(st))} ${esc(st)}</button>`;
         }).join('');
@@ -2404,7 +2419,7 @@ function onCharSearchInput(v){
 function charItemHtml(c){
   const mj=isMJ();
   const count=S.instances.filter(i=>i.charId===c.id).length;
-  return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="assetDragStart(event,'${c.id}')"`:''} onclick="openCharacter('${c.id}')" title="${mj?'Glisser sur la carte pour créer un token, cliquer pour modifier la fiche':'Fiche (lecture seule)'}">
+  return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="assetDragStart(event,'${c.id}')"`:''} ${mj?`oncontextmenu="event.preventDefault();showMoveMenu(event.clientX,event.clientY,'char','${c.id}')"`:''} onclick="openCharacter('${c.id}')" title="${mj?'Glisser sur la carte pour créer un token, cliquer pour modifier la fiche':'Fiche (lecture seule)'}">
     <div class="asset-icon">${iconBoxHtml(c,'7px')}</div>
     <div class="asset-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)}${count?` · ${count} sur la carte`:''}</small></div>
     ${mj?`<button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();duplicateCharacter('${c.id}')" title="Dupliquer">📋</button><button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();confirmDeleteCharacter('${c.id}')" title="Supprimer définitivement">🗑️</button>`:''}
@@ -2683,6 +2698,7 @@ function startCombat(){
 function endCombat(){
   if(!isMJ()){toast('⛔ Seul le MJ peut terminer le combat.');return;}
   S.combat={active:false,order:[],turn:0,initiatives:{}};
+  S.instances.forEach(t=>{t.cooldowns={};});
   lastTurnCombatant=null;
   addLog('⏹ Fin du combat.');
   S.freeMovement=true;
@@ -2808,6 +2824,7 @@ function advanceTurn(){
       const tpl=instTemplate(nt);
       nt.remainingMove=nt.isKO?0:effectiveMove(tpl);
       nt.movementBlocked=nt.isKO?true:false;
+      tickCooldowns(nt);
       triggerAuras(nt);
       tickStatusEffects(nt);
       tickPersistentZones(nt);
@@ -3243,6 +3260,40 @@ function resolveOpportunityAttack(attackerInst,targetInst){
   if(targetInst.hp<=0){lines.push(`💀 <b>${esc(targetInst.label)} est KO</b>.`);handleInstanceDeath(targetInst,attackerInst);}
   addLog(lines.join('<br>'),damage>0?`${esc(attackerInst.label)} inflige ${damage} dégâts à ${esc(targetInst.label)}`:'');
 }
+function gapCloseToTarget(ci,ti,range,lines){
+  const sw=ci.sizeW||1,sh=ci.sizeH||1,tw=ti.sizeW||1,th=ti.sizeH||1;
+  const near=(x,y)=>footprintDistance(x,y,sw,sh,ti.x,ti.y,tw,th)<=1;
+  if(near(ci.x,ci.y))return;
+  const key=(x,y)=>x+','+y, prev={}; prev[key(ci.x,ci.y)]=null;
+  let frontier=[[ci.x,ci.y]], goal=null;
+  const maxSteps=range>0?range:99;
+  for(let d=1;d<=maxSteps&&!goal&&frontier.length;d++){
+    const next=[];
+    for(const [x,y] of frontier){
+      for(let dx=-1;dx<=1&&!goal;dx++)for(let dy=-1;dy<=1&&!goal;dy++){
+        if(!dx&&!dy)continue;
+        const nx=x+dx,ny=y+dy,k=key(nx,ny);
+        if(k in prev||footprintOverlap(ci.id,nx,ny,sw,sh))continue;
+        prev[k]=[x,y]; next.push([nx,ny]);
+        if(near(nx,ny))goal=[nx,ny];
+      }
+    }
+    frontier=next;
+  }
+  if(!goal){lines.push(`🚫 ${esc(ci.label)} ne peut pas rejoindre sa cible.`);return;}
+  const path=[]; let cur=goal;
+  while(cur&&!(cur[0]===ci.x&&cur[1]===ci.y)){path.unshift(cur);cur=prev[key(cur[0],cur[1])];}
+  const id=ci.id;
+  for(const [nx,ny] of path){
+    const old={x:ci.x,y:ci.y,sizeW:sw,sizeH:sh};
+    ci.x=nx; ci.y=ny; ci.px=null; ci.py=null;
+    checkOpportunityAttacks(id,old);
+    if(!inst(id))return;
+    applyZoneDamageOnMove(ci);
+    if(!inst(id)||ci.isKO)return;
+  }
+  lines.push(`🏃 ${esc(ci.label)} rejoint ${esc(ti.label)}.`);
+}
 function resolveAbility(a,start,explicitTargetInstId){
   const casterInst=selectedToken?inst(selectedToken):null;
   if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
@@ -3276,6 +3327,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   if(a.manaCost>0){
     casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   }
+  applyCooldown(a,casterInst);
   let weaponFormula=null, weaponUsed=null;
   if(casterTpl?.type==='player'&&casterTpl.equipmentSlots){
     const w=equip(casterTpl.equipmentSlots['arme']);
@@ -3365,6 +3417,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     }
   }
 
+  if(a.gapClose&&a.area==='single'&&explicitTargetInstId&&inst(explicitTargetInstId)&&inst(casterInst.id))gapCloseToTarget(casterInst,inst(explicitTargetInstId),a.range,lines);
   addLog(lines.join('<br>'),cl.join('<br>'));
   activeAbility=null; hoverCell=null;
   if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
@@ -3401,6 +3454,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
     if(dist>a.range){toast(`🚫 Trop loin (portée max ${a.range} case${a.range>1?'s':''}).`);return;}
   }
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
+  applyCooldown(a,casterInst);
   const casterTpl=instTemplate(casterInst);
   const atkExpr=a.atkDice||'1d100'; const atkRoll=roll(atkExpr); const atk=atkRoll.total; const [label,mult]=outcome(atk);
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
@@ -3425,6 +3479,7 @@ function resolveBuffZone(a,casterInst,start){
     if(dist>a.range){toast(`🚫 Trop loin (portée max ${a.range} case${a.range>1?'s':''}).`);return;}
   }
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
+  applyCooldown(a,casterInst);
   const casterTpl=instTemplate(casterInst);
   const atkExpr=a.atkDice||'1d100'; const atkRoll=roll(atkExpr); const atk=atkRoll.total; const [label,mult]=outcome(atk);
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
@@ -3471,6 +3526,7 @@ function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride
     if(dist>a.range){toast(`🚫 Trop loin (portée max ${a.range} case${a.range>1?'s':''}).`);return;}
   }
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
+  applyCooldown(a,casterInst);
   const casterTpl=instTemplate(casterInst);
   const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,casterLabel:casterInst.label,casterInstId:casterInst.id,turnsLeft:a.duration||3,effect:a.effect,zoneImage:a.zoneImage||null};
   if(a.area==='line'||a.area==='cone'){
@@ -3678,6 +3734,9 @@ function consumablesButtonsHtml(selInst){
     return `<button class="btn" onclick="useConsumable('${tpl.id}','${b.eqId}')" oncontextmenu="event.preventDefault();promptSetHotkey('${tpl.id}','${b.eqId}')" title="Utiliser (${b.qty||1} restant(s))${hk?` · Raccourci : ${hk}`:''} · Clic droit : assigner un raccourci">${hk?`<b>[${esc(hk)}]</b> `:''}${iconInlineHtml(def)} ${esc(def.name)} ×${b.qty||1}</button>`;
   }).join('');
 }
+function cdLeft(t,a){return S.combat.active?((t.cooldowns||{})[a.id]||0):0;}
+function applyCooldown(a,t){if(S.combat.active&&a.cooldown>0){t.cooldowns=t.cooldowns||{};t.cooldowns[a.id]=a.cooldown+1;}}
+function tickCooldowns(t){const c=t.cooldowns;if(!c)return;Object.keys(c).forEach(k=>{c[k]--;if(c[k]<=0)delete c[k];});}
 function startAbility(id){
   if(!selectedToken){toast('Sélectionne d’abord un personnage sur la carte.');return;}
   if(!canControlInstance(selectedToken)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
@@ -3687,6 +3746,7 @@ function startAbility(id){
   const a=S.abilities.find(x=>x.id===id); if(!a)return;
   if(a.type==='Compétence'){toast('🎓 Les compétences sont passives.');return;}
   if(a.type==='Passif'){ toggleAuraForCaster(id); return; }
+  if(caster&&cdLeft(caster,a)>0){toast(`⏳ ${a.name} en recharge (${cdLeft(caster,a)} tour(s) restant(s)).`);return;}
   if(a.type==='Transformation'&&a.manaCost>0&&caster&&(caster.mana||0)<a.manaCost){
     toast(`🚫 Mana insuffisant (${caster.mana}/${a.manaCost}) pour lancer ${a.name} — choisis une autre action.`);
     return;
@@ -3752,6 +3812,7 @@ function castTransformation(a){
   const caster=inst(selectedToken); if(!caster)return;
   const fromName=caster.label;
   if(a.manaCost>0)caster.mana=Math.max(0,(caster.mana||0)-a.manaCost);
+  applyCooldown(a,caster);
   transformInstance(caster.id,a.transformCharId,a.allowRevert);
   addLog(`🔄 <b>${esc(fromName)}</b> se transforme en <b>${esc(caster.label)}</b> (${esc(a.name)}).`);
   activeAbility=null; hoverCell=null;
@@ -3790,16 +3851,19 @@ function charactersPage(){
   const charList=mj?S.characters:S.characters.filter(c=>c.type==='player');
   return `<div class="grid2">
   <div class="card"><div class="row between"><h2>Personnages &amp; créatures</h2>${mj?`<button class="btn primary" onclick="openCharacter()">＋ Nouveau</button>`:''}</div>
-  ${charList.map(c=>{
-    const count=S.instances.filter(i=>i.charId===c.id).length;
-    const nbAb=characterAbilities(c.id).length;
-    const ownerLabel=c.ownerId?(displayNameOf(profiles.find(p=>p.id===c.ownerId))||'Joueur inconnu'):(c.type==='player'?'Non assigné':'MJ / PNJ');
-    return `<div class="ability"><div class="icon">${iconBoxHtml(c,'9px')}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button><button class="btn ghost" onclick="duplicateCharacter('${c.id}')" title="Dupliquer">📋</button>`:''}</div>`;
-  }).join('')}
+  <input id="char_page_search" placeholder="🔎 Rechercher un personnage…" value="${esc(charPageQuery)}" oninput="onCharPageSearch(this.value)" style="margin-bottom:10px"><div id="charPageResults">${charPageRows()}</div>
   </div>
   <div class="card"><h2>Principe de la fiche</h2><p class="muted">Une fiche définit les valeurs de base (statistiques, ressources maximales, défenses, résistances), le joueur propriétaire et sa visibilité. Chaque token posé sur la carte est une instance indépendante avec ses propres PV / mana / bouclier actuels et sa propre position.</p>
   <div class="statgrid"><div class="stat"><label>Attributs personnalisables</label><strong>✓</strong></div><div class="stat"><label>Ressources max configurables</label><strong>✓</strong></div><div class="stat"><label>Instances multiples</label><strong>✓</strong></div><div class="stat"><label>Visibilité MJ/joueurs</label><strong>✓</strong></div></div></div></div>`;
 }
+function charPageRows(){const mj=isMJ();const q=charPageQuery.trim().toLowerCase();const charList=(mj?S.characters:S.characters.filter(c=>c.type==='player')).filter(c=>!q||c.name.toLowerCase().includes(q));return charList.map(c=>{
+    const count=S.instances.filter(i=>i.charId===c.id).length;
+    const nbAb=characterAbilities(c.id).length;
+    const ownerLabel=c.ownerId?(displayNameOf(profiles.find(p=>p.id===c.ownerId))||'Joueur inconnu'):(c.type==='player'?'Non assigné':'MJ / PNJ');
+    return `<div class="ability"><div class="icon">${iconBoxHtml(c,'9px')}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button><button class="btn ghost" onclick="duplicateCharacter('${c.id}')" title="Dupliquer">📋</button>`:''}</div>`;
+  }).join('')||'<p class="tiny muted">Aucun résultat.</p>';}
+function onCharPageSearch(v){charPageQuery=v;const c=document.getElementById('charPageResults');if(c)c.innerHTML=charPageRows();}
+let charPageQuery='';
 function toggleHidden(id){
   if(!isMJ())return;
   const c=char(id); if(!c)return;
@@ -3895,6 +3959,7 @@ function toggleCharMonsterFields(){
   show('char_bio_fields',t!=='merchant');
   show('charTabMerchantBtn',t==='merchant');
   show('charTabEquipBtn',t==='player');
+  document.querySelectorAll('#charTabStats .pl-only').forEach(el=>{el.style.display=t==='player'?'':'none';});
 }
 function switchCharModalTab(tab){
   ['General','Stats','Equip','Abil','Opp','Merchant'].forEach(n=>{const el=document.getElementById('charTab'+n);if(el)el.style.display=n.toLowerCase()===tab?'':'none';});
@@ -3994,7 +4059,7 @@ function openCharacter(id){
   <div id="char_bio_fields" style="grid-column:1/-1;display:${base.type==='merchant'?'none':''}">${bioHtml}</div>
 </div></div>
   <div id="charTabStats" style="display:none"><div class="form">
-  <div class="field"><label>Déplacement (cases/tour)</label><input id="c_move" type="number" value="${base.move??6}"></div>
+  <div class="field"><label>Déplacement (auto : Vitesse/10 arrondi sup. + 1)</label><input id="c_move" type="number" value="${baseMove(base.stats.Vitesse)}" readonly style="opacity:.6"></div>
   <div class="field"><label>Taille par défaut du token (largeur × hauteur, en cases)</label><div class="row"><input id="c_sizew" type="number" min="1" max="20" value="${base.sizeW||1}"><span>×</span><input id="c_sizeh" type="number" min="1" max="20" value="${base.sizeH||1}"></div></div>
   <div class="field full" id="char_monster_durability_fields" style="display:${base.type==='enemy'?'':'none'}">
     <div class="row" style="gap:10px;flex-wrap:wrap">
@@ -4005,18 +4070,18 @@ function openCharacter(id){
     <p class="tiny muted">0 = n'abîme pas l'équipement.</p>
   </div>
   <div class="field"><label>PV maximum (automatique : Constitution × 2,5)</label><input id="c_hpmax" type="number" value="${maxHpFromCon(base.stats.Constitution)}" readonly style="opacity:.6"></div>
-  <div class="field"><label>Mana maximum</label><input id="c_manamax" type="number" value="${base.resourcesMax.Mana??0}"></div>
+  <div class="field"><label>Mana maximum (automatique : Magie × 5)</label><input id="c_manamax" type="number" value="${(parseNum(base.stats.Magie)||0)*5}" readonly style="opacity:.6"></div>
   <div class="field"><label>Bouclier maximum</label><input id="c_shieldmax" type="number" value="${base.resourcesMax.Bouclier??0}"></div>
   <div class="field"><label>Niveau</label><input id="c_level" type="number" min="1" value="${base.level||1}" oninput="const m=xpNeeded(parseNum(this.value)||1)-1;const x=document.getElementById('c_xp');if(parseNum(x.value)>m)x.value=m;document.getElementById('c_xp_label').innerHTML='XP sur le niveau actuel (max '+fmtNum(m)+')'"></div>
   <div class="field"><label id="c_xp_label">XP sur le niveau actuel (max ${fmtNum(xpNeeded(base.level||1)-1)})</label><input id="c_xp" type="text" value="${base.xp||0}" placeholder="ex : 1.2e308"></div>
   <div class="field"><label>Force</label><input id="s_force" type="number" value="${base.stats.Force??0}" oninput="updateWeightPreview()"></div>
-  <div class="field"><label>Magie</label><input id="s_magic" type="number" value="${base.stats.Magie??0}"></div>
-  <div class="field"><label>Agilité</label><input id="s_agi" type="number" value="${base.stats.Agilité??0}"></div>
-  <div class="field"><label>Vitesse</label><input id="s_speed" type="number" value="${base.stats.Vitesse??0}"></div>
+  <div class="field"><label>Magie</label><input id="s_magic" type="number" value="${base.stats.Magie??0}" oninput="document.getElementById('c_manamax').value=Math.round(parseNum(this.value)*5)"></div>
+  <div class="field pl-only" style="display:${base.type==='player'?'':'none'}"><label>Agilité</label><input id="s_agi" type="number" value="${base.stats.Agilité??0}"></div>
+  <div class="field"><label>Vitesse</label><input id="s_speed" type="number" value="${base.stats.Vitesse??0}" oninput="document.getElementById('c_move').value=baseMove(this.value)"></div>
   <div class="field"><label>Constitution (PV max = Constitution × 2,5)</label><input id="s_con" type="number" value="${base.stats.Constitution??0}" oninput="document.getElementById('c_hpmax').value=maxHpFromCon(this.value)"></div>
-  <div class="field"><label>Endurance</label><input id="s_end" type="number" value="${base.stats.Endurance??0}"></div>
-  <div class="field"><label>Social</label><input id="s_soc" type="number" value="${base.stats.Social??0}"></div>
-  <div class="field"><label>Artisanat</label><input id="s_craft" type="number" value="${base.stats.Artisanat??0}"></div>
+  <div class="field pl-only" style="display:${base.type==='player'?'':'none'}"><label>Endurance</label><input id="s_end" type="number" value="${base.stats.Endurance??0}"></div>
+  <div class="field pl-only" style="display:${base.type==='player'?'':'none'}"><label>Social</label><input id="s_soc" type="number" value="${base.stats.Social??0}"></div>
+  <div class="field pl-only" style="display:${base.type==='player'?'':'none'}"><label>Artisanat</label><input id="s_craft" type="number" value="${base.stats.Artisanat??0}"></div>
   ${curResHtml}
   <div class="field"><label>Classe d'armure</label><input id="d_ca" type="number" value="${base.def.CA??0}"></div>
   <div class="field"><label>Défense magique</label><input id="d_dm" type="number" value="${base.def.DM??0}"></div>
@@ -4050,7 +4115,7 @@ function saveCharacter(id){
   c.icon=document.getElementById('c_icon').value||'🧙';
   c.iconImage=document.getElementById('c_iconimage').value.trim()||null;
   c.type=document.getElementById('c_type').value;
-  c.move=parseNum(document.getElementById('c_move').value)||6;
+  c.move=baseMove(document.getElementById('s_speed').value);
   const oldSW=c.sizeW||1, oldSH=c.sizeH||1;
   c.sizeW=Math.max(1,Math.min(20,Math.round(parseNum(document.getElementById('c_sizew').value))||1));
   c.sizeH=Math.max(1,Math.min(20,Math.round(parseNum(document.getElementById('c_sizeh').value))||1));
@@ -4069,9 +4134,10 @@ function saveCharacter(id){
   c.xpValue=Math.max(0,Math.round(parseNum(document.getElementById('c_xpvalue').value)));
   c.bio=rteHtml('c_bio');
     {const mNow=readMoney('c_'),mOrig=parseNum(document.getElementById('c_money_orig')?.value||0);if(mNow!==mOrig)c.money=mNow;}
-  c.resourcesMax={Vie:maxHpFromCon(document.getElementById('s_con').value),Mana:parseNum(document.getElementById('c_manamax').value),Bouclier:parseNum(document.getElementById('c_shieldmax').value)};
+  c.resourcesMax={Vie:maxHpFromCon(document.getElementById('s_con').value),Mana:Math.round(parseNum(document.getElementById('s_magic').value)*5),Bouclier:parseNum(document.getElementById('c_shieldmax').value)};
   c.stats={...(c.stats||{}),Constitution:parseNum(document.getElementById('s_con').value),Endurance:parseNum(document.getElementById('s_end').value),Social:parseNum(document.getElementById('s_soc').value),Artisanat:parseNum(document.getElementById('s_craft').value),Force:parseNum(document.getElementById('s_force').value),Magie:parseNum(document.getElementById('s_magic').value),Agilité:parseNum(document.getElementById('s_agi').value),Vitesse:parseNum(document.getElementById('s_speed').value)};
   reconcileLevelPoints(c);
+  c.manaAuto=true;
   c.resourcesMax.Vie=maxHpFromCon(c.stats.Constitution);
   c.def={CA:parseNum(document.getElementById('d_ca').value),DM:parseNum(document.getElementById('d_dm').value),'CA naturelle':parseNum(document.getElementById('d_ca').value)};
   c.res={
@@ -4194,7 +4260,7 @@ function abilityResultsHtml(){
       : a.type==='Persistant'
       ? `Zone persistante · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?`Ligne (zone ${a.zoneRange||a.range} cases)`:a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3} (zone ${a.zoneRange||a.range} cases)`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · ${a.duration} tour(s) · Portée origine ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
       : `${esc(a.type)}${a.hotkey?` [${esc(a.hotkey)}]`:''} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`;
-    return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine} · Niv. ${a.level||1}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
+    return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine} · Niv. ${a.level||1}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button><button class="btn ghost" onclick="duplicateAbility('${a.id}')" title="Dupliquer">📋</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
   }).join('');
 }
 function openAbility(id){
@@ -4228,6 +4294,7 @@ function openAbility(id){
   <div class="field"><label>Type</label><select id="a_type" onchange="toggleAbilityTypeFields()">${typeOpts}</select></div>
   <div class="field"><label>Niveau de la capacité</label><input id="a_level" type="number" min="1" value="${a.level||1}"></div>
   <div class="field" id="a_manacost_field" style="display:${isSkill?'none':''}"><label>Coût en mana (0 = aucun)</label><input id="a_manacost" type="number" min="0" value="${a.manaCost??0}"></div>
+  <div class="field" id="a_cooldown_field" style="display:${isSkill?'none':''}"><label>Cooldown (tours — vide = aucun)</label><input id="a_cooldown" type="number" min="0" value="${a.cooldown||''}" placeholder="aucun"></div>
   <div class="field" id="ability_passif_extra" style="display:${a.type==='Passif'?'':'none'}"><label>Effet de l'aura</label><select id="a_auraeffect">${opt('damage','Dégâts',a.auraEffect)}${opt('heal','Soin',a.auraEffect)}${opt('shield','Bouclier',a.auraEffect)}</select><p class="tiny muted">Aura auto-centrée sur le lanceur (zone = Carré ou Cercle uniquement), se déclenche à chaque début de son tour.</p></div>
   <div class="field" id="ability_buff_extra" style="display:${(a.type==='Buff'||a.type==='Persistant')?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.duration||3}"><p class="tiny muted">${a.type==='Persistant'?"Nombre de tours avant que la zone persistante ne s'estompe. Chaque token qui commence son tour dans la zone subit l'effet (calculé comme si le lanceur agissait à chaque fois).":"Cible unique ou zone (voir champ Zone ci-dessous). Effet auto à chaque début de tour de la/les cible(s) pendant N tours. Choisis toi-même la défense ciblée (dont « Aucune »)."}</p></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
@@ -4259,6 +4326,7 @@ function openAbility(id){
   <div class="field" id="a_conestart_field" style="display:${a.area==='cone'?'':'none'}"><label>Largeur au départ (cases)</label><input id="a_conestart" type="number" min="1" value="${a.coneStart||1}"></div>
   <div class="field" id="a_coneend_field" style="display:${a.area==='cone'?'':'none'}"><label>Largeur à l'arrivée (cases)</label><input id="a_coneend" type="number" min="1" value="${a.coneEnd||3}"></div>
   <div class="field"><label>Portée maximale (cases, 0 = illimitée)</label><input id="a_range" type="number" min="0" value="${a.range??0}"></div>
+  <div class="field full" id="a_gapclose_field" style="display:${a.area==='single'?'':'none'}"><label><input type="checkbox" id="a_gapclose" ${a.gapClose?'checked':''}> 🏃 Rejoindre la cible avec le sort (le lanceur se place devant sa cible par le chemin le plus court, portée max de la capacité)</label></div>
   <div class="field" id="a_zonerange_field" style="display:${((a.area==='line'||a.area==='cone')&&a.type==='Persistant')?'':'none'}"><label>Longueur maximale de la zone (cases)</label><input id="a_zonerange" type="number" min="1" value="${a.zoneRange||a.range||3}"></div>
   <p class="tiny muted full" style="grid-column:1/-1">Ligne droite et Cône suivent librement la souris (pixel par pixel), dans la direction du clic. Cône : s'évase du lanceur (largeur « départ ») jusqu'à la longueur de zone (largeur « arrivée »). Multiplicateur : appliqué au résultat (capacité + arme) avant déduction de la défense et de la résistance élémentaire. Pour un sort « Persistant » ligne/cône : « Portée maximale » = distance max à laquelle poser l'origine de la zone (1er clic). « Longueur maximale de la zone » = longueur max de la ligne/cône lui-même. Au 2e clic (direction), la zone s'étend jusqu'au point cliqué, sans dépasser cette longueur max — tu peux donc la faire plus courte.</p>
   <div class="field full"><label>Description</label>${richEditorHtml('a_desc',a.desc||'')}</div>
@@ -4360,6 +4428,7 @@ function toggleAreaFields(){
   if(zif)zif.style.display=(v==='single'||(v==='self'&&type!=='Persistant'))?'none':'';
   const pjf=document.getElementById('a_proj_field');
   if(pjf)pjf.style.display=(v==='self')?'none':'';
+  const gcf=document.getElementById('a_gapclose_field'); if(gcf)gcf.style.display=(v==='single')?'':'none';
 }
 function toggleAbilityTypeFields(){
   const val=document.getElementById('a_type').value;
@@ -4369,6 +4438,7 @@ function toggleAbilityTypeFields(){
   document.getElementById('ability_normal_fields').style.display=(isTransfo||isSkill)?'none':'contents';
   document.getElementById('ability_skill_fields').style.display=isSkill?'contents':'none';
   document.getElementById('a_manacost_field').style.display=isSkill?'none':'';
+  document.getElementById('a_cooldown_field').style.display=isSkill?'none':'';
   document.getElementById('ability_passif_extra').style.display=val==='Passif'?'':'none';
   document.getElementById('ability_buff_extra').style.display=(val==='Buff'||val==='Persistant')?'':'none';
   toggleAreaFields();
@@ -4387,6 +4457,7 @@ function saveAbility(id){
   target.iconImage=document.getElementById('a_iconimage').value.trim()||null;
   target.type=document.getElementById('a_type').value;
   target.manaCost=Math.max(0,+document.getElementById('a_manacost').value||0);
+  target.cooldown=Math.max(0,Math.floor(+document.getElementById('a_cooldown').value||0));
   target.level=Math.max(1,Math.round(+document.getElementById('a_level').value||1));
   if(target.type==='Transformation'){
     target.transformCharId=document.getElementById('a_transformchar').value||null;
@@ -4397,7 +4468,7 @@ function saveAbility(id){
   }else if(target.type==='Compétence'){
     target.formula='0'; target.stat='Force'; target.defense='none'; target.element='Neutre';
     target.area='single'; target.areaSize=1; target.range=0; target.effect=''; target.dmgMult=''; target.atkDice='1d100';
-    target.manaCost=0; target.transformCharId=null; target.triggerOnDeath=false; target.allowRevert=false;
+    target.manaCost=0; target.cooldown=0; target.transformCharId=null; target.triggerOnDeath=false; target.allowRevert=false;
     target.desc=rteHtml('a_skilldesc');
     target.skillStat=document.getElementById('a_skillstat').value||'';
     target.skillMod=parseNum(document.getElementById('a_skillmod').value);
@@ -4410,6 +4481,7 @@ function saveAbility(id){
     target.element=document.getElementById('a_element').value;
     target.area=document.getElementById('a_area').value;
     target.areaSize=+document.getElementById('a_size').value||1;
+    target.gapClose=target.area==='single'&&!!document.getElementById('a_gapclose')?.checked;
     target.coneStart=Math.max(1,+document.getElementById('a_conestart').value||1);
     target.coneEnd=Math.max(1,+document.getElementById('a_coneend').value||3);
     target.range=Math.max(0,+document.getElementById('a_range').value||0);
@@ -4662,6 +4734,15 @@ function duplicateCharacter(id){
   S.abilities.forEach(a=>{if((a.characterIds||[]).includes(id))a.characterIds.push(c.id);});
   saveState(); render(); toast('📋 Copié : '+c.name);
 }
+function duplicateAbility(id){
+  if(!isMJ())return;
+  const o=S.abilities.find(x=>x.id===id); if(!o)return;
+  const c=structuredClone(o);
+  c.id='a'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+  c.name=copyName(o.name,S.abilities);
+  S.abilities.push(c);
+  saveState(); render(); toast('📋 Copié : '+c.name);
+}
 function onEquipSearchInput(v){equipSearchQuery=v;const c=document.getElementById('equipResultsContainer');if(c)c.innerHTML=equipResultsHtml();}
 function onEquipCatFilter(v){equipCategoryFilter=v;const c=document.getElementById('equipResultsContainer');if(c)c.innerHTML=equipResultsHtml();}
 function equipResultsHtml(){
@@ -4886,7 +4967,7 @@ function myCharacterCard(c){
   const canAlloc=c.type==='player'&&canControlChar(c.id);
   const sim=pendingSim(c), availPts=statPointsAvailable(c), leftPts=availPts-sim.cost, pendSteps=pendingStats[c.id]||[];
   const showArrows=canAlloc&&(availPts>0||pendSteps.length>0);
-  const statsHtml=Object.entries(c.stats||{}).map(([k,v])=>{
+  const statsHtml=Object.entries(c.stats||{}).filter(([k])=>c.type==='player'||!['Agilité','Social','Endurance','Artisanat'].includes(k)).map(([k,v])=>{
     const nv=sim.vals[k]??v;
     const arrows=showArrows?`<span style="display:inline-flex;gap:2px"><button class="btn ghost" style="padding:0 6px" onclick="statPointUp('${c.id}','${esc(k)}')">▲</button><button class="btn ghost" style="padding:0 6px" onclick="statPointDown('${c.id}','${esc(k)}')">▼</button></span>`:'';
     return `<div class="stat"><label>${esc(k)}</label><div class="row between"><strong>${nv}${nv!==v?` <small style="color:var(--success)">(+${nv-v})</small>`:''}</strong>${arrows}</div></div>`;
@@ -4977,7 +5058,7 @@ function hotbarPoolEntries(){
   const abilities=characterAbilities(hotbarEditChar).filter(a=>a.type!=='Compétence');
   const consumables=consumableStacks(c).map(b=>({id:b.eqId,def:equip(b.eqId)}));
   let entries=[
-    ...STAT_TESTS.map(st=>({id:'stat_'+st,label:statTestLabel(st),icon:statTestIcon(st),type:'Test'})),
+    ...((c&&c.type==='player')?STAT_TESTS:[]).map(st=>({id:'stat_'+st,label:statTestLabel(st),icon:statTestIcon(st),type:'Test'})),
     ...abilities.map(a=>({id:a.id,label:a.name,icon:a,type:a.type})),
     ...consumables.map(o=>({id:o.id,label:o.def.name,icon:o.def,type:'Consommable'}))
   ];
@@ -5678,8 +5759,8 @@ function noteItemHtml(n){
 function showMoveMenu(x,y,kind,itemId){
   if(!itemId)return;
   closeTokenMenu();
-  const cats=kind==='note'?(S.noteCategories||[]):imageCategories;
-  const fn=kind==='note'?'moveNoteToCategory':'moveImageToCategory';
+  const cats=kind==='note'?(S.noteCategories||[]):kind==='char'?(S.characterCategories||[]):imageCategories;
+  const fn=kind==='note'?'moveNoteToCategory':kind==='char'?'moveCharToCategory':'moveImageToCategory';
   const path=id=>{const p=[];let cur=id;while(cur){const c=cats.find(k=>k.id===cur);if(!c)break;p.unshift(c.name);cur=c.parent_id;}return p.join(' › ');};
   const items=`<div class="tiny muted" style="padding:4px 8px">Déplacer vers…</div><button class="btn ghost" onclick="${fn}('${itemId}',null)">🏠 Racine</button>`+cats.map(c=>`<button class="btn ghost" onclick="${fn}('${itemId}','${c.id}')">📁 ${esc(path(c.id))}</button>`).join('');
   const m=document.createElement('div'); m.id='tokenMenu'; m.className='token-menu';
