@@ -417,6 +417,7 @@ function normalizeState(){
     if(e.category===undefined)e.category=e.itemType==='weapon'?'arme':'torse';
     if(e.damageFormula===undefined)e.damageFormula='';
     if(e.weaponStat===undefined)e.weaponStat='Force';
+    if(e.hands===undefined)e.hands=1;
     if(e.poids===undefined)e.poids=0;
     if(e.price===undefined)e.price=0;
     if(e.itemType==='divers'&&e.diversCat===undefined)e.diversCat='autres';
@@ -3847,13 +3848,13 @@ function equipmentSlotsHtml(base,charId){
   const eqOpts=(cur,slotKey)=>{
     const cat=equipSlotCategory(slotKey);
     const items=(S.equipment||[]).filter(e=>e.category===cat);
-    return `<option value="">— Aucun —</option>`+items.map(e=>`<option value="${esc(e.id)}" ${cur===e.id?'selected':''}>${esc(e.icon)} ${esc(e.name)}</option>`).join('');
+    return `<option value="">— Aucun —</option>`+items.map(e=>`<option value="${esc(e.id)}" ${cur===e.id?'selected':''}>${esc(e.icon)} ${esc(e.name)}${e.itemType==='weapon'?(e.hands===2?' (2 mains)':' (1 main)'):''}</option>`).join('');
   };
   const nat=naturalRes(base);
   const w=characterTotalWeight(base), force=base.stats?.Force||0;
   return `<div class="field full"><label>🎒 Équipement (seul le MJ peut équiper)</label>
   <div class="statgrid" style="grid-template-columns:repeat(3,1fr)">
-  ${EQUIP_SLOTS.map(([k,label])=>`<div class="field"><label>${esc(label)}</label><select id="eqslot_${k}" onchange="updateWeightPreview()">${eqOpts(slots[k],k)}</select></div>`).join('')}
+  ${EQUIP_SLOTS.map(([k,label])=>`<div class="field"><label>${esc(label)}</label><select id="eqslot_${k}" onchange="${k==='arme'?'updateShieldAvailability()':'updateWeightPreview()'}">${eqOpts(slots[k],k)}</select></div>`).join('')}
   <div class="field"><label>Résistance Naturelle (auto)</label><input value="CA +${nat.ca} · DM +${nat.dm}" readonly style="opacity:.6"></div>
   </div>
   <p class="tiny muted">La Résistance Naturelle n'est pas un équipement : elle se recalcule automatiquement (Constitution/10 et Magie/10, arrondis au supérieur).</p>
@@ -4032,6 +4033,7 @@ ${abilLinkHtml}</div></div>
   <div id="charTabMerchant" style="display:none">${merchantPaneHtml()}</div>
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveCharacter('${id||''}')">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
+  updateShieldAvailability();
 }
 function saveCharacter(id){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les fiches.');return;}
@@ -4083,6 +4085,7 @@ function saveCharacter(id){
     const oldSlots={...c.equipmentSlots};
     EQUIP_SLOTS.forEach(([k])=>{const el=document.getElementById('eqslot_'+k);if(el)c.equipmentSlots[k]=el.value||null;});
         EQUIP_SLOTS.forEach(([k])=>{if(oldSlots[k]!==c.equipmentSlots[k]&&c.eqDur)delete c.eqDur[k];});
+    if(c.equipmentSlots.bouclier&&!weaponOneHanded(c)){const sh=equip(c.equipmentSlots.bouclier);if(sh)bagAdd(c,sh.id,sh.durabilityMax?getEqDurability(c,'bouclier'):null);c.equipmentSlots.bouclier=null;if(c.eqDur)delete c.eqDur.bouclier;}
   }
   document.querySelectorAll('.cab-check').forEach(el=>{const ab=S.abilities.find(x=>x.id===el.value);if(!ab)return;ab.characterIds=ab.characterIds||[];const has=ab.characterIds.includes(c.id);if(el.checked&&!has)ab.characterIds.push(c.id);else if(!el.checked&&has)ab.characterIds=ab.characterIds.filter(x=>x!==c.id);});
   if(!id)S.characters.push(c);
@@ -4637,7 +4640,7 @@ function equipResultsHtml(){
   return items.map(e=>{
     const catLabel=(EQUIP_CATEGORIES.find(c=>c[0]===e.category)||['','?'])[1];
     const baseDesc=e.itemType==='weapon'
-      ? `⚔ Arme · ${esc(catLabel)} · Dégâts : ${esc(e.damageFormula||'—')}${weaponElemText(e)} · Stat : ${esc(e.weaponStat||'Force')} · ${e.poids||0} kg`
+      ? `⚔ Arme · ${esc(catLabel)} · Dégâts : ${esc(e.damageFormula||'—')}${weaponElemText(e)}${handsTxt(e)} · Stat : ${esc(e.weaponStat||'Force')} · ${e.poids||0} kg`
       : e.itemType==='divers'
       ? `🎒 Divers (${diversCatLabel(e)}) · ${e.poids||0} kg${e.description?` · ${esc(e.description).slice(0,60)}`:''}`
       : (()=>{const resTxt=ELEMENT_RES_KEYS.filter(k=>e.res[k]).map(k=>`${k} +${e.res[k]}%`).join(', ')||'Aucune résistance';return `🛡 Armure · ${esc(catLabel)} · CA +${e.ca||0} · DM +${e.dm||0} · ${resTxt} · ${e.poids||0} kg`;})();
@@ -4699,6 +4702,7 @@ function openEquipment(id){
     <select id="eq_weaponstat">${opt('Force','Force',e.weaponStat||'Force')}${opt('Magie','Magie',e.weaponStat||'Force')}</select>
     <p class="tiny muted">Les dégâts de l'arme ne s'ajoutent que si la capacité lancée utilise cette même statistique.</p>
   </div>
+  <div class="field" id="eq_hands_field" style="display:${isWeapon?'':'none'}"><label>Type d'arme</label><select id="eq_hands">${opt('1','✋ Une main',String(e.hands||1))}${opt('2','🤲 Deux mains (interdit le bouclier)',String(e.hands||1))}</select></div>
   <div class="field full" id="eq_weapon_elem_fields" style="display:${isWeapon?'':'none'}">
     <label>Dégâts élémentaires de l'arme (formule par élément, ex : 2d20 — vide = aucun)</label>
     <div class="form">${ELEMENT_RES_KEYS.map(k=>`<div class="field"><label>${esc(k)}</label><input id="eq_ed_${k}" value="${esc((e.elemDamage||{})[k]||'')}" placeholder="ex : 2d20"></div>`).join('')}</div>
@@ -4727,6 +4731,7 @@ function toggleEquipTypeFields(){
   document.getElementById('eq_weapon_fields').style.display=isWeapon?'':'none';
   document.getElementById('eq_weaponstat_field').style.display=isWeapon?'':'none';
   document.getElementById('eq_weapon_elem_fields').style.display=isWeapon?'':'none';
+  document.getElementById('eq_hands_field').style.display=isWeapon?'':'none';
   document.getElementById('eq_armor_fields').style.display=(!isWeapon&&!isDivers)?'contents':'none';
   document.getElementById('eq_category_field').style.display=(isWeapon||isDivers)?'none':'';
   document.getElementById('eq_desc_field').style.display=isDivers?'':'none';
@@ -4756,6 +4761,7 @@ function saveEquipment(id){
     target.category='arme';
     target.damageFormula=document.getElementById('eq_damage').value.trim();
     target.weaponStat=document.getElementById('eq_weaponstat').value||'Force';
+    target.hands=document.getElementById('eq_hands').value==='2'?2:1;
     target.elemDamage={}; ELEMENT_RES_KEYS.forEach(k=>{const v=(document.getElementById('eq_ed_'+k)?.value||'').trim(); if(v)target.elemDamage[k]=v;});
     if(!target.damageFormula&&!weaponHasElem(target))target.damageFormula='1d20';
     target.ca=0; target.dm=0;
@@ -6150,13 +6156,22 @@ function readMoney(pre){const v=k=>parseNum(document.getElementById(pre+k)?.valu
 function bagWeight(c){return ((c&&c.bag)||[]).reduce((w,b)=>{const e=equip(b.eqId);return w+(e?(e.poids||0)*(b.qty||1):0);},0);}
 function equipSummary(e){
   const catLabel=(EQUIP_CATEGORIES.find(c=>c[0]===e.category)||['','?'])[1];
-  if(e.itemType==='weapon')return `⚔ ${esc(catLabel)} · Dégâts ${esc(e.damageFormula||'—')}${weaponElemText(e)}`;
+  if(e.itemType==='weapon')return `⚔ ${esc(catLabel)} · Dégâts ${esc(e.damageFormula||'—')}${weaponElemText(e)}${handsTxt(e)}`;
   if(e.itemType==='divers')return `🎒 ${esc(diversCatLabel(e))}${(e.diversCat==='consommable'&&e.useAmount)?` · +${e.useAmount} ${e.useResource==='Mana'?'💧 Mana':'❤️ PV'}`:''}${e.description?' · '+esc(e.description).slice(0,60):''}`;
   const resTxt=ELEMENT_RES_KEYS.filter(k=>e.res&&e.res[k]).map(k=>`${k} +${e.res[k]}%`).join(', ');
   return `🛡 ${esc(catLabel)} · CA +${e.ca||0} · DM +${e.dm||0}${resTxt?' · '+resTxt:''}`;
 }
+function weaponOneHanded(c){const w=equip(c&&c.equipmentSlots&&c.equipmentSlots.arme);return !!w&&w.itemType==='weapon'&&w.hands!==2;}
+function handsTxt(e){return e&&e.itemType==='weapon'?(e.hands===2?' · 🤲 2 mains':' · ✋ 1 main'):'';}
+function updateShieldAvailability(){
+  const a=document.getElementById('eqslot_arme'),b=document.getElementById('eqslot_bouclier'); if(!a||!b)return;
+  const w=equip(a.value),ok=!!w&&w.itemType==='weapon'&&w.hands!==2;
+  if(!ok)b.value=''; b.disabled=!ok; b.title=ok?'':'Nécessite une arme à une main';
+  updateWeightPreview();
+}
 function targetSlotFor(c,e){
   if(!e||e.itemType==='divers'||e.category==='divers')return null;
+  if(e.category==='bouclier'&&!weaponOneHanded(c))return null;
   if(e.category==='anneau'){const s=c.equipmentSlots||{};return !s.anneau1?'anneau1':(!s.anneau2?'anneau2':'anneau1');}
   return EQUIP_SLOTS.some(([k])=>k===e.category)?e.category:null;
 }
@@ -6187,6 +6202,7 @@ function placeItem(c,eqId,dur){
   const oldId=c.equipmentSlots[slot]; let replaced=null;
   if(oldId){const old=equip(oldId);if(old){replaced=old;bagAdd(c,oldId,old.durabilityMax?getEqDurability(c,slot):null);}}
   c.equipmentSlots[slot]=eqId;
+  if(slot==='arme'&&e.hands===2&&c.equipmentSlots.bouclier){const sh=equip(c.equipmentSlots.bouclier);if(sh)bagAdd(c,sh.id,sh.durabilityMax?getEqDurability(c,'bouclier'):null);c.equipmentSlots.bouclier=null;delete c.eqDur.bouclier;}
   if(e.durabilityMax)c.eqDur[slot]=(dur==null?e.durabilityMax:dur); else delete c.eqDur[slot];
   return {slot,replaced};
 }
@@ -6196,6 +6212,7 @@ function unequipSlot(cid,slot){
   const id=c.equipmentSlots?.[slot], e=equip(id); if(!e)return;
   bagAdd(c,id,e.durabilityMax?getEqDurability(c,slot):null);
   c.equipmentSlots[slot]=null; if(c.eqDur)delete c.eqDur[slot];
+  if(slot==='arme'&&c.equipmentSlots.bouclier){const sh=equip(c.equipmentSlots.bouclier);if(sh)bagAdd(c,sh.id,sh.durabilityMax?getEqDurability(c,'bouclier'):null);c.equipmentSlots.bouclier=null;if(c.eqDur)delete c.eqDur.bouclier;}
   addLog(`🎒 <b>${esc(c.name)}</b> range <b>${esc(e.name)}</b> dans son sac.`);
   saveState(); refreshSheet(cid);
 }
