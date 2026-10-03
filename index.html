@@ -1135,7 +1135,26 @@ function awardXp(killerInst,deadTpl){
 function char(id){return S.characters.find(c=>c.id===id);}
 function inst(id){return S.instances.find(i=>i.id===id);}
 function instTemplate(instance){return instance?char(instance.charId):null;}
-function characterAbilities(charId){if(!charId)return [];return S.abilities.filter(a=>(a.characterIds||[]).includes(charId));}
+function characterAbilities(charId){if(!charId)return [];const c=char(charId);return S.abilities.filter(a=>(a.characterIds||[]).includes(charId)&&(a.type!=='Objet'||objetCount(c,a)>0));}
+function objetCount(c,a){if(!a||!a.itemEqId)return 0;return ((c&&c.bag)||[]).filter(b=>b.eqId===a.itemEqId).reduce((n,b)=>n+(b.qty||1),0);}
+function consumeObjet(ci,a){const c=instTemplate(ci);if(!c)return;const st=(c.bag||[]).find(b=>b.eqId===a.itemEqId&&(b.qty||1)>0);if(!st)return;st.qty=(st.qty||1)-1;if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);const e=equip(a.itemEqId);addLog(`🎒 <b>${esc(ci.label)}</b> utilise <b>${esc(e?e.name:'un objet')}</b> (reste ${objetCount(c,a)}).`);}
+function buffHasDmg(a){const f=String(a.formula||'').trim();return f!==''&&f!=='0';}
+function applyBuffExtras(a,t,mult){
+  if(!(mult>0))return;
+  const out=[];
+  if(a.buffAfflictionId){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=(t.afflictions||[]).filter(x=>x.defId!==def.id);t.afflictions.push({defId:def.id,turns:0,left:a.duration||3});out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${a.duration||3} tour(s))`);}}
+  if(a.buffCaRed>0||a.buffDmRed>0){t.defMods=(t.defMods||[]).filter(m=>m.abilityId!==a.id);t.defMods.push({abilityId:a.id,ca:a.buffCaRed||0,dm:a.buffDmRed||0,turnsLeft:a.duration||3});out.push(`🛡 <b>${esc(t.label)}</b> : ${a.buffCaRed?`CA −${a.buffCaRed} `:''}${a.buffDmRed?`DM −${a.buffDmRed} `:''}(${a.duration||3} tour(s))`);}
+  if(out.length)addLog(out.join('<br>'));
+}
+function tickDefMods(t){if(!t.defMods||!t.defMods.length)return;t.defMods.forEach(m=>m.turnsLeft--);const end=t.defMods.filter(m=>m.turnsLeft<=0);t.defMods=t.defMods.filter(m=>m.turnsLeft>0);end.forEach(m=>{const a=S.abilities.find(x=>x.id===m.abilityId);addLog(`🛡 La réduction de défense « ${esc(a?a.name:'')} » se termine sur <b>${esc(t.label)}</b>.`);});}
+function scheduleGapClose(a,cid,tid,lines){
+  const ci=inst(cid),ti=inst(tid); if(!ci||!ti)return;
+  if(a.projectileImage){
+    const [x1,y1]=instCenterPx(ci),[x2,y2]=instCenterPx(ti);
+    const delay=Math.max(120,Math.hypot(x2-x1,y2-y1)/600*1000)+30;
+    setTimeout(()=>{const c2=inst(cid),t2=inst(tid);if(!c2||!t2||c2.isKO)return;const l=[];gapCloseToTarget(c2,t2,a.range,l);if(l.length)addLog(l.join('<br>'));saveState();render();},delay);
+  }else gapCloseToTarget(ci,ti,a.range,lines);
+}
 function equip(id){return (S.equipment||[]).find(e=>e.id===id);}
 function naturalRes(c){return {ca:Math.ceil((c.stats?.Constitution||0)/10),dm:Math.ceil((c.stats?.Magie||0)/10)};}
 /* ---- Durabilité (armures hors anneaux/amulette, et armes) — suivie par jeton ---- */
@@ -1260,7 +1279,8 @@ function rollWithWeapon(formula,weaponUsed,casterInst){
   }
   return {total,logLine,abTotal:r.total,wpTotal};
 }
-function effectiveDef(c,t){
+function effectiveDef(c,t){const r=effectiveDefBase(c,t);const m=(t&&t.defMods)||[];if(m.length){r.CA=Math.max(0,r.CA-m.reduce((n,x)=>n+(x.ca||0),0));r.DM=Math.max(0,r.DM-m.reduce((n,x)=>n+(x.dm||0),0));}return r;}
+function effectiveDefBase(c,t){
   if(!c)return {CA:0,DM:0,'CA naturelle':0};
   if(c.type!=='player')return {CA:c.def?.CA||0,DM:c.def?.DM||0,'CA naturelle':c.def?.['CA naturelle']||0};
   const nat=naturalRes(c);
@@ -1513,6 +1533,7 @@ function hotbarItemLookup(charId,itemId){
     return {icon:statTestIcon(st),label:statTestLabel(st),onclick:`rollStatTest('${st}')`};
   }
   const a=S.abilities.find(x=>x.id===itemId);
+  if(a&&a.type==='Objet'&&objetCount(char(charId),a)<=0)return null;
   if(a)return {icon:a,label:a.name,onclick:a.type==='Passif'?`toggleAuraForCaster('${a.id}')`:`startAbility('${a.id}')`};
   const c=char(charId);
   if(c&&consumableStacks(c).some(b=>b.eqId===itemId)){
@@ -2812,6 +2833,7 @@ function tickAfflictions(inst_){
     if(def.skipTurn)skip=true;
     if(def.preventMove)blockMove=true;
   });
+  inst_.afflictions=inst_.afflictions.filter(af=>{if(af.left==null)return true;af.left--;if(af.left>0)return true;const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);addLog(`🩸 <b>${esc(d?d.name:'')}</b> se termine sur <b>${esc(inst_.label)}</b>.`);return false;});
   return {skip,blockMove};
 }
 function advanceTurn(){
@@ -2828,6 +2850,7 @@ function advanceTurn(){
       tickCooldowns(nt);
       triggerAuras(nt);
       tickStatusEffects(nt);
+      tickDefMods(nt);
       tickPersistentZones(nt);
       const res=tickAfflictions(nt);
       nt.movementBlocked=nt.isKO?true:res.blockMove;
@@ -3359,6 +3382,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   }
   applyCooldown(a,casterInst);
+  if(a.type==='Objet')consumeObjet(casterInst,a);
   let weaponFormula=null, weaponUsed=null;
   if(casterTpl?.type==='player'&&casterTpl.equipmentSlots){
     const w=equip(casterTpl.equipmentSlots['arme']);
@@ -3448,7 +3472,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     }
   }
 
-  if(a.gapClose&&a.area==='single'&&explicitTargetInstId&&inst(explicitTargetInstId)&&inst(casterInst.id))gapCloseToTarget(casterInst,inst(explicitTargetInstId),a.range,lines);
+  if(a.gapClose&&a.area==='single'&&explicitTargetInstId&&inst(explicitTargetInstId)&&inst(casterInst.id))scheduleGapClose(a,casterInst.id,explicitTargetInstId,lines);
   addLog(lines.join('<br>'),cl.join('<br>'));
   activeAbility=null; hoverCell=null;
   if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
@@ -3491,7 +3515,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-  t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
+  applyBuffExtras(a,t,mult);if(buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
   addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${a.duration} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(a.desc?[a.desc]:[])].join('<br>'));
   activeAbility=null; hoverCell=null;
   if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
@@ -3523,7 +3547,7 @@ function resolveBuffZone(a,casterInst,start){
   }else{
     targets.forEach(t=>{
       t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-      t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
+      applyBuffExtras(a,t,mult);if(buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
       lines.push(`🌀 ${esc(t.label)} affecté (${a.duration} tour(s))`);
     });
   }
@@ -3776,6 +3800,7 @@ function startAbility(id){
   if(caster?.isKO){toast('💀 Ce personnage est inconscient.');return;}
   const a=S.abilities.find(x=>x.id===id); if(!a)return;
   if(a.type==='Compétence'){toast('🎓 Les compétences sont passives.');return;}
+  if(a.type==='Objet'&&objetCount(instTemplate(caster),a)<=0){toast('🎒 Vous n’avez plus cet objet.');return;}
   if(a.type==='Passif'){ toggleAuraForCaster(id); return; }
   if(caster&&cdLeft(caster,a)>0){toast(`⏳ ${a.name} en recharge (${cdLeft(caster,a)} tour(s) restant(s)).`);return;}
   if(a.type==='Transformation'&&a.manaCost>0&&caster&&(caster.mana||0)<a.manaCost){
@@ -4246,7 +4271,7 @@ document.addEventListener('dblclick',e=>{
 });
 
 /* ============================= CAPACITÉS : ÉDITION (MJ uniquement) ============================= */
-const ABILITY_TYPES=['Sort','Attaque','Compétence','Soin','Bouclier','Transformation','Passif','Buff','Persistant'];
+const ABILITY_TYPES=['Sort','Attaque','Compétence','Soin','Bouclier','Transformation','Passif','Buff','Persistant','Objet'];
 function abilitiesPage(){
   const mj=isMJ();
   const typeOpts=`<option value="">Tous types</option>`+ABILITY_TYPES.map(t=>opt(t,t,abilityTypeFilter)).join('');
@@ -4328,6 +4353,8 @@ function openAbility(id){
   <div class="field" id="a_cooldown_field" style="display:${isSkill?'none':''}"><label>Cooldown (tours — vide = aucun)</label><input id="a_cooldown" type="number" min="0" value="${a.cooldown||''}" placeholder="aucun"></div>
   <div class="field" id="ability_passif_extra" style="display:${a.type==='Passif'?'':'none'}"><label>Effet de l'aura</label><select id="a_auraeffect">${opt('damage','Dégâts',a.auraEffect)}${opt('heal','Soin',a.auraEffect)}${opt('shield','Bouclier',a.auraEffect)}</select><p class="tiny muted">Aura auto-centrée sur le lanceur (zone = Carré ou Cercle uniquement), se déclenche à chaque début de son tour.</p></div>
   <div class="field" id="ability_buff_extra" style="display:${(a.type==='Buff'||a.type==='Persistant')?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.duration||3}"><p class="tiny muted">${a.type==='Persistant'?"Nombre de tours avant que la zone persistante ne s'estompe. Chaque token qui commence son tour dans la zone subit l'effet (calculé comme si le lanceur agissait à chaque fois).":"Cible unique ou zone (voir champ Zone ci-dessous). Effet auto à chaque début de tour de la/les cible(s) pendant N tours. Choisis toi-même la défense ciblée (dont « Aucune »)."}</p></div>
+  <div class="field full" id="ability_buff_extra2" style="display:${a.type==='Buff'?'':'none'}"><label>🩸 Affliction appliquée si le sort touche (durée = champ Durée)</label><select id="a_buffaff">${opt('','— Aucune —',a.buffAfflictionId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.buffAfflictionId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px"><div class="field"><label>Réduction de CA</label><input id="a_buffca" type="number" min="0" value="${a.buffCaRed||0}"></div><div class="field"><label>Réduction de DM</label><input id="a_buffdm" type="number" min="0" value="${a.buffDmRed||0}"></div></div><p class="tiny muted">Appliqué à chaque cible touchée (pas en cas d'échec). Mets la formule à 0 si tu ne veux aucun dégât/soin par tour.</p></div>
+  <div class="field full" id="ability_objet_extra" style="display:${a.type==='Objet'?'':'none'}"><label>🎒 Objet divers consommé à chaque utilisation</label><select id="a_itemeq">${opt('','— Choisir —',a.itemEqId||'')}${(S.equipment||[]).filter(e=>e.itemType==='divers').map(e=>opt(e.id,e.name,a.itemEqId||'')).join('')}</select></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
     <div class="field full"><label>Se transforme en</label>
     <input type="hidden" id="a_transformchar" value="${esc(a.transformCharId||'')}">
@@ -4472,6 +4499,8 @@ function toggleAbilityTypeFields(){
   document.getElementById('a_cooldown_field').style.display=isSkill?'none':'';
   document.getElementById('ability_passif_extra').style.display=val==='Passif'?'':'none';
   document.getElementById('ability_buff_extra').style.display=(val==='Buff'||val==='Persistant')?'':'none';
+  document.getElementById('ability_buff_extra2').style.display=val==='Buff'?'':'none';
+  document.getElementById('ability_objet_extra').style.display=val==='Objet'?'':'none';
   toggleAreaFields();
 }
 function filterAbilityCharList(){
@@ -4535,6 +4564,10 @@ function saveAbility(id){
     target.transformCharId=null; target.triggerOnDeath=false; target.allowRevert=false;
     target.auraEffect=document.getElementById('a_auraeffect')?document.getElementById('a_auraeffect').value:'damage';
     target.duration=Math.max(1,+(document.getElementById('a_duration')?.value)||3);
+    target.buffAfflictionId=document.getElementById('a_buffaff')?.value||null;
+    target.buffCaRed=Math.max(0,parseNum(document.getElementById('a_buffca')?.value));
+    target.buffDmRed=Math.max(0,parseNum(document.getElementById('a_buffdm')?.value));
+    target.itemEqId=document.getElementById('a_itemeq')?.value||null;
     if(target.type==='Passif'){
       if(target.area!=='circle'&&target.area!=='square')target.area='square';
     }
