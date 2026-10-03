@@ -3261,30 +3261,59 @@ function resolveOpportunityAttack(attackerInst,targetInst){
   if(targetInst.hp<=0){lines.push(`💀 <b>${esc(targetInst.label)} est KO</b>.`);handleInstanceDeath(targetInst,attackerInst);}
   addLog(lines.join('<br>'),damage>0?`${esc(attackerInst.label)} inflige ${damage} dégâts à ${esc(targetInst.label)}`:'');
 }
-function gapCloseToTarget(ci,ti,range,lines){
+function gapPath(ci,ti,range){
   const sw=ci.sizeW||1,sh=ci.sizeH||1,tw=ti.sizeW||1,th=ti.sizeH||1;
   const near=(x,y)=>footprintDistance(x,y,sw,sh,ti.x,ti.y,tw,th)<=1;
-  if(near(ci.x,ci.y))return;
-  const key=(x,y)=>x+','+y, prev={}; prev[key(ci.x,ci.y)]=null;
-  let frontier=[[ci.x,ci.y]], goal=null;
-  const maxSteps=range>0?range:99;
-  for(let d=1;d<=maxSteps&&!goal&&frontier.length;d++){
-    const next=[];
-    for(const [x,y] of frontier){
-      for(let dx=-1;dx<=1&&!goal;dx++)for(let dy=-1;dy<=1&&!goal;dy++){
+  if(near(ci.x,ci.y))return [];
+  const key=(x,y)=>x+','+y;
+  const free=(x,y)=>!footprintOverlap(ci.id,x,y,sw,sh);
+  const bfs=(sx,sy,limit)=>{
+    const d={[key(sx,sy)]:0}; let fr=[[sx,sy]];
+    for(let k=1;k<=limit&&fr.length;k++){
+      const nx=[];
+      for(const [x,y] of fr)for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++){
         if(!dx&&!dy)continue;
-        const nx=x+dx,ny=y+dy,k=key(nx,ny);
-        if(k in prev||footprintOverlap(ci.id,nx,ny,sw,sh))continue;
-        prev[k]=[x,y]; next.push([nx,ny]);
-        if(near(nx,ny))goal=[nx,ny];
+        const a=x+dx,b=y+dy,kk=key(a,b);
+        if(kk in d||!free(a,b))continue;
+        d[kk]=k; nx.push([a,b]);
       }
+      fr=nx;
     }
-    frontier=next;
+    return d;
+  };
+  const maxSteps=range>0?range:99;
+  const dc=bfs(ci.x,ci.y,maxSteps);
+  let goal=null,bd=1e9,be=1e9;
+  Object.keys(dc).forEach(k=>{
+    const [x,y]=k.split(',').map(Number);
+    if(!near(x,y))return;
+    const e=Math.hypot(x-ci.x,y-ci.y);
+    if(dc[k]<bd||(dc[k]===bd&&e<be)){goal=[x,y];bd=dc[k];be=e;}
+  });
+  if(!goal)return null;
+  const dg=bfs(goal[0],goal[1],200);
+  const path=[]; let cur=[ci.x,ci.y];
+  const vx=goal[0]-ci.x, vy=goal[1]-ci.y;
+  let guard=0;
+  while((cur[0]!==goal[0]||cur[1]!==goal[1])&&guard++<200){
+    const dcur=dg[key(cur[0],cur[1])]; let best=null,bs=1e9;
+    for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++){
+      if(!dx&&!dy)continue;
+      const a=cur[0]+dx,b=cur[1]+dy,dd=dg[key(a,b)];
+      if(dd===undefined||dd!==dcur-1)continue;
+      const off=Math.abs((a-ci.x)*vy-(b-ci.y)*vx);
+      if(off<bs){bs=off;best=[a,b];}
+    }
+    if(!best)return null;
+    path.push(best); cur=best;
   }
-  if(!goal){lines.push(`🚫 ${esc(ci.label)} ne peut pas rejoindre sa cible.`);return;}
-  const path=[]; let cur=goal;
-  while(cur&&!(cur[0]===ci.x&&cur[1]===ci.y)){path.unshift(cur);cur=prev[key(cur[0],cur[1])];}
-  const id=ci.id;
+  return path;
+}
+function gapCloseToTarget(ci,ti,range,lines){
+  const path=gapPath(ci,ti,range);
+  if(path===null){lines.push(`🚫 ${esc(ci.label)} ne peut pas rejoindre sa cible.`);return;}
+  if(!path.length)return;
+  const id=ci.id, sw=ci.sizeW||1, sh=ci.sizeH||1;
   for(const [nx,ny] of path){
     const old={x:ci.x,y:ci.y,sizeW:sw,sizeH:sh};
     ci.x=nx; ci.y=ny; ci.px=null; ci.py=null;
@@ -3324,6 +3353,7 @@ function resolveAbility(a,start,explicitTargetInstId){
       return;
     }
   }
+  if(a.gapClose&&a.area==='single'&&explicitTargetInstId){const ti0=inst(explicitTargetInstId);if(ti0&&gapPath(casterInst,ti0,a.range)===null){toast('🚫 Vous ne pouvez pas rejoindre ce personnage.');return;}}
   const casterTpl=instTemplate(casterInst);
   if(a.manaCost>0){
     casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
