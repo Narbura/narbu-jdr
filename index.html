@@ -1141,12 +1141,15 @@ function forcedTarget(ci){for(const af of (ci.afflictions||[])){const d=(S.affli
 function objetCount(c,a){if(!a||!a.itemEqId)return 0;return ((c&&c.bag)||[]).filter(b=>b.eqId===a.itemEqId).reduce((n,b)=>n+(b.qty||1),0);}
 function consumeObjet(ci,a){const c=instTemplate(ci);if(!c)return;const st=(c.bag||[]).find(b=>b.eqId===a.itemEqId&&(b.qty||1)>0);if(!st)return;st.qty=(st.qty||1)-1;if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);const e=equip(a.itemEqId);addLog(`🎒 <b>${esc(ci.label)}</b> utilise <b>${esc(e?e.name:'un objet')}</b> (reste ${objetCount(c,a)}).`);}
 function buffHasDmg(a){const f=String(a.formula||'').trim();return f!==''&&f!=='0';}
+function addDur(o,n){return (o==null||n==null)?null:o+n;}
 function buffDur(a,mult){const k=mult>=4?'ult':mult>=2?'cri':mult>=1.5?'gra':mult>=1?'rea':'leg';const v=a.durBy&&a.durBy[k];if(v>0)return v;return a.duration>0?a.duration:null;}
 function applyObjetAffliction(a,t,mult,ci,lines){
   if(!(mult>0)||!a.objAffId)return;
   const def=(S.afflictionDefs||[]).find(d=>d.id===a.objAffId); if(!def)return;
-  t.afflictions=(t.afflictions||[]).filter(x=>x.defId!==def.id);
-  t.afflictions.push({defId:def.id,turns:0,left:a.objAffTurns>0?a.objAffTurns:null,src:ci?ci.id:null});
+  t.afflictions=t.afflictions||[];
+  const nd=a.objAffTurns>0?a.objAffTurns:null, ex=t.afflictions.find(x=>x.defId===def.id);
+  if(ex){ex.left=addDur(ex.left,nd);ex.src=ci?ci.id:ex.src;}
+  else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null});
   lines.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${a.objAffTurns>0?a.objAffTurns+' tour(s)':"jusqu'au retrait"})`);
 }
 function afterCast(a,ci){
@@ -1156,8 +1159,8 @@ function afterCast(a,ci){
 function applyBuffExtras(a,t,mult,ci){
   if(!(mult>0))return;
   const out=[];
-  if(a.buffAfflictionId){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=(t.afflictions||[]).filter(x=>x.defId!==def.id);t.afflictions.push({defId:def.id,turns:0,left:buffDur(a,mult),src:ci?ci.id:null});out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${buffDur(a,mult)??'∞'} tour(s))`);}}
-  if(a.buffCaRed>0||a.buffDmRed>0){t.defMods=(t.defMods||[]).filter(m=>m.abilityId!==a.id);t.defMods.push({abilityId:a.id,ca:a.buffCaRed||0,dm:a.buffDmRed||0,turnsLeft:buffDur(a,mult)});out.push(`🛡 <b>${esc(t.label)}</b> : ${a.buffCaRed?`CA −${a.buffCaRed} `:''}${a.buffDmRed?`DM −${a.buffDmRed} `:''}(${buffDur(a,mult)??'∞'} tour(s))`);}
+  if(a.buffAfflictionId){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=t.afflictions||[];{const nd=buffDur(a,mult),ex=t.afflictions.find(x=>x.defId===def.id);if(ex){ex.left=addDur(ex.left,nd);ex.src=ci?ci.id:ex.src;}else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null});}out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${buffDur(a,mult)??'∞'} tour(s))`);}}
+  if(a.buffCaRed>0||a.buffDmRed>0){t.defMods=t.defMods||[];{const nd=buffDur(a,mult),ex=t.defMods.find(m=>m.abilityId===a.id);if(ex){ex.turnsLeft=addDur(ex.turnsLeft,nd);ex.ca=a.buffCaRed||0;ex.dm=a.buffDmRed||0;}else t.defMods.push({abilityId:a.id,ca:a.buffCaRed||0,dm:a.buffDmRed||0,turnsLeft:nd});}out.push(`🛡 <b>${esc(t.label)}</b> : ${a.buffCaRed?`CA −${a.buffCaRed} `:''}${a.buffDmRed?`DM −${a.buffDmRed} `:''}(${buffDur(a,mult)??'∞'} tour(s))`);}
   if(out.length)addLog(out.join('<br>'));
 }
 function tickDefMods(t){if(!t.defMods||!t.defMods.length)return;t.defMods.forEach(m=>{if(m.turnsLeft!=null)m.turnsLeft--;});const end=t.defMods.filter(m=>m.turnsLeft!=null&&m.turnsLeft<=0);t.defMods=t.defMods.filter(m=>m.turnsLeft==null||m.turnsLeft>0);end.forEach(m=>{const a=S.abilities.find(x=>x.id===m.abilityId);addLog(`🛡 La réduction de défense « ${esc(a?a.name:'')} » se termine sur <b>${esc(t.label)}</b>.`);});}
@@ -3543,8 +3546,8 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   const atkExpr=a.atkDice||'1d100'; const atkRoll=roll(atkExpr); const atk=atkRoll.total; const [label,mult]=outcome(atk);
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
-  t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-  applyBuffExtras(a,t,mult,casterInst);if(mult>0&&buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:buffDur(a,mult)});
+  const prevSE=(t.statusEffects||[]).find(se=>se.abilityId===a.id);if(mult>0)t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
+  applyBuffExtras(a,t,mult,casterInst);if(mult>0&&buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:buffDur(a,mult)});if(prevSE&&mult>0&&buffHasDmg(a)){const nse=t.statusEffects[t.statusEffects.length-1];nse.turnsLeft=addDur(prevSE.turnsLeft,nse.turnsLeft);}
   playAbilityFX(a,casterInst,[t],[t.x,t.y]);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,casterId:casterInst.id,targetIds:[t.id],start:[t.x,t.y]}});
   addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${buffDur(a,mult)??'∞'} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(a.desc?[a.desc]:[])].join('<br>'));
   activeAbility=null; hoverCell=null;
@@ -3577,8 +3580,8 @@ function resolveBuffZone(a,casterInst,start){
     lines.push('<span class="muted">Aucune cible valide dans la zone.</span>');
   }else{
     targets.forEach(t=>{
-      t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-      applyBuffExtras(a,t,mult,casterInst);if(mult>0&&buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:buffDur(a,mult)});
+      const prevSE=(t.statusEffects||[]).find(se=>se.abilityId===a.id);if(mult>0)t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
+      applyBuffExtras(a,t,mult,casterInst);if(mult>0&&buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:buffDur(a,mult)});if(prevSE&&mult>0&&buffHasDmg(a)){const nse=t.statusEffects[t.statusEffects.length-1];nse.turnsLeft=addDur(prevSE.turnsLeft,nse.turnsLeft);}
       lines.push(mult>0?`🌀 ${esc(t.label)} affecté (${buffDur(a,mult)??'∞'} tour(s))`:`${esc(t.label)} n'est pas affecté·e.`);
     });
   }
