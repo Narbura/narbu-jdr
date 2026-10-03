@@ -1141,14 +1141,26 @@ function forcedTarget(ci){for(const af of (ci.afflictions||[])){const d=(S.affli
 function objetCount(c,a){if(!a||!a.itemEqId)return 0;return ((c&&c.bag)||[]).filter(b=>b.eqId===a.itemEqId).reduce((n,b)=>n+(b.qty||1),0);}
 function consumeObjet(ci,a){const c=instTemplate(ci);if(!c)return;const st=(c.bag||[]).find(b=>b.eqId===a.itemEqId&&(b.qty||1)>0);if(!st)return;st.qty=(st.qty||1)-1;if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);const e=equip(a.itemEqId);addLog(`🎒 <b>${esc(ci.label)}</b> utilise <b>${esc(e?e.name:'un objet')}</b> (reste ${objetCount(c,a)}).`);}
 function buffHasDmg(a){const f=String(a.formula||'').trim();return f!==''&&f!=='0';}
+function buffDur(a,mult){const k=mult>=4?'ult':mult>=2?'cri':mult>=1.5?'gra':mult>=1?'rea':'leg';const v=a.durBy&&a.durBy[k];if(v>0)return v;return a.duration>0?a.duration:null;}
+function applyObjetAffliction(a,t,mult,ci,lines){
+  if(!(mult>0)||!a.objAffId)return;
+  const def=(S.afflictionDefs||[]).find(d=>d.id===a.objAffId); if(!def)return;
+  t.afflictions=(t.afflictions||[]).filter(x=>x.defId!==def.id);
+  t.afflictions.push({defId:def.id,turns:0,left:a.objAffTurns>0?a.objAffTurns:null,src:ci?ci.id:null});
+  lines.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${a.objAffTurns>0?a.objAffTurns+' tour(s)':"jusqu'au retrait"})`);
+}
+function afterCast(a,ci){
+  if(!S.combat.active||!ci||S.combat.order[S.combat.turn]!==ci.id)return;
+  if(a&&a.bonusAction)ci.bonusUsed=true; else advanceTurn();
+}
 function applyBuffExtras(a,t,mult,ci){
   if(!(mult>0))return;
   const out=[];
-  if(a.buffAfflictionId){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=(t.afflictions||[]).filter(x=>x.defId!==def.id);t.afflictions.push({defId:def.id,turns:0,left:a.duration||3,src:ci?ci.id:null});out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${a.duration||3} tour(s))`);}}
-  if(a.buffCaRed>0||a.buffDmRed>0){t.defMods=(t.defMods||[]).filter(m=>m.abilityId!==a.id);t.defMods.push({abilityId:a.id,ca:a.buffCaRed||0,dm:a.buffDmRed||0,turnsLeft:a.duration||3});out.push(`🛡 <b>${esc(t.label)}</b> : ${a.buffCaRed?`CA −${a.buffCaRed} `:''}${a.buffDmRed?`DM −${a.buffDmRed} `:''}(${a.duration||3} tour(s))`);}
+  if(a.buffAfflictionId){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=(t.afflictions||[]).filter(x=>x.defId!==def.id);t.afflictions.push({defId:def.id,turns:0,left:buffDur(a,mult),src:ci?ci.id:null});out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${buffDur(a,mult)??'∞'} tour(s))`);}}
+  if(a.buffCaRed>0||a.buffDmRed>0){t.defMods=(t.defMods||[]).filter(m=>m.abilityId!==a.id);t.defMods.push({abilityId:a.id,ca:a.buffCaRed||0,dm:a.buffDmRed||0,turnsLeft:buffDur(a,mult)});out.push(`🛡 <b>${esc(t.label)}</b> : ${a.buffCaRed?`CA −${a.buffCaRed} `:''}${a.buffDmRed?`DM −${a.buffDmRed} `:''}(${buffDur(a,mult)??'∞'} tour(s))`);}
   if(out.length)addLog(out.join('<br>'));
 }
-function tickDefMods(t){if(!t.defMods||!t.defMods.length)return;t.defMods.forEach(m=>m.turnsLeft--);const end=t.defMods.filter(m=>m.turnsLeft<=0);t.defMods=t.defMods.filter(m=>m.turnsLeft>0);end.forEach(m=>{const a=S.abilities.find(x=>x.id===m.abilityId);addLog(`🛡 La réduction de défense « ${esc(a?a.name:'')} » se termine sur <b>${esc(t.label)}</b>.`);});}
+function tickDefMods(t){if(!t.defMods||!t.defMods.length)return;t.defMods.forEach(m=>{if(m.turnsLeft!=null)m.turnsLeft--;});const end=t.defMods.filter(m=>m.turnsLeft!=null&&m.turnsLeft<=0);t.defMods=t.defMods.filter(m=>m.turnsLeft==null||m.turnsLeft>0);end.forEach(m=>{const a=S.abilities.find(x=>x.id===m.abilityId);addLog(`🛡 La réduction de défense « ${esc(a?a.name:'')} » se termine sur <b>${esc(t.label)}</b>.`);});}
 function scheduleGapClose(a,cid,tid,lines){
   const ci=inst(cid),ti=inst(tid); if(!ci||!ti)return;
   if(a.projectileImage){
@@ -2348,7 +2360,7 @@ function playAbilityFX(a,casterInst,targets,start){
   const impactImg=a.impactSpritesheet?getFxImg(a.impactSpritesheet,a.spriteAuto):null;
   const projFrames=Math.max(1,a.projectileFrames||1);
   const projRows=Math.max(1,a.projectileRows||1);
-  const psz=Math.max(1,a.projectileSize||1), psize=cell*(psz===1?0.9:psz);
+  const psz=Math.max(0.1,a.projectileSize||1), psize=cell*(psz===1?0.9:psz);
   fxProjSpeed=Math.max(50,a.projectileSpeed||600);
   const impactFrames=Math.max(1,a.impactFrames||1);
   const [fromX,fromY]=instCenterPx(casterInst);
@@ -2815,7 +2827,7 @@ function tickStatusEffects(inst_){
       broadcastHud(inst_.id,{hp:-hpDmg,shield:absorbed>0?-absorbed:0});
       if(inst_.hp<=0){addLog(`💀 <b>${esc(inst_.label)} est KO</b>.`);handleInstanceDeath(inst_);}
     }
-    se.turnsLeft--;
+    if(se.turnsLeft==null){remaining.push(se);return;}se.turnsLeft--;
     if(se.turnsLeft>0)remaining.push(se);
     else addLog(`🌀 <b>${esc(se.name)}</b> se termine sur <b>${esc(inst_.label)}</b>.`);
   });
@@ -2851,7 +2863,7 @@ function advanceTurn(){
     const nt=inst(S.combat.order[S.combat.turn]);
     if(nt){
       const tpl=instTemplate(nt);
-      nt.remainingMove=nt.isKO?0:effectiveMove(tpl);
+      nt.remainingMove=nt.isKO?0:effectiveMove(tpl); nt.bonusUsed=false;
       nt.movementBlocked=nt.isKO?true:false;
       tickCooldowns(nt);
       triggerAuras(nt);
@@ -3440,6 +3452,7 @@ function resolveAbility(a,start,explicitTargetInstId){
 
   for(const t of targets){
     const tTpl=instTemplate(t);
+    if(a.type==='Objet'||a._objet)applyObjetAffliction(a,t,mult,casterInst,lines);
     if(a.type==='Soin'){
       const r=isAoE?sharedRoll:roll(a.formula);
       if(!isAoE)broadcastDiceRoll(formulaSides(a.formula),r.rolls);
@@ -3491,7 +3504,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   if(a.gapClose&&a.area==='single'&&explicitTargetInstId&&inst(explicitTargetInstId)&&inst(casterInst.id))scheduleGapClose(a,casterInst.id,explicitTargetInstId,lines);
   addLog(lines.join('<br>'),cl.join('<br>'));
   activeAbility=null; hoverCell=null;
-  if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
+  afterCast(a,casterInst);
   saveState(); render();
 }
 /* ============================= AURA PASSIVE (type Passif) ============================= */
@@ -3531,10 +3544,11 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-  applyBuffExtras(a,t,mult,casterInst);if(buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
-  addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${a.duration} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(a.desc?[a.desc]:[])].join('<br>'));
+  applyBuffExtras(a,t,mult,casterInst);if(mult>0&&buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:buffDur(a,mult)});
+  playAbilityFX(a,casterInst,[t],[t.x,t.y]);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,casterId:casterInst.id,targetIds:[t.id],start:[t.x,t.y]}});
+  addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${buffDur(a,mult)??'∞'} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(a.desc?[a.desc]:[])].join('<br>'));
   activeAbility=null; hoverCell=null;
-  if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
+  afterCast(a,casterInst);
   saveState(); render();
 }
 function resolveBuffZone(a,casterInst,start){
@@ -3556,6 +3570,7 @@ function resolveBuffZone(a,casterInst,start){
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   const targets=affected(a,start);
+  playAbilityFX(a,casterInst,targets,start);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,casterId:casterInst.id,targetIds:targets.map(x=>x.id),start}});
   const lines=[`🌀 <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b> en zone (🎲 ${esc(atkExpr)} : ${atk} → ${label})`];
   if(a.desc)lines.push(a.desc);
   if(!targets.length){
@@ -3563,13 +3578,13 @@ function resolveBuffZone(a,casterInst,start){
   }else{
     targets.forEach(t=>{
       t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-      applyBuffExtras(a,t,mult,casterInst);if(buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
-      lines.push(`🌀 ${esc(t.label)} affecté (${a.duration} tour(s))`);
+      applyBuffExtras(a,t,mult,casterInst);if(mult>0&&buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:buffDur(a,mult)});
+      lines.push(mult>0?`🌀 ${esc(t.label)} affecté (${buffDur(a,mult)??'∞'} tour(s))`:`${esc(t.label)} n'est pas affecté·e.`);
     });
   }
   addLog(lines.join('<br>'));
   activeAbility=null; hoverCell=null;
-  if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
+  afterCast(a,casterInst);
   saveState(); render();
 }
 /* ============================= ZONES PERSISTANTES (type Persistant) ============================= */
@@ -3615,7 +3630,7 @@ function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride
   S.persistentZones.push(zone);
   addLog([`🌫️ <b>${esc(casterInst.label)}</b> invoque <b>${esc(a.name)}</b> (zone persistante, ${zone.turnsLeft} tour(s)).`,...(a.desc?[a.desc]:[])].join('<br>'));
   activeAbility=null; hoverCell=null;
-  if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
+  afterCast(a,casterInst);
   saveState(); render();
 }
 function tokenInPersistentZone(t,z){
@@ -3733,11 +3748,11 @@ function applyRest(ratio){
 }
 function applyDissipation(targetInstId){
   const t=inst(targetInstId); if(!t)return;
-  const had=(t.afflictions||[]).length;
+  const had=(t.afflictions||[]).length+(t.statusEffects||[]).length+(t.defMods||[]).length;t.statusEffects=[];t.defMods=[];
   t.afflictions=[];
   const nbZones=(S.persistentZones||[]).length;
   S.persistentZones=[];
-  addLog(`🧹 Dissipation appliquée sur <b>${esc(t.label)}</b> (${had} affliction(s) retirée(s), ${nbZones} zone(s) persistante(s) retirée(s) de la carte).`);
+  addLog(`🧹 Dissipation appliquée sur <b>${esc(t.label)}</b> (${had} effet(s)/malus retiré(s), ${nbZones} zone(s) persistante(s) retirée(s) de la carte).`);
   activeAbility=null; hoverCell=null;
   saveState(); render();
 }
@@ -3816,6 +3831,7 @@ function startAbility(id){
   if(caster?.isKO){toast('💀 Ce personnage est inconscient.');return;}
   const a=S.abilities.find(x=>x.id===id); if(!a)return;
   if(a.type==='Compétence'){toast('🎓 Les compétences sont passives.');return;}
+  if(a.bonusAction&&S.combat.active&&caster&&caster.bonusUsed){toast('⚡ Action bonus déjà utilisée ce tour.');return;}
   if(a.type==='Objet'&&objetCount(instTemplate(caster),a)<=0){toast('🎒 Vous n’avez plus cet objet.');return;}
   if(a.type==='Passif'){ toggleAuraForCaster(id); return; }
   if(caster&&cdLeft(caster,a)>0){toast(`⏳ ${a.name} en recharge (${cdLeft(caster,a)} tour(s) restant(s)).`);return;}
@@ -3888,7 +3904,7 @@ function castTransformation(a){
   transformInstance(caster.id,a.transformCharId,a.allowRevert);
   addLog(`🔄 <b>${esc(fromName)}</b> se transforme en <b>${esc(caster.label)}</b> (${esc(a.name)}).`);
   activeAbility=null; hoverCell=null;
-  if(S.combat.active&&S.combat.order[S.combat.turn]===caster.id)advanceTurn();
+  afterCast(a,caster);
   saveState(); render();
 }
 function handleInstanceDeath(t,killer){
@@ -4328,7 +4344,7 @@ function abilityResultsHtml(){
       : a.type==='Passif'
       ? `Aura (${esc(a.area)} ${a.areaSize}) · ${esc(a.formula)} · Effet : ${a.auraEffect==='heal'?'Soin':a.auraEffect==='shield'?'Bouclier':'Dégâts'} · Mana/tick ${a.manaCost||0}`
       : a.type==='Buff'
-      ? `Buff/Débuff · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · ${a.duration} tour(s) · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
+      ? `Buff/Débuff · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · ${a.duration||'∞'} tour(s) · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
       : a.type==='Persistant'
       ? `Zone persistante · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?`Ligne (zone ${a.zoneRange||a.range} cases)`:a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3} (zone ${a.zoneRange||a.range} cases)`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · ${a.duration} tour(s) · Portée origine ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
       : `${esc(a.type)}${a.hotkey?` [${esc(a.hotkey)}]`:''} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`;
@@ -4366,11 +4382,12 @@ function openAbility(id){
   <div class="field"><label>Type</label><select id="a_type" onchange="toggleAbilityTypeFields()">${typeOpts}</select></div>
   <div class="field"><label>Niveau de la capacité</label><input id="a_level" type="number" min="1" value="${a.level||1}"></div>
   <div class="field" id="a_manacost_field" style="display:${isSkill?'none':''}"><label>Coût en mana (0 = aucun)</label><input id="a_manacost" type="number" min="0" value="${a.manaCost??0}"></div>
+  <div class="field full"><label><input type="checkbox" id="a_bonus" ${a.bonusAction?'checked':''}> ⚡ Action bonus (ne termine pas le tour ; une seule par tour)</label></div>
   <div class="field" id="a_cooldown_field" style="display:${isSkill?'none':''}"><label>Cooldown (tours — vide = aucun)</label><input id="a_cooldown" type="number" min="0" value="${a.cooldown||''}" placeholder="aucun"></div>
   <div class="field" id="ability_passif_extra" style="display:${a.type==='Passif'?'':'none'}"><label>Effet de l'aura</label><select id="a_auraeffect">${opt('damage','Dégâts',a.auraEffect)}${opt('heal','Soin',a.auraEffect)}${opt('shield','Bouclier',a.auraEffect)}</select><p class="tiny muted">Aura auto-centrée sur le lanceur (zone = Carré ou Cercle uniquement), se déclenche à chaque début de son tour.</p></div>
-  <div class="field" id="ability_buff_extra" style="display:${(a.type==='Buff'||a.type==='Persistant')?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.duration||3}"><p class="tiny muted">${a.type==='Persistant'?"Nombre de tours avant que la zone persistante ne s'estompe. Chaque token qui commence son tour dans la zone subit l'effet (calculé comme si le lanceur agissait à chaque fois).":"Cible unique ou zone (voir champ Zone ci-dessous). Effet auto à chaque début de tour de la/les cible(s) pendant N tours. Choisis toi-même la défense ciblée (dont « Aucune »)."}</p></div>
-  <div class="field full" id="ability_buff_extra2" style="display:${a.type==='Buff'?'':'none'}"><label>🩸 Affliction appliquée si le sort touche (durée = champ Durée)</label><select id="a_buffaff">${opt('','— Aucune —',a.buffAfflictionId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.buffAfflictionId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px"><div class="field"><label>Réduction de CA</label><input id="a_buffca" type="number" min="0" value="${a.buffCaRed||0}"></div><div class="field"><label>Réduction de DM</label><input id="a_buffdm" type="number" min="0" value="${a.buffDmRed||0}"></div></div><p class="tiny muted">Appliqué à chaque cible touchée (pas en cas d'échec). Mets la formule à 0 si tu ne veux aucun dégât/soin par tour.</p></div>
-  <div class="field full" id="ability_objet_extra" style="display:${a.type==='Objet'?'':'none'}"><label>🎒 Objet divers consommé à chaque utilisation</label><select id="a_objeteffect" style="margin-bottom:6px">${opt('damage','Effet : dégâts',a.objetEffect||'damage')}${opt('heal','Effet : soin',a.objetEffect||'damage')}${opt('shield','Effet : bouclier',a.objetEffect||'damage')}${opt('mana','Effet : mana',a.objetEffect||'damage')}</select><select id="a_itemeq">${opt('','— Choisir —',a.itemEqId||'')}${(S.equipment||[]).filter(e=>e.itemType==='divers').map(e=>opt(e.id,e.name,a.itemEqId||'')).join('')}</select></div>
+  <div class="field" id="ability_buff_extra" style="display:${(a.type==='Buff'||a.type==='Persistant')?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.type==='Buff'?(a.duration||''):(a.duration||3)}" placeholder="${a.type==='Buff'?'vide = permanent':''}"><p class="tiny muted">${a.type==='Persistant'?"Nombre de tours avant que la zone persistante ne s'estompe. Chaque token qui commence son tour dans la zone subit l'effet (calculé comme si le lanceur agissait à chaque fois).":"Cible unique ou zone (voir champ Zone ci-dessous). Effet auto à chaque début de tour de la/les cible(s) pendant N tours. Choisis toi-même la défense ciblée (dont « Aucune »)."}</p></div>
+  <div class="field full" id="ability_buff_extra2" style="display:${a.type==='Buff'?'':'none'}"><label>🩸 Affliction appliquée si le sort touche (durée = champ Durée)</label><select id="a_buffaff">${opt('','— Aucune —',a.buffAfflictionId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.buffAfflictionId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px"><div class="field"><label>Réduction de CA</label><input id="a_buffca" type="number" min="0" value="${a.buffCaRed||0}"></div><div class="field"><label>Réduction de DM</label><input id="a_buffdm" type="number" min="0" value="${a.buffDmRed||0}"></div></div><label style="margin-top:8px">⏱ Durée selon la réussite (vide = utilise la Durée ; Durée vide aussi = permanent jusqu'à la dissipation)</label><div class="row" style="gap:10px;flex-wrap:wrap">${[['leg','Légère réussite'],['rea','Réussite'],['gra','Grande réussite'],['cri','Réussite critique'],['ult','Réussite ultime']].map(([k,l])=>`<div class="field" style="max-width:120px"><label>${l}</label><input id="a_dur${k}" type="number" min="1" value="${(a.durBy||{})[k]||''}"></div>`).join('')}</div><p class="tiny muted">Appliqué à chaque cible touchée (pas en cas d'échec). Mets la formule à 0 si tu ne veux aucun dégât/soin par tour.</p></div>
+  <div class="field full" id="ability_objet_extra" style="display:${a.type==='Objet'?'':'none'}"><label>🎒 Objet divers consommé à chaque utilisation</label><select id="a_objeteffect" style="margin-bottom:6px">${opt('damage','Effet : dégâts',a.objetEffect||'damage')}${opt('heal','Effet : soin',a.objetEffect||'damage')}${opt('shield','Effet : bouclier',a.objetEffect||'damage')}${opt('mana','Effet : mana',a.objetEffect||'damage')}</select><select id="a_itemeq">${opt('','— Choisir —',a.itemEqId||'')}${(S.equipment||[]).filter(e=>e.itemType==='divers').map(e=>opt(e.id,e.name,a.itemEqId||'')).join('')}</select><label style="margin-top:8px">🩸 Affliction appliquée si réussite</label><select id="a_objaff">${opt('','— Aucune —',a.objAffId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.objAffId||'')).join('')}</select><label style="margin-top:8px">Durée de l'affliction (tours — vide = jusqu'au retrait par le MJ)</label><input id="a_objaffturns" type="number" min="1" value="${a.objAffTurns||''}"></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
     <div class="field full"><label>Se transforme en</label>
     <input type="hidden" id="a_transformchar" value="${esc(a.transformCharId||'')}">
@@ -4447,7 +4464,7 @@ ${spriteAutoSelect('a_spriteauto',a.spriteAuto)}
       <div class="field" style="max-width:220px"><label>Nombre de frames (projectile)</label><input id="a_proj_frames" type="number" min="1" value="${a.projectileFrames||1}"></div>
       <div class="field" style="max-width:220px"><label>Nombre de lignes (projectile)</label><input id="a_proj_rows" type="number" min="1" value="${a.projectileRows||1}"></div>
       <div class="field" style="max-width:220px"><label>Vitesse (pixels/seconde)</label><input id="a_proj_speed" type="number" min="50" step="50" value="${a.projectileSpeed||600}"></div>
-      <div class="field" style="max-width:220px"><label>Taille (cases : 1 = 1×1, 2 = 2×2…)</label><input id="a_proj_size" type="number" min="1" step="0.5" value="${a.projectileSize||1}"></div>
+      <div class="field" style="max-width:220px"><label>Taille (cases : 1 = 1×1, 2 = 2×2…)</label><input id="a_proj_size" type="number" min="0.1" step="0.1" value="${a.projectileSize||1}"></div>
     </div>
   </div>
   <div class="field full">
@@ -4537,6 +4554,7 @@ function saveAbility(id){
   target.manaCost=Math.max(0,+document.getElementById('a_manacost').value||0);
   target.cooldown=Math.max(0,Math.floor(+document.getElementById('a_cooldown').value||0));
   target.level=Math.max(1,Math.round(+document.getElementById('a_level').value||1));
+  target.bonusAction=!!document.getElementById('a_bonus')?.checked;
   if(target.type==='Transformation'){
     target.transformCharId=document.getElementById('a_transformchar').value||null;
     target.triggerOnDeath=document.getElementById('a_triggerondeath').checked;
@@ -4572,7 +4590,7 @@ function saveAbility(id){
     target.projectileFrames=Math.max(1,+document.getElementById('a_proj_frames').value||1);
     target.projectileRows=Math.max(1,+document.getElementById('a_proj_rows').value||1);
     target.projectileSpeed=Math.max(50,+document.getElementById('a_proj_speed')?.value||600);
-    target.projectileSize=Math.max(1,parseFloat(document.getElementById('a_proj_size')?.value)||1);
+    target.projectileSize=Math.max(0.1,parseFloat(document.getElementById('a_proj_size')?.value)||1);
     target.impactSpritesheet=document.getElementById('a_impact').value.trim()||null;
     target.impactFrames=Math.max(1,+document.getElementById('a_impact_frames').value||1);
     target.impactRows=Math.max(1,+document.getElementById('a_impact_rows').value||1);
@@ -4583,12 +4601,15 @@ function saveAbility(id){
     target.spinDuration=Math.max(0.2,parseFloat(document.getElementById('a_spindur')?.value)||1);
     target.transformCharId=null; target.triggerOnDeath=false; target.allowRevert=false;
     target.auraEffect=document.getElementById('a_auraeffect')?document.getElementById('a_auraeffect').value:'damage';
-    target.duration=Math.max(1,+(document.getElementById('a_duration')?.value)||3);
+    {const dv=Math.floor(+(document.getElementById('a_duration')?.value)||0);target.duration=dv>0?dv:(target.type==='Buff'?null:3);}
+    target.durBy={};[['leg','a_durleg'],['rea','a_durrea'],['gra','a_durgra'],['cri','a_durcri'],['ult','a_durult']].forEach(([k,i])=>{const v=Math.floor(+(document.getElementById(i)?.value)||0);if(v>0)target.durBy[k]=v;});
     target.buffAfflictionId=document.getElementById('a_buffaff')?.value||null;
     target.buffCaRed=Math.max(0,parseNum(document.getElementById('a_buffca')?.value));
     target.buffDmRed=Math.max(0,parseNum(document.getElementById('a_buffdm')?.value));
     target.itemEqId=document.getElementById('a_itemeq')?.value||null;
     target.objetEffect=target.type==='Objet'?(document.getElementById('a_objeteffect')?.value||'damage'):'damage';
+    target.objAffId=target.type==='Objet'?(document.getElementById('a_objaff')?.value||null):null;
+    target.objAffTurns=target.type==='Objet'?(Math.floor(+document.getElementById('a_objaffturns')?.value||0)||null):null;
     if(target.type==='Passif'){
       if(target.area!=='circle'&&target.area!=='square')target.area='square';
     }
@@ -5102,7 +5123,7 @@ function myCharacterCard(c){
   const instancesHtml=instances.length
     ? instances.map(i=>{
       const afTxt=(i.afflictions&&i.afflictions.length)?(' · 🩸 '+i.afflictions.map(af=>{const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);return d?esc(d.name):'';}).filter(Boolean).join(', ')):'';
-      const seTxt=(i.statusEffects&&i.statusEffects.length)?(' · 🌀 '+i.statusEffects.map(se=>`${esc(se.name)}(${se.turnsLeft})`).join(', ')):'';
+      const seTxt=(i.statusEffects&&i.statusEffects.length)?(' · 🌀 '+i.statusEffects.map(se=>`${esc(se.name)}(${se.turnsLeft??'∞'})`).join(', ')):'';
       return `<div class="row between" style="padding:8px;background:#20232a;border-radius:8px;margin-bottom:6px"><span>${esc(i.label)} — case (${i.x+1}, ${i.y+1})</span><span class="tiny">❤️ ${i.hp}/${i.hpMax} · 💧 ${i.mana}/${i.manaMax} · 🛡 ${i.shield}/${i.shieldMax}${afTxt}${seTxt}</span></div>`;
     }).join('')
     : `<p class="tiny muted">Ce personnage n'est pas actuellement sur la carte.</p>`;
