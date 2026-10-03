@@ -2252,7 +2252,8 @@ function fxAddProjectile(img,frames,rows,fromX,fromY,toX,toY,size,fps,onArrive){
     const x=fromX+(toX-fromX)*t, y=fromY+(toY-fromY)*t;
     if(!img||!img.complete||!img.naturalWidth)return;
     const frame=frames>1?Math.floor(elapsed/1000*fps)%frames:0;
-    ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
+    ctx.save(); ctx.translate(x,y);
+    if(Math.cos(angle)<0){ctx.rotate(angle+Math.PI);ctx.scale(-1,1);}else ctx.rotate(angle);
     fxDrawFrame(ctx,img,frame,frames,rows||1,-size/2,-size/2,size,size);
     ctx.restore();
   },onEnd:onArrive});
