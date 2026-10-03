@@ -1151,7 +1151,7 @@ function scheduleGapClose(a,cid,tid,lines){
   const ci=inst(cid),ti=inst(tid); if(!ci||!ti)return;
   if(a.projectileImage){
     const [x1,y1]=instCenterPx(ci),[x2,y2]=instCenterPx(ti);
-    const delay=Math.max(120,Math.hypot(x2-x1,y2-y1)/600*1000)+30;
+    const delay=Math.max(120,Math.hypot(x2-x1,y2-y1)/(a.projectileSpeed||600)*1000)+30;
     setTimeout(()=>{const c2=inst(cid),t2=inst(tid);if(!c2||!t2||c2.isKO)return;const l=[];gapCloseToTarget(c2,t2,a.range,l);if(l.length)addLog(l.join('<br>'));saveState();render();},delay);
   }else gapCloseToTarget(ci,ti,a.range,lines);
 }
@@ -2241,9 +2241,10 @@ function fxAddSpin(img,cx,cy,size,radius,turnsPerSec,duration){
     ctx.restore();
   }});
 }
+let fxProjSpeed=600;
 function fxAddProjectile(img,frames,rows,fromX,fromY,toX,toY,size,fps,onArrive){
   const dist=Math.hypot(toX-fromX,toY-fromY);
-  const speed=600; // px/s
+  const speed=fxProjSpeed||600;
   const duration=Math.max(120,dist/speed*1000);
   const angle=Math.atan2(toY-fromY,toX-fromX);
   fxStart({duration,draw(ctx,elapsed){
@@ -2344,6 +2345,8 @@ function playAbilityFX(a,casterInst,targets,start){
   const impactImg=a.impactSpritesheet?getFxImg(a.impactSpritesheet,a.spriteAuto):null;
   const projFrames=Math.max(1,a.projectileFrames||1);
   const projRows=Math.max(1,a.projectileRows||1);
+  const psz=Math.max(1,a.projectileSize||1), psize=cell*(psz===1?0.9:psz);
+  fxProjSpeed=Math.max(50,a.projectileSpeed||600);
   const impactFrames=Math.max(1,a.impactFrames||1);
   const [fromX,fromY]=instCenterPx(casterInst);
   const doImpact=(cx,cy,size,clip)=>{ if(impactImg)fxAddImpact(impactImg,impactFrames,a.impactRows||1,cx,cy,size,size,fps,clip); };
@@ -2364,7 +2367,7 @@ function playAbilityFX(a,casterInst,targets,start){
     (targets||[]).forEach(t=>{
       const [tx,ty]=instCenterPx(t);
       const size=Math.max(cell*1.4,Math.max(t.sizeW||1,t.sizeH||1)*cell*1.4);
-      if(projImg)fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,tx,ty,cell*0.9,fps,()=>doImpact(tx,ty,size));
+      if(projImg)fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,tx,ty,psize,fps,()=>doImpact(tx,ty,size));
       else doImpact(tx,ty,size);
     });
     return;
@@ -2373,7 +2376,7 @@ function playAbilityFX(a,casterInst,targets,start){
     const size=(a.areaSize||3)*cell;
     const cx=start[0]*cell+size/2, cy=start[1]*cell+size/2;
     const clip=a.area==='circle'?(ctx=>{ctx.beginPath();ctx.arc(cx,cy,size/2,0,Math.PI*2);ctx.clip();}):null;
-    if(projImg)fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,cx,cy,cell*0.9,fps,()=>doImpactZoneOrPerToken(cx,cy,size,clip));
+    if(projImg)fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,cx,cy,psize,fps,()=>doImpactZoneOrPerToken(cx,cy,size,clip));
     else doImpactZoneOrPerToken(cx,cy,size,clip);
     return;
   }
@@ -2393,7 +2396,7 @@ function playAbilityFX(a,casterInst,targets,start){
     const endX=axis.cx+Math.cos(axis.angle)*axis.range;
     const endY=axis.cy+Math.sin(axis.angle)*axis.range;
     const size=cell*1.4;
-    if(projImg)fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,endX,endY,cell*0.9,fps,()=>doImpactZoneOrPerToken(endX,endY,size));
+    if(projImg)fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,endX,endY,psize,fps,()=>doImpactZoneOrPerToken(endX,endY,size));
     else doImpactZoneOrPerToken(endX,endY,size);
     return;
   }
@@ -4430,6 +4433,8 @@ ${spriteAutoSelect('a_spriteauto',a.spriteAuto)}
     <div class="row" style="gap:10px;margin-top:6px;flex-wrap:wrap">
       <div class="field" style="max-width:220px"><label>Nombre de frames (projectile)</label><input id="a_proj_frames" type="number" min="1" value="${a.projectileFrames||1}"></div>
       <div class="field" style="max-width:220px"><label>Nombre de lignes (projectile)</label><input id="a_proj_rows" type="number" min="1" value="${a.projectileRows||1}"></div>
+      <div class="field" style="max-width:220px"><label>Vitesse (pixels/seconde)</label><input id="a_proj_speed" type="number" min="50" step="50" value="${a.projectileSpeed||600}"></div>
+      <div class="field" style="max-width:220px"><label>Taille (cases : 1 = 1×1, 2 = 2×2…)</label><input id="a_proj_size" type="number" min="1" step="0.5" value="${a.projectileSize||1}"></div>
     </div>
   </div>
   <div class="field full">
@@ -4553,6 +4558,8 @@ function saveAbility(id){
     target.projectileImage=document.getElementById('a_projectile').value.trim()||null;
     target.projectileFrames=Math.max(1,+document.getElementById('a_proj_frames').value||1);
     target.projectileRows=Math.max(1,+document.getElementById('a_proj_rows').value||1);
+    target.projectileSpeed=Math.max(50,+document.getElementById('a_proj_speed')?.value||600);
+    target.projectileSize=Math.max(1,parseFloat(document.getElementById('a_proj_size')?.value)||1);
     target.impactSpritesheet=document.getElementById('a_impact').value.trim()||null;
     target.impactFrames=Math.max(1,+document.getElementById('a_impact_frames').value||1);
     target.impactRows=Math.max(1,+document.getElementById('a_impact_rows').value||1);
