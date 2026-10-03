@@ -1136,7 +1136,7 @@ function char(id){return S.characters.find(c=>c.id===id);}
 function inst(id){return S.instances.find(i=>i.id===id);}
 function instTemplate(instance){return instance?char(instance.charId):null;}
 function characterAbilities(charId){if(!charId)return [];const c=char(charId);return S.abilities.filter(a=>(a.characterIds||[]).includes(charId)&&(a.type!=='Objet'||objetCount(c,a)>0));}
-function effAb(a){if(a&&a.type==='Objet'&&(a.objetEffect==='heal'||a.objetEffect==='shield'))return {...a,type:a.objetEffect==='heal'?'Soin':'Bouclier',_objet:true};return a;}
+function effAb(a){if(a&&a.type==='Objet'&&(a.objetEffect==='heal'||a.objetEffect==='shield'||a.objetEffect==='mana'))return {...a,type:a.objetEffect==='shield'?'Bouclier':'Soin',_objet:true,_mana:a.objetEffect==='mana'};return a;}
 function forcedTarget(ci){for(const af of (ci.afflictions||[])){const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);if(d&&d.forceAttack&&af.src){const t=inst(af.src);if(t&&!t.isKO&&t.id!==ci.id)return t;}}return null;}
 function objetCount(c,a){if(!a||!a.itemEqId)return 0;return ((c&&c.bag)||[]).filter(b=>b.eqId===a.itemEqId).reduce((n,b)=>n+(b.qty||1),0);}
 function consumeObjet(ci,a){const c=instTemplate(ci);if(!c)return;const st=(c.bag||[]).find(b=>b.eqId===a.itemEqId&&(b.qty||1)>0);if(!st)return;st.qty=(st.qty||1)-1;if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);const e=equip(a.itemEqId);addLog(`🎒 <b>${esc(ci.label)}</b> utilise <b>${esc(e?e.name:'un objet')}</b> (reste ${objetCount(c,a)}).`);}
@@ -3444,11 +3444,12 @@ function resolveAbility(a,start,explicitTargetInstId){
       const r=isAoE?sharedRoll:roll(a.formula);
       if(!isAoE)broadcastDiceRoll(formulaSides(a.formula),r.rolls);
       const amount=applyMult(Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
-      t.hp=Math.min(t.hpMax,t.hp+amount);
+      if(a._mana)t.mana=Math.min(t.manaMax,t.mana+amount);else t.hp=Math.min(t.hpMax,t.hp+amount);
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
-      lines.push(`💚 Soin : ${amount}`);
+      if(a._mana){lines.push(`💧 Mana : ${amount}`);lines.push(`💧 ${esc(t.label)} : +${amount} mana (${t.mana}/${t.manaMax})`);broadcastHud(t.id,{mana:amount});}
+      else{lines.push(`💚 Soin : ${amount}`);
       lines.push(`❤️ ${esc(t.label)} : +${amount} PV (${t.hp}/${t.hpMax})`);
-      broadcastHud(t.id,{hp:amount});
+      broadcastHud(t.id,{hp:amount});}
       continue;
     }
     if(a.type==='Bouclier'){
@@ -4369,7 +4370,7 @@ function openAbility(id){
   <div class="field" id="ability_passif_extra" style="display:${a.type==='Passif'?'':'none'}"><label>Effet de l'aura</label><select id="a_auraeffect">${opt('damage','Dégâts',a.auraEffect)}${opt('heal','Soin',a.auraEffect)}${opt('shield','Bouclier',a.auraEffect)}</select><p class="tiny muted">Aura auto-centrée sur le lanceur (zone = Carré ou Cercle uniquement), se déclenche à chaque début de son tour.</p></div>
   <div class="field" id="ability_buff_extra" style="display:${(a.type==='Buff'||a.type==='Persistant')?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.duration||3}"><p class="tiny muted">${a.type==='Persistant'?"Nombre de tours avant que la zone persistante ne s'estompe. Chaque token qui commence son tour dans la zone subit l'effet (calculé comme si le lanceur agissait à chaque fois).":"Cible unique ou zone (voir champ Zone ci-dessous). Effet auto à chaque début de tour de la/les cible(s) pendant N tours. Choisis toi-même la défense ciblée (dont « Aucune »)."}</p></div>
   <div class="field full" id="ability_buff_extra2" style="display:${a.type==='Buff'?'':'none'}"><label>🩸 Affliction appliquée si le sort touche (durée = champ Durée)</label><select id="a_buffaff">${opt('','— Aucune —',a.buffAfflictionId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.buffAfflictionId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px"><div class="field"><label>Réduction de CA</label><input id="a_buffca" type="number" min="0" value="${a.buffCaRed||0}"></div><div class="field"><label>Réduction de DM</label><input id="a_buffdm" type="number" min="0" value="${a.buffDmRed||0}"></div></div><p class="tiny muted">Appliqué à chaque cible touchée (pas en cas d'échec). Mets la formule à 0 si tu ne veux aucun dégât/soin par tour.</p></div>
-  <div class="field full" id="ability_objet_extra" style="display:${a.type==='Objet'?'':'none'}"><label>🎒 Objet divers consommé à chaque utilisation</label><select id="a_objeteffect" style="margin-bottom:6px">${opt('damage','Effet : dégâts',a.objetEffect||'damage')}${opt('heal','Effet : soin',a.objetEffect||'damage')}${opt('shield','Effet : bouclier',a.objetEffect||'damage')}</select><select id="a_itemeq">${opt('','— Choisir —',a.itemEqId||'')}${(S.equipment||[]).filter(e=>e.itemType==='divers').map(e=>opt(e.id,e.name,a.itemEqId||'')).join('')}</select></div>
+  <div class="field full" id="ability_objet_extra" style="display:${a.type==='Objet'?'':'none'}"><label>🎒 Objet divers consommé à chaque utilisation</label><select id="a_objeteffect" style="margin-bottom:6px">${opt('damage','Effet : dégâts',a.objetEffect||'damage')}${opt('heal','Effet : soin',a.objetEffect||'damage')}${opt('shield','Effet : bouclier',a.objetEffect||'damage')}${opt('mana','Effet : mana',a.objetEffect||'damage')}</select><select id="a_itemeq">${opt('','— Choisir —',a.itemEqId||'')}${(S.equipment||[]).filter(e=>e.itemType==='divers').map(e=>opt(e.id,e.name,a.itemEqId||'')).join('')}</select></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
     <div class="field full"><label>Se transforme en</label>
     <input type="hidden" id="a_transformchar" value="${esc(a.transformCharId||'')}">
