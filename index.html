@@ -1136,13 +1136,15 @@ function char(id){return S.characters.find(c=>c.id===id);}
 function inst(id){return S.instances.find(i=>i.id===id);}
 function instTemplate(instance){return instance?char(instance.charId):null;}
 function characterAbilities(charId){if(!charId)return [];const c=char(charId);return S.abilities.filter(a=>(a.characterIds||[]).includes(charId)&&(a.type!=='Objet'||objetCount(c,a)>0));}
+function effAb(a){if(a&&a.type==='Objet'&&(a.objetEffect==='heal'||a.objetEffect==='shield'))return {...a,type:a.objetEffect==='heal'?'Soin':'Bouclier',_objet:true};return a;}
+function forcedTarget(ci){for(const af of (ci.afflictions||[])){const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);if(d&&d.forceAttack&&af.src){const t=inst(af.src);if(t&&!t.isKO&&t.id!==ci.id)return t;}}return null;}
 function objetCount(c,a){if(!a||!a.itemEqId)return 0;return ((c&&c.bag)||[]).filter(b=>b.eqId===a.itemEqId).reduce((n,b)=>n+(b.qty||1),0);}
 function consumeObjet(ci,a){const c=instTemplate(ci);if(!c)return;const st=(c.bag||[]).find(b=>b.eqId===a.itemEqId&&(b.qty||1)>0);if(!st)return;st.qty=(st.qty||1)-1;if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);const e=equip(a.itemEqId);addLog(`🎒 <b>${esc(ci.label)}</b> utilise <b>${esc(e?e.name:'un objet')}</b> (reste ${objetCount(c,a)}).`);}
 function buffHasDmg(a){const f=String(a.formula||'').trim();return f!==''&&f!=='0';}
-function applyBuffExtras(a,t,mult){
+function applyBuffExtras(a,t,mult,ci){
   if(!(mult>0))return;
   const out=[];
-  if(a.buffAfflictionId){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=(t.afflictions||[]).filter(x=>x.defId!==def.id);t.afflictions.push({defId:def.id,turns:0,left:a.duration||3});out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${a.duration||3} tour(s))`);}}
+  if(a.buffAfflictionId){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=(t.afflictions||[]).filter(x=>x.defId!==def.id);t.afflictions.push({defId:def.id,turns:0,left:a.duration||3,src:ci?ci.id:null});out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${a.duration||3} tour(s))`);}}
   if(a.buffCaRed>0||a.buffDmRed>0){t.defMods=(t.defMods||[]).filter(m=>m.abilityId!==a.id);t.defMods.push({abilityId:a.id,ca:a.buffCaRed||0,dm:a.buffDmRed||0,turnsLeft:a.duration||3});out.push(`🛡 <b>${esc(t.label)}</b> : ${a.buffCaRed?`CA −${a.buffCaRed} `:''}${a.buffDmRed?`DM −${a.buffDmRed} `:''}(${a.duration||3} tour(s))`);}
   if(out.length)addLog(out.join('<br>'));
 }
@@ -3164,6 +3166,7 @@ function startTokenResize(ev,id){
 
 /* ============================= CAPACITÉS : RÉSOLUTION ============================= */
 function affected(a,start,explicitTargetInstId){
+  a=effAb(a);
   const casterInst=selectedToken?inst(selectedToken):null;
   const casterTpl=casterInst?instTemplate(casterInst):null;
   const casterType=casterTpl?.type||'player';
@@ -3352,6 +3355,7 @@ function gapCloseToTarget(ci,ti,range,lines){
   lines.push(`🏃 ${esc(ci.label)} rejoint ${esc(ti.label)}.`);
 }
 function resolveAbility(a,start,explicitTargetInstId){
+  a=effAb(a);
   const casterInst=selectedToken?inst(selectedToken):null;
   if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
   if(!canControlInstance(casterInst.id)){
@@ -3363,6 +3367,13 @@ function resolveAbility(a,start,explicitTargetInstId){
     return;
   }
   if(a.area==='square'||a.area==='circle')start=clampZone(a,clampToRange(casterInst,start,a.range));
+  if(a.type!=='Soin'&&a.type!=='Bouclier'){
+    const ft=forcedTarget(casterInst);
+    if(ft){
+      const ok=a.area==='single'?explicitTargetInstId===ft.id:affected(a,start,explicitTargetInstId).some(t=>t.id===ft.id);
+      if(!ok){toast(`🎯 Affliction : vous êtes obligé d'attaquer ${ft.label}.`);return;}
+    }
+  }
   if(a.area==='single'){
     const isSup=(a.type==='Soin'||a.type==='Bouclier');
     if(!explicitTargetInstId||!affected(a,start,explicitTargetInstId).length){
@@ -3386,7 +3397,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   }
   applyCooldown(a,casterInst);
-  if(a.type==='Objet')consumeObjet(casterInst,a);
+  if(a.type==='Objet'||a._objet)consumeObjet(casterInst,a);
   let weaponFormula=null, weaponUsed=null;
   if(casterTpl?.type==='player'&&casterTpl.equipmentSlots){
     const w=equip(casterTpl.equipmentSlots['arme']);
@@ -3519,7 +3530,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-  applyBuffExtras(a,t,mult);if(buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
+  applyBuffExtras(a,t,mult,casterInst);if(buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
   addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${a.duration} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(a.desc?[a.desc]:[])].join('<br>'));
   activeAbility=null; hoverCell=null;
   if(S.combat.active&&S.combat.order[S.combat.turn]===casterInst.id)advanceTurn();
@@ -3551,7 +3562,7 @@ function resolveBuffZone(a,casterInst,start){
   }else{
     targets.forEach(t=>{
       t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-      applyBuffExtras(a,t,mult);if(buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
+      applyBuffExtras(a,t,mult,casterInst);if(buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:a.duration});
       lines.push(`🌀 ${esc(t.label)} affecté (${a.duration} tour(s))`);
     });
   }
@@ -4358,7 +4369,7 @@ function openAbility(id){
   <div class="field" id="ability_passif_extra" style="display:${a.type==='Passif'?'':'none'}"><label>Effet de l'aura</label><select id="a_auraeffect">${opt('damage','Dégâts',a.auraEffect)}${opt('heal','Soin',a.auraEffect)}${opt('shield','Bouclier',a.auraEffect)}</select><p class="tiny muted">Aura auto-centrée sur le lanceur (zone = Carré ou Cercle uniquement), se déclenche à chaque début de son tour.</p></div>
   <div class="field" id="ability_buff_extra" style="display:${(a.type==='Buff'||a.type==='Persistant')?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.duration||3}"><p class="tiny muted">${a.type==='Persistant'?"Nombre de tours avant que la zone persistante ne s'estompe. Chaque token qui commence son tour dans la zone subit l'effet (calculé comme si le lanceur agissait à chaque fois).":"Cible unique ou zone (voir champ Zone ci-dessous). Effet auto à chaque début de tour de la/les cible(s) pendant N tours. Choisis toi-même la défense ciblée (dont « Aucune »)."}</p></div>
   <div class="field full" id="ability_buff_extra2" style="display:${a.type==='Buff'?'':'none'}"><label>🩸 Affliction appliquée si le sort touche (durée = champ Durée)</label><select id="a_buffaff">${opt('','— Aucune —',a.buffAfflictionId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.buffAfflictionId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px"><div class="field"><label>Réduction de CA</label><input id="a_buffca" type="number" min="0" value="${a.buffCaRed||0}"></div><div class="field"><label>Réduction de DM</label><input id="a_buffdm" type="number" min="0" value="${a.buffDmRed||0}"></div></div><p class="tiny muted">Appliqué à chaque cible touchée (pas en cas d'échec). Mets la formule à 0 si tu ne veux aucun dégât/soin par tour.</p></div>
-  <div class="field full" id="ability_objet_extra" style="display:${a.type==='Objet'?'':'none'}"><label>🎒 Objet divers consommé à chaque utilisation</label><select id="a_itemeq">${opt('','— Choisir —',a.itemEqId||'')}${(S.equipment||[]).filter(e=>e.itemType==='divers').map(e=>opt(e.id,e.name,a.itemEqId||'')).join('')}</select></div>
+  <div class="field full" id="ability_objet_extra" style="display:${a.type==='Objet'?'':'none'}"><label>🎒 Objet divers consommé à chaque utilisation</label><select id="a_objeteffect" style="margin-bottom:6px">${opt('damage','Effet : dégâts',a.objetEffect||'damage')}${opt('heal','Effet : soin',a.objetEffect||'damage')}${opt('shield','Effet : bouclier',a.objetEffect||'damage')}</select><select id="a_itemeq">${opt('','— Choisir —',a.itemEqId||'')}${(S.equipment||[]).filter(e=>e.itemType==='divers').map(e=>opt(e.id,e.name,a.itemEqId||'')).join('')}</select></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
     <div class="field full"><label>Se transforme en</label>
     <input type="hidden" id="a_transformchar" value="${esc(a.transformCharId||'')}">
@@ -4576,6 +4587,7 @@ function saveAbility(id){
     target.buffCaRed=Math.max(0,parseNum(document.getElementById('a_buffca')?.value));
     target.buffDmRed=Math.max(0,parseNum(document.getElementById('a_buffdm')?.value));
     target.itemEqId=document.getElementById('a_itemeq')?.value||null;
+    target.objetEffect=target.type==='Objet'?(document.getElementById('a_objeteffect')?.value||'damage'):'damage';
     if(target.type==='Passif'){
       if(target.area!=='circle'&&target.area!=='square')target.area='square';
     }
@@ -4712,7 +4724,7 @@ function saveHudSettings(){
 function afflictionDefResultsHtml(){
   const items=S.afflictionDefs||[];
   if(!items.length)return '<p class="tiny muted">Aucune affliction définie.</p>';
-  return items.map(d=>`<div class="ability"><div class="icon">${iconBoxHtml(d,'9px')}</div><div class="ability-info"><b>${esc(d.name)}</b><small>${d.dmgBase||0}%/tour${d.dmgGrowth?` (+${d.dmgGrowth}%/tour)`:''}${d.skipTurn?' · Tour annulé':''}${d.preventMove?' · Immobilisé':''}</small></div><button class="btn" onclick="openAfflictionDef('${d.id}')">Modifier</button><button class="btn ghost" onclick="deleteAfflictionDef('${d.id}')" title="Supprimer">🗑️</button></div>`).join('');
+  return items.map(d=>`<div class="ability"><div class="icon">${iconBoxHtml(d,'9px')}</div><div class="ability-info"><b>${esc(d.name)}</b><small>${d.dmgBase||0}%/tour${d.dmgGrowth?` (+${d.dmgGrowth}%/tour)`:''}${d.skipTurn?' · Tour annulé':''}${d.preventMove?' · Immobilisé':''}${d.forceAttack?' · Attaque forcée':''}</small></div><button class="btn" onclick="openAfflictionDef('${d.id}')">Modifier</button><button class="btn ghost" onclick="deleteAfflictionDef('${d.id}')" title="Supprimer">🗑️</button></div>`).join('');
 }
 function openAfflictionDef(id){
   if(!isMJ())return;
@@ -4735,6 +4747,7 @@ function openAfflictionDef(id){
   <div class="field"><label>Augmentation %/tour (évolutif)</label><input id="af_dmggrowth" type="number" value="${d.dmgGrowth||0}"></div>
   <div class="field full"><label><input type="checkbox" id="af_skipturn" ${d.skipTurn?'checked':''}> Tour annulé tant que l'affliction est active</label></div>
   <div class="field full"><label><input type="checkbox" id="af_preventmove" ${d.preventMove?'checked':''}> Empêche le déplacement tant que l'affliction est active</label></div>
+  <div class="field full"><label><input type="checkbox" id="af_forceattack" ${d.forceAttack?'checked':''}> Obligé d'attaquer celui qui a infligé l'affliction</label></div>
   </div>
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveAfflictionDef('${id||''}')">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
@@ -4750,6 +4763,7 @@ function saveAfflictionDef(id){
   target.dmgGrowth=parseNum(document.getElementById('af_dmggrowth').value);
   target.skipTurn=document.getElementById('af_skipturn').checked;
   target.preventMove=document.getElementById('af_preventmove').checked;
+  target.forceAttack=document.getElementById('af_forceattack').checked;
   if(!id)S.afflictionDefs.push(target);
   saveState(); closeModal(); render();
 }
