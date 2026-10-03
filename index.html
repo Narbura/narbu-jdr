@@ -689,7 +689,7 @@ function applyRemoteCol(k,val){
   const s=COL_SPECS.find(x=>x.k===k); if(!s||val===null||val===undefined||!lastSaved)return false;
   const cn=canon(val);
   if(cn===lastSaved.cols[k]||isOwnEcho('c:'+k,cn))return false;
-  s.set(val); touched.push(['c',k]); return true;
+  s.set(val); noteOwn('c:'+k,cn); touched.push(['c',k]); return true;
 }
 function handleColRow(table,r){
   let ch=false;
