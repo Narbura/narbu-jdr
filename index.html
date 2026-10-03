@@ -2375,7 +2375,8 @@ function playAbilityFX(a,casterInst,targets,start){
   fxProjSpeed=Math.max(50,a.projectileSpeed||600);
   const impactFrames=Math.max(1,a.impactFrames||1);
   const [fromX,fromY]=instCenterPx(casterInst);
-  const doImpact=(cx,cy,size,clip)=>{ if(impactImg)fxAddImpact(impactImg,impactFrames,a.impactRows||1,cx,cy,size,size,fps,clip); };
+  const imk=Math.max(0.1,a.impactSize||1);
+  const doImpact=(cx,cy,size,clip)=>{ if(impactImg)fxAddImpact(impactImg,impactFrames,a.impactRows||1,cx,cy,size*imk,size*imk,fps,clip); };
   const doImpactZoneOrPerToken=(cx,cy,size,clip)=>{
     if(a.area==='self'&&!(targets||[]).length)return; // autour de soi sans cible : pas d'impact
     if(a.impactPerToken&&(targets||[]).length){
@@ -4494,6 +4495,7 @@ ${spriteAutoSelect('a_spriteauto',a.spriteAuto)}
       <div class="field" style="max-width:220px"><label>Nombre de frames (impact)</label><input id="a_impact_frames" type="number" min="1" value="${a.impactFrames||1}"></div>
       <div class="field" style="max-width:220px"><label>Nombre de lignes (impact)</label><input id="a_impact_rows" type="number" min="1" value="${a.impactRows||1}"></div>
       <div class="field" style="max-width:220px"><label>Vitesse d'animation (FPS)</label><input id="a_animfps" type="number" min="1" max="60" value="${a.animFps||60}"></div>
+      <div class="field" style="max-width:220px"><label>Taille de l'impact (× la taille de base, ex : 0,5)</label><input id="a_impact_size" type="number" min="0.1" step="0.1" value="${a.impactSize||1}"></div>
     </div>
     <p class="tiny muted">« Frames » = nombre total d'images dans la spritesheet. « Lignes » = si les images sont réparties sur plusieurs rangées (grille), indique le nombre de lignes ; sinon laisse 1.</p>
     <p class="tiny muted">Ligne/Cône : pas de projectile ni d'impact — la zone se remplit progressivement avec une couleur selon l'élément.</p>
@@ -4608,6 +4610,7 @@ function saveAbility(id){
     target.impactFrames=Math.max(1,+document.getElementById('a_impact_frames').value||1);
     target.impactRows=Math.max(1,+document.getElementById('a_impact_rows').value||1);
     target.animFps=Math.max(1,Math.min(60,+document.getElementById('a_animfps').value||60));
+    target.impactSize=Math.max(0.1,parseFloat(document.getElementById('a_impact_size')?.value)||1);
     target.spriteAuto=document.getElementById('a_spriteauto')?.value||false;
     target.spinImage=(target.area==='self'?document.getElementById('a_spin')?.value.trim():'')||null;
     target.spinSpeed=Math.max(0.1,parseFloat(document.getElementById('a_spinspeed')?.value)||2);
