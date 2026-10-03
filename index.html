@@ -1163,7 +1163,13 @@ function applyBuffExtras(a,t,mult,ci){
   if(a.buffCaRed>0||a.buffDmRed>0){t.defMods=t.defMods||[];{const nd=buffDur(a,mult),ex=t.defMods.find(m=>m.abilityId===a.id);if(ex){ex.turnsLeft=addDur(ex.turnsLeft,nd);ex.ca=a.buffCaRed||0;ex.dm=a.buffDmRed||0;}else t.defMods.push({abilityId:a.id,ca:a.buffCaRed||0,dm:a.buffDmRed||0,turnsLeft:nd});}out.push(`🛡 <b>${esc(t.label)}</b> : ${a.buffCaRed?`CA −${a.buffCaRed} `:''}${a.buffDmRed?`DM −${a.buffDmRed} `:''}(${buffDur(a,mult)??'∞'} tour(s))`);}
   if(out.length)addLog(out.join('<br>'));
 }
-function tickDefMods(t){if(!t.defMods||!t.defMods.length)return;t.defMods.forEach(m=>{if(m.turnsLeft!=null)m.turnsLeft--;});const end=t.defMods.filter(m=>m.turnsLeft!=null&&m.turnsLeft<=0);t.defMods=t.defMods.filter(m=>m.turnsLeft==null||m.turnsLeft>0);end.forEach(m=>{const a=S.abilities.find(x=>x.id===m.abilityId);addLog(`🛡 La réduction de défense « ${esc(a?a.name:'')} » se termine sur <b>${esc(t.label)}</b>.`);});}
+function endTurnTick(t){
+  if(!t)return;
+  t.afflictions=(t.afflictions||[]).filter(af=>{if(af.left==null)return true;af.left--;if(af.left>0)return true;const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);addLog(`🩸 <b>${esc(d?d.name:'')}</b> se termine sur <b>${esc(t.label)}</b>.`);return false;});
+  t.statusEffects=(t.statusEffects||[]).filter(se=>{if(se.turnsLeft==null)return true;se.turnsLeft--;if(se.turnsLeft>0)return true;addLog(`🌀 <b>${esc(se.name)}</b> se termine sur <b>${esc(t.label)}</b>.`);return false;});
+  tickDefModsEnd(t);
+}
+function tickDefModsEnd(t){if(!t.defMods||!t.defMods.length)return;t.defMods.forEach(m=>{if(m.turnsLeft!=null)m.turnsLeft--;});const end=t.defMods.filter(m=>m.turnsLeft!=null&&m.turnsLeft<=0);t.defMods=t.defMods.filter(m=>m.turnsLeft==null||m.turnsLeft>0);end.forEach(m=>{const a=S.abilities.find(x=>x.id===m.abilityId);addLog(`🛡 La réduction de défense « ${esc(a?a.name:'')} » se termine sur <b>${esc(t.label)}</b>.`);});}
 function scheduleGapClose(a,cid,tid,lines){
   const ci=inst(cid),ti=inst(tid); if(!ci||!ti)return;
   if(a.projectileImage){
@@ -2830,7 +2836,7 @@ function tickStatusEffects(inst_){
       broadcastHud(inst_.id,{hp:-hpDmg,shield:absorbed>0?-absorbed:0});
       if(inst_.hp<=0){addLog(`💀 <b>${esc(inst_.label)} est KO</b>.`);handleInstanceDeath(inst_);}
     }
-    if(se.turnsLeft==null){remaining.push(se);return;}se.turnsLeft--;
+    remaining.push(se);return;
     if(se.turnsLeft>0)remaining.push(se);
     else addLog(`🌀 <b>${esc(se.name)}</b> se termine sur <b>${esc(inst_.label)}</b>.`);
   });
@@ -2854,13 +2860,13 @@ function tickAfflictions(inst_){
     if(def.skipTurn)skip=true;
     if(def.preventMove)blockMove=true;
   });
-  inst_.afflictions=inst_.afflictions.filter(af=>{if(af.left==null)return true;af.left--;if(af.left>0)return true;const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);addLog(`🩸 <b>${esc(d?d.name:'')}</b> se termine sur <b>${esc(inst_.label)}</b>.`);return false;});
   return {skip,blockMove};
 }
 function advanceTurn(){
   if(!S.combat.active||!S.combat.order.length)return;
   let safety=0;
   while(true){
+    if(S.combat.turn>=0)endTurnTick(inst(S.combat.order[S.combat.turn]));
     S.combat.turn=(S.combat.turn+1)%S.combat.order.length;
     if(S.combat.turn===0)decayPersistentZones(); // tout le monde a joué : un tour complet s'écoule
     const nt=inst(S.combat.order[S.combat.turn]);
@@ -2871,7 +2877,7 @@ function advanceTurn(){
       tickCooldowns(nt);
       triggerAuras(nt);
       tickStatusEffects(nt);
-      tickDefMods(nt);
+      
       tickPersistentZones(nt);
       const res=tickAfflictions(nt);
       nt.movementBlocked=nt.isKO?true:res.blockMove;
