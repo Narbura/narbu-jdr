@@ -148,6 +148,16 @@ button,select,.nav,.btn{touch-action:manipulation}
 body.nav-collapsed .sidebar .nav{display:none!important}
 .sidebar .initiative-list{max-height:45vh}
 .side-tabs select{background:#111318;color:#fff;border:1px solid #3a3e48;border-radius:8px;padding:6px;margin-bottom:6px}
+#sidebarCombat{flex:1;min-height:0;display:flex;flex-direction:column}
+#sidebarCombat .combat-panel{flex:1;min-height:0;display:flex;flex-direction:column}
+#sidebarCombat .initiative-list{flex:1;max-height:none}
+#sidebarCombat h2{font-size:14px;white-space:nowrap;margin:0}
+#sidebarCombat .btn{padding:6px 8px;font-size:12px;white-space:nowrap}
+.sidebar .spacer{display:none}
+.side-panel{display:flex;flex-direction:column;min-height:0}
+.side-panel .asset-panel{flex:1 1 0;min-height:0}
+#charResultsContainer,#mapsResultsContainer,#imagesResultsContainer,#noteResultsContainer{height:auto!important;flex:1 1 0;min-height:200px}
+.log{max-height:none!important;flex:1 1 0;min-height:150px}
 </style>
 </head>
 <body>
@@ -1912,7 +1922,7 @@ function tablePage(){
       }else{
         abilitiesHtml='<span class="tiny muted">Vous ne contrôlez pas ce personnage.</span>';
       }
-      const mjExtra=isMJ()?`<button class="btn ghost" onclick="openManageAfflictions('${selInst.id}')" title="Gérer les afflictions de ce jeton">🩸 Afflictions</button><button class="btn ${activeAbility==='__dissipation__'?'primary':''}" onclick="startDissipation()" title="Purger toutes les afflictions d'un jeton">🧹 Dissipation</button><button class="btn" onclick="applyRest(0.5)" title="Repos court : +50% PV et mana des joueurs sur la carte">🏕️ Repos court</button><button class="btn" onclick="applyRest(1)" title="Repos long : PV et mana des joueurs restaurés à 100%">🛏️ Repos long</button>`:'';
+      const mjExtra=isMJ()?`<button class="btn ghost" onclick="openManageAfflictions('${selInst.id}')" ${uiCtx('ui_aff')} title="Clic droit : raccourci · Gérer les afflictions de ce jeton">${hkTag('ui_aff')}🩸 Afflictions</button><button class="btn ${activeAbility==='__dissipation__'?'primary':''}" onclick="startDissipation()" ${uiCtx('ui_diss')} title="Clic droit : raccourci · Purger toutes les afflictions d'un jeton">${hkTag('ui_diss')}🧹 Dissipation</button><button class="btn" onclick="applyRest(0.5)" ${uiCtx('ui_rest_s')} title="Clic droit : raccourci · Repos court : +50% PV et mana des joueurs sur la carte">${hkTag('ui_rest_s')}🏕️ Repos court</button><button class="btn" onclick="applyRest(1)" ${uiCtx('ui_rest_l')} title="Clic droit : raccourci · Repos long : PV et mana des joueurs restaurés à 100%">${hkTag('ui_rest_l')}🛏️ Repos long</button>`:'';
       return abilitiesHtml+mjExtra;
     })()}<button class="btn ghost fs-hide" style="margin-left:auto;flex-shrink:0;position:sticky;right:0" onclick="toggleBottomBar()" title="${bottomHidden?'Afficher':'Masquer'} les raccourcis">${bottomHidden?'▲':'▶'}</button></div>
   </div>
@@ -6291,7 +6301,7 @@ document.addEventListener('keydown',e=>{
   if(currentPage!=='table')return;
   const m=getHotkeyMap()['__ui__']||{};
   const id=Object.keys(m).find(k=>m[k]===e.key);
-  const acts={ui_next:()=>S.combat.active&&nextTurn(),ui_start:()=>S.combat.active?endCombat():startCombat(),ui_end:()=>S.combat.active?endCombat():startCombat(),ui_fullscreen:toggleFullscreen,ui_grid:toggleGridVisible,ui_ff:toggleFriendlyFire,ui_hud:toggleHudEnabled,ui_free:toggleFreeMovement};
+  const acts={ui_next:()=>S.combat.active&&nextTurn(),ui_start:()=>S.combat.active?endCombat():startCombat(),ui_end:()=>S.combat.active?endCombat():startCombat(),ui_fullscreen:toggleFullscreen,ui_grid:toggleGridVisible,ui_ff:toggleFriendlyFire,ui_hud:toggleHudEnabled,ui_free:toggleFreeMovement,ui_aff:()=>{if(isMJ()&&selectedToken)openManageAfflictions(selectedToken);},ui_diss:()=>{if(isMJ())startDissipation();},ui_rest_s:()=>applyRest(0.5),ui_rest_l:()=>applyRest(1)};
   if(!id||!acts[id])return;
   e.preventDefault(); e.stopImmediatePropagation(); acts[id]();
 });
