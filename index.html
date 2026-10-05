@@ -399,6 +399,7 @@ function normalizeState(){
     if(!Array.isArray(c.inactiveSkills))c.inactiveSkills=[];
     if(!Array.isArray(c.consumablesOwned))c.consumablesOwned=[];
     if(!Array.isArray(c.bag))c.bag=[];
+    if(!c.abilityOverrides||typeof c.abilityOverrides!=='object')c.abilityOverrides={};
     mergeBag(c);
     if(c.type==='merchant'){if(!c.merchant||typeof c.merchant!=='object')c.merchant={buy:[],sell:[]};if(!Array.isArray(c.merchant.buy))c.merchant.buy=[];if(!Array.isArray(c.merchant.sell))c.merchant.sell=[];}
     if(!(c.money>=0))c.money=0;
@@ -794,7 +795,7 @@ function subscribeRealtime(){
     })
     .on('broadcast',{event:'fx'},payload=>{
       const d=payload.payload||{};
-      const a=S.abilities.find(x=>x.id===d.abilityId);
+      const a=d.ab||S.abilities.find(x=>x.id===d.abilityId);
       const casterInst=inst(d.casterId);
       if(!a||!casterInst)return;
       const targets=(d.targetIds||[]).map(id=>inst(id)).filter(Boolean);
@@ -1155,7 +1156,9 @@ function awardXp(killerInst,deadTpl){
 function char(id){return S.characters.find(c=>c.id===id);}
 function inst(id){return S.instances.find(i=>i.id===id);}
 function instTemplate(instance){return instance?char(instance.charId):null;}
-function characterAbilities(charId){if(!charId)return [];const c=char(charId);return S.abilities.filter(a=>(a.characterIds||[]).includes(charId)&&(a.type!=='Objet'||objetCount(c,a)>0));}
+function abOf(id,charId){const a=S.abilities.find(x=>x.id===id);if(!a)return a;const c=charId?char(charId):null;const o=c&&c.abilityOverrides&&c.abilityOverrides[id];return o?{...a,...o}:a;}
+function curAb(id){const t=selectedToken?inst(selectedToken):null;return abOf(id,t&&t.charId);}
+function characterAbilities(charId){if(!charId)return [];const c=char(charId);return S.abilities.filter(a=>(a.characterIds||[]).includes(charId)&&(a.type!=='Objet'||objetCount(c,a)>0)).map(a=>abOf(a.id,charId));}
 function effAb(a){if(a&&a.type==='Objet'&&(a.objetEffect==='heal'||a.objetEffect==='shield'||a.objetEffect==='mana'))return {...a,type:a.objetEffect==='shield'?'Bouclier':'Soin',_objet:true,_mana:a.objetEffect==='mana'};return a;}
 function forcedTarget(ci){for(const af of (ci.afflictions||[])){const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);if(d&&d.forceAttack&&af.src){const t=inst(af.src);if(t&&!t.isKO&&t.id!==ci.id)return t;}}return null;}
 function objetCount(c,a){if(!a||!a.itemEqId)return 0;return ((c&&c.bag)||[]).filter(b=>b.eqId===a.itemEqId).reduce((n,b)=>n+(b.qty||1),0);}
@@ -1577,7 +1580,8 @@ function hotbarItemLookup(charId,itemId){
     const st=itemId.slice(5);
     return {icon:statTestIcon(st),label:statTestLabel(st),onclick:`rollStatTest('${st}')`};
   }
-  const a=S.abilities.find(x=>x.id===itemId);
+  const a=abOf(itemId,charId);
+  if(a&&!(a.characterIds||[]).includes(charId))return null;
   if(a&&a.type==='Objet'&&objetCount(char(charId),a)<=0)return null;
   if(a)return {icon:a,label:a.name,onclick:a.type==='Passif'?`toggleAuraForCaster('${a.id}')`:`startAbility('${a.id}')`};
   const c=char(charId);
@@ -1847,13 +1851,13 @@ function updateTargetingBanner(){
     return;
   }
   if(pendingPersistentOrigin&&currentPage==='table'){
-    const pa=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId);
+    const pa=curAb(pendingPersistentOrigin.abilityId);
     const stageTxt='←/→ ou clic droit maintenu pour orienter, clic pour lancer';
     banner.innerHTML=`🎯 <b>${esc(pa?.name||'Zone')}</b> — ${stageTxt} (Échap pour annuler)`;
     banner.classList.add('show');
     return;
   }
-  const a=activeAbility?S.abilities.find(x=>x.id===activeAbility):null;
+  const a=activeAbility?curAb(activeAbility):null;
   if(a&&currentPage==='table'){
     const caster=selectedToken?inst(selectedToken):null;
     banner.innerHTML=`🎯 <b>${esc(caster?.label||'Lanceur')}</b> — ${iconInlineHtml(a)} ${esc(a.name)} : clique sur une cible ou une case (Échap pour annuler)`;
@@ -1941,7 +1945,7 @@ function auraZonesHtml(){
     const sw=t.sizeW||1, sh=t.sizeH||1;
     const [cx,cy]=instCenterPx(t);
     t.activeAuras.forEach(abilityId=>{
-      const a=S.abilities.find(x=>x.id===abilityId); if(!a)return;
+      const a=abOf(abilityId,t.charId); if(!a)return;
       const w=((a.areaSize||1)*2+sw)*cell, h=((a.areaSize||1)*2+sh)*cell;
       const px=cx-w/2, py=cy-h/2;
       const radius=a.area==='circle'?'border-radius:50%;':'';
@@ -2096,14 +2100,14 @@ function updateZonePreview(){
   document.getElementById('zonePreview')?.remove();
   const caster=selectedToken?inst(selectedToken):null;
   if(pendingPersistentOrigin){
-    const p=pendingPersistentOrigin, a=S.abilities.find(x=>x.id===p.abilityId);
+    const p=pendingPersistentOrigin, a=curAb(p.abilityId);
     if(!a||!caster)return;
     const o=persistentLiveOrigin(a,caster);
     map.insertAdjacentHTML('beforeend',lineConeMarkupFromAxis(a,{cx:o[0],cy:o[1],angle:persistentAngle(p,o,caster),range:(a.zoneRange||a.range||1)*S.map.cell}));
     return;
   }
   if(!activeAbility||!hoverCell)return;
-  const a=S.abilities.find(x=>x.id===activeAbility);
+  const a=curAb(activeAbility);
   if(!a||a.area==='single')return;
   let cell=hoverCell;
   if(a.area==='square'||a.area==='circle')cell=clampToRange(caster,hoverCell,a.range);
@@ -2801,7 +2805,7 @@ function tokenInAura(caster,target,a){
 function triggerAuras(casterInst){
   const casterTpl=instTemplate(casterInst); if(!casterTpl)return;
   (casterInst.activeAuras||[]).slice().forEach(abilityId=>{
-    const a=S.abilities.find(x=>x.id===abilityId);
+    const a=abOf(abilityId,casterInst.charId);
     if(!a){casterInst.activeAuras=(casterInst.activeAuras||[]).filter(id=>id!==abilityId);return;}
     if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
       casterInst.activeAuras=(casterInst.activeAuras||[]).filter(id=>id!==abilityId);
@@ -3009,7 +3013,7 @@ function setupMapInteractions(){
   wrap.onmousedown=e=>{
     if(e.button===2){
       if(pendingPersistentOrigin&&activeAbility){
-        const pa=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId),pc=inst(selectedToken);
+        const pa=curAb(pendingPersistentOrigin.abilityId),pc=inst(selectedToken);
         if(pa&&pc){const p=pendingPersistentOrigin;const o=persistentLiveOrigin(pa,pc);p.angle=persistentAngle(p,o,pc);p.frozen=o;p.rotating=true;}
         e.preventDefault();return;
       }
@@ -3023,7 +3027,7 @@ function setupMapInteractions(){
       const id=tw.dataset.token;
       if(activeAbility){
         if(activeAbility==='__dissipation__'){applyDissipation(id);return;}
-        const a=S.abilities.find(x=>x.id===activeAbility); const t=inst(id);
+        const a=curAb(activeAbility); const t=inst(id);
         if(a&&t){
           const pt=(a.area==='single')?[t.x,t.y]:mapPoint(e.clientX,e.clientY);
           if(a.type==='Buff'){
@@ -3057,7 +3061,7 @@ function setupMapInteractions(){
     if(activeAbility){
       if(activeAbility==='__dissipation__'){toast('🎯 Clique sur un jeton à purger.');return;}
       const pt=mapPoint(e.clientX,e.clientY);
-      const a=S.abilities.find(x=>x.id===activeAbility);
+      const a=curAb(activeAbility);
       if(a){
         if(a.type==='Buff'){
           if(a.area==='single')toast('🎯 Choisis une cible (clique sur un jeton).');
@@ -3468,7 +3472,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   degradeWeaponOnOutcome(casterInst,label);
   const targets=affected(a,start,explicitTargetInstId);
   playAbilityFX(a,casterInst,targets,start);
-  gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,casterId:casterInst.id,targetIds:targets.map(t=>t.id),start}});
+  gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:targets.map(t=>t.id),start}});
   const cl=[];
   const lines=[`⚔ <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b>`];
   if(a.desc)lines.push(a.desc);
@@ -3592,7 +3596,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   broadcastCritical(casterInst.id,label);
   const prevSE=(t.statusEffects||[]).find(se=>se.abilityId===a.id);if(mult>0)t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
   applyBuffExtras(a,t,mult,casterInst);if(mult>0&&buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:buffDur(a,mult),fresh:selfNow(casterInst,t)});if(prevSE&&mult>0&&buffHasDmg(a)){const nse=t.statusEffects[t.statusEffects.length-1];nse.turnsLeft=addDur(prevSE.turnsLeft,nse.turnsLeft);}
-  playAbilityFX(a,casterInst,[t],[t.x,t.y]);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,casterId:casterInst.id,targetIds:[t.id],start:[t.x,t.y]}});
+  playAbilityFX(a,casterInst,[t],[t.x,t.y]);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:[t.id],start:[t.x,t.y]}});
   addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${buffDur(a,mult)??'∞'} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(a.desc?[a.desc]:[])].join('<br>'));
   activeAbility=null; hoverCell=null;
   afterCast(a,casterInst);
@@ -3617,7 +3621,7 @@ function resolveBuffZone(a,casterInst,start){
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   const targets=affected(a,start);
-  playAbilityFX(a,casterInst,targets,start);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,casterId:casterInst.id,targetIds:targets.map(x=>x.id),start}});
+  playAbilityFX(a,casterInst,targets,start);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:targets.map(x=>x.id),start}});
   const lines=[`🌀 <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b> en zone (🎲 ${esc(atkExpr)} : ${atk} → ${label})`];
   if(a.desc)lines.push(a.desc);
   if(!targets.length){
@@ -3876,7 +3880,8 @@ function startAbility(id){
   if(S.combat.active&&S.combat.order[S.combat.turn]!==selectedToken){toast('⏳ Ce n’est pas le tour de ce personnage.');return;}
   const caster=inst(selectedToken);
   if(caster?.isKO){toast('💀 Ce personnage est inconscient.');return;}
-  const a=S.abilities.find(x=>x.id===id); if(!a)return;
+  if(caster&&!characterAbilities(caster.charId).some(x=>x.id===id)){toast('⚠️ Ce personnage ne possède pas cette capacité.');return;}
+  const a=abOf(id,caster&&caster.charId); if(!a)return;
   if(a.type==='Compétence'){toast('🎓 Les compétences sont passives.');return;}
   if(a.bonusAction&&S.combat.active&&caster&&caster.bonusUsed){toast('⚡ Action bonus déjà utilisée ce tour.');return;}
   if(a.type==='Objet'&&objetCount(instTemplate(caster),a)<=0){toast('🎒 Vous n’avez plus cet objet.');return;}
@@ -4398,9 +4403,9 @@ function abilityResultsHtml(){
     return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine} · Niv. ${a.level||1}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button><button class="btn ghost" onclick="duplicateAbility('${a.id}')" title="Dupliquer">📋</button><button class="btn ghost" onclick="deleteAbility('${a.id}')" title="Supprimer">🗑️</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
   }).join('');
 }
-function openAbility(id){
+function openAbility(id,charId){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les capacités.');return;}
-  const a=id?S.abilities.find(x=>x.id===id):{id:'a'+Date.now(),name:'Nouvelle capacité',icon:'✨',iconImage:null,type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'single',areaSize:1,range:6,manaCost:0,desc:'',effect:'✨',transformCharId:null,triggerOnDeath:false,hotkey:null};
+  const a=id?(charId?abOf(id,charId):S.abilities.find(x=>x.id===id)):{id:'a'+Date.now(),name:'Nouvelle capacité',icon:'✨',iconImage:null,type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'single',areaSize:1,range:6,manaCost:0,desc:'',effect:'✨',transformCharId:null,triggerOnDeath:false,hotkey:null};
   const isTransfo=a.type==='Transformation';
   const isSkill=a.type==='Compétence';
   const typeOpts=ABILITY_TYPES.map(v=>opt(v,v,a.type)).join('');
@@ -4411,7 +4416,7 @@ function openAbility(id){
   const areaOpts=[['single','Cible unique'],['square','Carré'],['circle','Cercle (aperçu)'],['line','Ligne droite'],['cone','Cône'],['self','Autour de soi']].map(([v,l])=>opt(v,l,a.area)).join('');
   const linkedIds=a.characterIds||[];
   const charListHtml=S.characters.length?S.characters.map(c=>`<label class="ability-char-item" data-name="${esc(c.name.toLowerCase())}"><input type="checkbox" class="ac-check" value="${c.id}" ${linkedIds.includes(c.id)?'checked':''}> <span>${iconInlineHtml(c)} ${esc(c.name)} <small class="muted">(${charTypeLabel(c)})</small></span></label>`).join(''):'<p class="tiny muted">Aucun personnage créé pour l’instant (page 🧙 Personnages).</p>';
-  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une capacité</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une capacité${charId?` — pour ${esc(char(charId)?.name||'')} uniquement`:''}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
   <div class="form">
   <div class="field"><label>Nom</label><input id="a_name" value="${esc(a.name)}"></div>
   <div class="field"><label>Icône</label><input id="a_icon" value="${esc(a.icon)}"></div>
@@ -4534,14 +4539,14 @@ ${spriteAutoSelect('a_spriteauto',a.spriteAuto)}
     <p class="tiny muted">Ligne/Cône : pas de projectile ni d'impact — la zone se remplit progressivement avec une couleur selon l'élément.</p>
   </div>
   </div>
-  <div class="field full">
+  <div class="field full" style="display:${charId?'none':''}">
     <label>Personnages liés (peuvent lancer cette capacité)</label>
     <input id="a_char_search" placeholder="Rechercher un personnage par nom…" oninput="filterAbilityCharList()">
     <div id="a_char_list" style="max-height:180px;overflow:auto;border:1px solid #3a3e48;border-radius:8px;padding:6px 10px;margin-top:6px">${charListHtml}</div>
   </div>
   </div>
   <p class="tiny muted">Le type et l'élément sont deux propriétés totalement indépendantes : un Soin peut être Neutre, Feu, etc. Une capacité de Transformation remplace le personnage et son jeton par la fiche choisie.</p>
-  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveAbility('${id||''}')">Enregistrer</button></div>`;
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button>${charId&&char(charId)?.abilityOverrides?.[id]?`<button class="btn ghost" onclick="resetAbilityOverride('${id}','${charId}')">↺ Rétablir la capacité globale</button>`:''}<button class="btn primary" onclick="saveAbility('${id||''}'${charId?`,'${charId}'`:''})">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
 }
 function toggleTransformDropdown(){const p=document.getElementById('a_transformchar_panel');if(p)p.style.display=p.style.display==='none'?'block':'none';}
@@ -4592,9 +4597,14 @@ function filterAbilityCharList(){
     el.style.display=el.dataset.name.includes(q)?'grid':'none';
   });
 }
-function saveAbility(id){
+function resetAbilityOverride(id,charId){
+  if(!isMJ())return;const c=char(charId);if(c&&c.abilityOverrides)delete c.abilityOverrides[id];
+  saveState();closeModal();render();toast('↺ Capacité globale rétablie.');
+}
+function saveAbility(id,charId){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les capacités.');return;}
-  const target=id?S.abilities.find(x=>x.id===id):{id:'a'+Date.now()};
+  const base0=id?S.abilities.find(x=>x.id===id):null; const ovC=charId?char(charId):null;
+  const target=ovC?structuredClone(abOf(id,charId)):(base0||{id:'a'+Date.now()});
   target.name=document.getElementById('a_name').value||'Capacité';
   target.icon=document.getElementById('a_icon').value||'✨';
   target.iconImage=document.getElementById('a_iconimage').value.trim()||null;
@@ -4664,6 +4674,7 @@ function saveAbility(id){
     }
 
   }
+  if(ovC){const diff={};Object.keys(target).forEach(k=>{if(k==='id'||k==='characterIds')return;if(JSON.stringify(target[k])!==JSON.stringify(base0[k]))diff[k]=target[k];});ovC.abilityOverrides=ovC.abilityOverrides||{};if(Object.keys(diff).length)ovC.abilityOverrides[id]=diff;else delete ovC.abilityOverrides[id];saveState();closeModal();render();return;}
   target.characterIds=[...document.querySelectorAll('.ac-check:checked')].map(el=>el.value);
   if(!id)S.abilities.push(target);
   if(target.type==='Transformation'&&!target.transformCharId){toast('⚠️ Choisis un personnage vers lequel se transformer.');}
@@ -5167,7 +5178,7 @@ function myCharacterCard(c){
   const skillList=abilities.filter(a=>a.type==='Compétence'), abList=abilities.filter(a=>a.type!=='Compétence');
   const skillsHtml=skillList.length?skillList.map(a=>{const off=(c.inactiveSkills||[]).includes(a.id);const inf=(a.skillStat&&+a.skillMod)?`Jet de ${a.skillStat} : ${a.skillMod>0?'+':''}${a.skillMod}`:'Aucun effet sur les jets';return `<div class="ability" style="${off?'opacity:.5':''}"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b> <span class="pill">Niv. ${a.level||1}</span> <span class="pill">${off?'⏸ Inactive':'✅ Active'}</span><small>${esc(inf)}</small><div class="tiny rte-view">${a.desc||''}</div></div></div>`;}).join(''):'<p class="tiny muted">Aucune compétence.</p>';
   const abilitiesHtml=abList.length
-    ? abList.map(a=>`<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b> <span class="pill">Niv. ${a.level||1}</span><small>${esc(a.type)} · ${esc(a.formula)} · ${esc(a.element)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}</small><div class="tiny rte-view">${a.desc||''}</div></div></div>`).join('')
+    ? abList.map(a=>`<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b> <span class="pill">Niv. ${a.level||1}</span>${(c.abilityOverrides||{})[a.id]?' <span class="pill">✎ perso</span>':''}<small>${esc(a.type)} · ${esc(a.formula)} · ${esc(a.element)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}</small><div class="tiny rte-view">${a.desc||''}</div></div>${isMJ()?`<button class="btn" onclick="openAbility('${a.id}','${c.id}')">Modifier</button>`:''}</div>`).join('')
     : `<p class="tiny muted">Aucune capacité connue.</p>`;
   const instancesHtml=instances.length
     ? instances.map(i=>{
@@ -6248,7 +6259,7 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('keydown',e=>{
   if(!pendingPersistentOrigin||!activeAbility||!/^Arrow/.test(e.key))return;
-  const a=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId),c=inst(selectedToken); if(!a||!c)return;
+  const a=curAb(pendingPersistentOrigin.abilityId),c=inst(selectedToken); if(!a||!c)return;
   e.preventDefault();
   const p=pendingPersistentOrigin,o=persistentLiveOrigin(a,c),step=(e.shiftKey?15:1)*Math.PI/180;
   p.angle=persistentAngle(p,o,c)+((e.key==='ArrowLeft'||e.key==='ArrowUp')?-step:step);
@@ -6319,7 +6330,7 @@ document.addEventListener('keydown',e=>{
     rollStatTest(itemId.slice(5));
     return;
   }
-  const a=S.abilities.find(x=>x.id===itemId);
+  const a=characterAbilities(selInst.charId).find(x=>x.id===itemId);
   if(a){
     e.preventDefault();
     if(activeAbility){activeAbility=null;hoverCell=null;}
@@ -6362,7 +6373,7 @@ document.addEventListener('keydown',e=>{
     e.target.addEventListener('touchcancel',onEnd,{passive:false});
     clearTimeout(lpTimer);
     if(e.touches.length>=2&&activeAbility&&pendingPersistentOrigin&&st&&(st.mode==='aim'||st.mode==='rot')){
-      const pa=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId),pc=inst(selectedToken);
+      const pa=curAb(pendingPersistentOrigin.abilityId),pc=inst(selectedToken);
       if(pa&&pc){const p=pendingPersistentOrigin;if(!p.rotating){const o=persistentLiveOrigin(pa,pc);p.angle=persistentAngle(p,o,pc);p.frozen=o;p.rotating=true;}st.mode='rot';moveTo(e.touches[1]);}
       return;
     }
