@@ -2680,7 +2680,7 @@ function moveGroupTo(cx,cy){
     g.forEach(o=>{
       const t=inst(o.id); if(!t)return;
       t.x=o.x+dx; t.y=o.y+dy;
-      setEl(o.id,t.x*cell+cell/2,t.y*cell+cell/2);
+      setEl(o.id,t.x*cell+(t.sizeW||1)*cell/2,t.y*cell+(t.sizeH||1)*cell/2);
     });
   }
 }
@@ -3089,9 +3089,10 @@ function setupMapInteractions(){
           t.y=Math.max(0,Math.min(S.map.rows-1,Math.floor(fy/S.map.cell)));
           if(el){el.style.left=fx+'px';el.style.top=fy+'px';}
         }else{
-          const pt=mapPoint(e.clientX,e.clientY);
-          t.x=pt[0]; t.y=pt[1];
-          if(el){el.style.left=(pt[0]*S.map.cell+S.map.cell/2)+'px';el.style.top=(pt[1]*S.map.cell+S.map.cell/2)+'px';}
+          const [fx,fy]=mapPixelPoint(e.clientX,e.clientY), cl=S.map.cell, tw=t.sizeW||1, th=t.sizeH||1;
+          t.x=Math.max(0,Math.min(S.map.cols-tw,Math.round(fx/cl-tw/2)));
+          t.y=Math.max(0,Math.min(S.map.rows-th,Math.round(fy/cl-th/2)));
+          if(el){el.style.left=(t.x*cl+tw*cl/2)+'px';el.style.top=(t.y*cl+th*cl/2)+'px';}
         }
       }
       return;
