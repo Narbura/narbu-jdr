@@ -623,6 +623,7 @@ async function flushSave(){
   const old=lastSaved; let chat=[];
   try{
     const snap=computeSnapshot();
+    if(snap.cols.combat!==old.cols.combat){S.combat._t=Date.now();snap.cols.combat=canon(S.combat);}
     const rows={}, delta={cols:{},notes:[],notesDel:[],insts:[],instsDel:[],chat:[]};
     COL_SPECS.forEach(s=>{
       if(snap.cols[s.k]===old.cols[s.k])return;
