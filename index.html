@@ -6321,13 +6321,37 @@ document.addEventListener('keydown',e=>{
     const wrap=W();
     if(!e.target.closest)return;
     if(!e.target.closest('#tokenMenu'))closeTokenMenu();
-    if(!wrap||!e.target.closest('#mapWrap'))return;
+    
+    // --- DETECTION DU PANNEAU LATERAL RETROUVÉ (.asset-panel) ---
+    // On vérifie si l'utilisateur touche la bibliothèque ET qu'il ne clique pas sur un bouton (comme éditer ou supprimer)
+    const insideLibrary = e.target.closest('.asset-panel');
+    const isButton = e.target.closest('button') || e.target.closest('.btn') || e.target.closest('i');
+    
+    // Si on touche la bibliothèque pour glisser un personnage
+    const isLibraryDrag = insideLibrary && !isButton;
+
+    // Si on n'est ni sur la carte, ni en train de glisser depuis la bibliothèque, on stoppe
+    if(!wrap || (!e.target.closest('#mapWrap') && !isLibraryDrag)) return;
+    
     if(document.getElementById('modalBg').classList.contains('open'))return;
     e.preventDefault();
     e.target.addEventListener('touchmove',onMove,{passive:false});
     e.target.addEventListener('touchend',onEnd,{passive:false});
     e.target.addEventListener('touchcancel',onEnd,{passive:false});
     clearTimeout(lpTimer);
+
+    // Initialisation du Drag & Drop depuis la bibliothèque
+    if(isLibraryDrag && !e.target.closest('#mapWrap')){
+      const t=e.touches[0];
+      st={sx:t.clientX,sy:t.clientY,moved:false,mode:'libraryDrag'};
+      // On déclenche le mousedown d'origine sur l'élément exact de la liste (le texte ou l'icône du perso)
+      e.target.dispatchEvent(new MouseEvent('mousedown', {
+        clientX: t.clientX, clientY: t.clientY, buttons: 1, bubbles: true
+      }));
+      return;
+    }
+    // -------------------------------------------------------------
+
     if(e.touches.length>=2&&activeAbility&&pendingPersistentOrigin&&st&&(st.mode==='aim'||st.mode==='rot')){
       const pa=S.abilities.find(x=>x.id===pendingPersistentOrigin.abilityId),pc=inst(selectedToken);
       if(pa&&pc){const p=pendingPersistentOrigin;if(!p.rotating){const o=persistentLiveOrigin(pa,pc);p.angle=persistentAngle(p,o,pc);p.frozen=o;p.rotating=true;}st.mode='rot';moveTo(e.touches[1]);}
@@ -6360,6 +6384,15 @@ document.addEventListener('keydown',e=>{
     if(!st)return;
     e.preventDefault();
     const wrap=W(); if(!wrap)return;
+    
+    // Suivi du mouvement pour le personnage de la bibliothèque
+    if(st.mode==='libraryDrag'){
+      const t=e.touches[0];
+      if(!st.moved&&Math.hypot(t.clientX-st.sx,t.clientY-st.sy)>8){ st.moved=true; }
+      moveTo(t);
+      return;
+    }
+
     if(st.mode==='rot'){const t2=e.touches[1];if(t2)moveTo(t2);return;}
     if(st.mode==='pinch'){
       if(e.touches.length<2)return;
@@ -6384,6 +6417,14 @@ document.addEventListener('keydown',e=>{
     clearTimeout(lpTimer);
     if(!st)return;
     e.preventDefault();
+    
+    // Relâchement du personnage sur la carte
+    if(st.mode==='libraryDrag'){
+      up();
+      st=null;
+      return;
+    }
+
     if(st.mode==='rot'){if(e.touches.length<2){const p=pendingPersistentOrigin;if(p){p.rotating=false;p.frozen=null;}st.mode='aim';st.moved=true;}return;}
     if(e.touches.length>0)return;
     const t=e.changedTouches[0], wrap=W(), m=st.mode, moved=st.moved;
@@ -6396,6 +6437,7 @@ document.addEventListener('keydown',e=>{
   }
   document.addEventListener('touchstart',onStart,{passive:false});
 })();
+
 
 /* ============================= ARGENT / BOUTIQUE / SAC / ÉCHANGES ============================= */
 function moneySplit(cu){cu=Math.max(0,Math.floor(+cu||0));return {g:Math.floor(cu/10000),s:Math.floor(cu%10000/100),c:cu%100};}
