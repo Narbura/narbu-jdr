@@ -14,7 +14,7 @@
 *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 30% 0,#241b31 0,#111216 42%);color:var(--text);font:14px Inter,Segoe UI,Arial,sans-serif;height:100vh;overflow:hidden}
 button,input,select,textarea{font:inherit} button{cursor:pointer}
 .app{display:grid;grid-template-columns:235px 1fr;height:100vh}
-.sidebar{background:#15161a;border-right:1px solid var(--line);padding:18px 14px;display:flex;flex-direction:column;gap:10px}
+.sidebar{overflow-y:auto;-webkit-overflow-scrolling:touch;background:#15161a;border-right:1px solid var(--line);padding:18px 14px;display:flex;flex-direction:column;gap:10px}
 .brand{font-size:20px;font-weight:800;padding:8px 10px 18px;letter-spacing:.2px}.brand span{color:var(--accent2)}
 .nav{display:flex;gap:8px;align-items:center;padding:11px 12px;border-radius:10px;color:#b9bec9;border:0;background:transparent;text-align:left}.nav:hover,.nav.active{background:#2a1d38;color:white}.nav.active{box-shadow:inset 3px 0 var(--accent)}
 .spacer{flex:1}.server{font-size:11px;color:var(--muted);padding:12px;border:1px solid var(--line);border-radius:10px}
@@ -140,6 +140,7 @@ button,select,.nav,.btn{touch-action:manipulation}
 .auth-box .field{text-align:left;margin-bottom:14px}
 .auth-tabs{display:flex;gap:10px;margin-top:15px;justify-content:center;font-size:12px}
 .auth-tabs button{background:none;border:0;color:var(--accent2);text-decoration:underline;padding:0}
+.asset-item{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}.asset-panel,.side-panel,#charResultsContainer,#mapsResultsContainer,#imagesResultsContainer,#noteResultsContainer,.log{-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 </style>
 </head>
 <body>
@@ -6395,6 +6396,64 @@ document.addEventListener('keydown',e=>{
     up();
   }
   document.addEventListener('touchstart',onStart,{passive:false});
+})();
+
+/* ============================= GLISSER-DÉPOSER TACTILE (panneau latéral -> carte / dossiers) ============================= */
+(function(){
+  let d=null;
+  const mkDT=()=>({data:{},files:[],effectAllowed:'',setData(k,v){this.data[k]=v;},getData(k){return this.data[k]||'';}});
+  function cleanup(){
+    if(d){clearTimeout(d.timer);d.ghost?.remove();}
+    document.getElementById('mapDropHint')?.classList.remove('show');
+    d=null;
+  }
+  document.addEventListener('touchstart',e=>{
+    if(e.touches.length!==1){cleanup();return;}
+    const it=e.target.closest&&e.target.closest('.asset-item[draggable="true"]');
+    if(!it||!it.ondragstart)return;
+    const t=e.touches[0];
+    cleanup();
+    d={it,sx:t.clientX,sy:t.clientY,active:false,ghost:null,dt:mkDT()};
+    d.timer=setTimeout(()=>{
+      if(!d)return;
+      try{it.ondragstart({dataTransfer:d.dt,preventDefault(){},currentTarget:it,target:it});}catch(err){}
+      d.active=true;
+      const g=it.cloneNode(true);
+      g.style.cssText='position:fixed;width:200px;opacity:.85;z-index:10000;pointer-events:none;box-shadow:0 8px 24px #000a;left:'+(d.sx-100)+'px;top:'+(d.sy-25)+'px';
+      document.body.appendChild(g); d.ghost=g;
+      if(navigator.vibrate)navigator.vibrate(30);
+    },350);
+  },{passive:true});
+  document.addEventListener('touchmove',e=>{
+    if(!d)return;
+    const t=e.touches[0];
+    if(!d.active){
+      if(Math.hypot(t.clientX-d.sx,t.clientY-d.sy)>10)cleanup();
+      return;
+    }
+    e.preventDefault();
+    d.ghost.style.left=(t.clientX-100)+'px'; d.ghost.style.top=(t.clientY-25)+'px';
+    const el=document.elementFromPoint(t.clientX,t.clientY);
+    document.getElementById('mapDropHint')?.classList.toggle('show',!!(el&&el.closest('#mapWrap')));
+  },{passive:false});
+  document.addEventListener('touchend',e=>{
+    if(!d)return;
+    if(!d.active){cleanup();return;}
+    e.preventDefault();
+    const t=e.changedTouches[0], dt=d.dt;
+    d.ghost.style.display='none';
+    const el=document.elementFromPoint(t.clientX,t.clientY);
+    cleanup();
+    if(!el)return;
+    const fake={preventDefault(){},stopPropagation(){},dataTransfer:dt,clientX:t.clientX,clientY:t.clientY};
+    const wrap=el.closest('#mapWrap');
+    if(wrap&&wrap.ondrop){wrap.ondrop(fake);return;}
+    const tgt=el.closest('[ondrop]');
+    if(tgt&&tgt.ondrop)tgt.ondrop({...fake,currentTarget:tgt,target:tgt});
+  },{passive:false});
+  document.addEventListener('touchcancel',cleanup);
+  document.addEventListener('dragstart',e=>{if(d&&d.active)e.preventDefault();},true);
+  document.addEventListener('contextmenu',e=>{if(d&&d.active){e.preventDefault();e.stopPropagation();}},true);
 })();
 
 /* ============================= ARGENT / BOUTIQUE / SAC / ÉCHANGES ============================= */
