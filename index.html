@@ -142,6 +142,12 @@ button,select,.nav,.btn{touch-action:manipulation}
 .auth-tabs button{background:none;border:0;color:var(--accent2);text-decoration:underline;padding:0}
 .asset-item{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}.asset-panel,.side-panel,#charResultsContainer,#mapsResultsContainer,#imagesResultsContainer,#noteResultsContainer,.log{-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 .bottom-abilities>span.tiny{white-space:nowrap;flex-shrink:0}
+.navrow{display:flex;gap:4px;align-items:center}.navrow .nav{flex:1}
+.navtoggle{background:none;border:0;color:var(--muted);padding:4px 6px;font-size:14px}.navtoggle:hover{color:#fff}
+.sidebar select{background:#111318;color:#fff;border:1px solid #3a3e48;border-radius:8px;padding:8px;width:100%}
+body.nav-collapsed .sidebar .nav{display:none!important}
+.sidebar .initiative-list{max-height:45vh}
+.side-tabs select{background:#111318;color:#fff;border:1px solid #3a3e48;border-radius:8px;padding:6px;margin-bottom:6px}
 </style>
 </head>
 <body>
@@ -160,7 +166,7 @@ button,select,.nav,.btn{touch-action:manipulation}
 <div class="app">
 <aside class="sidebar">
   <div class="brand">✦ <span>NarbuDR</span></div>
-  <button class="nav active" data-page="table">🗺️ <span>Table de jeu</span></button>
+  <div class="navrow"><button class="navtoggle" id="navToggle" onclick="toggleNavDropdown()" title="Basculer menu déroulant / liste">◂</button><button class="nav active" data-page="table">🗺️ <span>Table de jeu</span></button><select id="navSelect" style="display:none" onchange="gotoPage(this.value)"></select></div>
   <button class="nav" data-page="characters">🧙 <span>Personnages</span></button>
   <button class="nav" data-page="abilities">✨ <span>Capacités</span></button>
   <button class="nav" data-page="equipment">🎒 <span>Équipement</span></button>
@@ -169,6 +175,7 @@ button,select,.nav,.btn{touch-action:manipulation}
   <button class="nav" data-page="mysheet">🪪 <span>Ma fiche</span></button>
   <button class="nav" data-page="hotbar">🎯 <span>Mes Compétences</span></button>
   <button class="nav" data-page="shortcuts">⚡ <span>Raccourcis</span></button>
+  <div id="sidebarCombat"></div>
   <div class="spacer"></div>
   <div class="server" id="serverInfo">Connexion en cours…</div>
   <button class="btn ghost" style="width:100%" onclick="openNicknameModal()">✏️ Changer de pseudo</button>
@@ -1817,6 +1824,8 @@ function render(){
   updateTargetingBanner();
   updateUserBadge();
   syncSheetInputs();
+  updateNavMode();
+  {const sc=document.getElementById('sidebarCombat');if(sc)sc.innerHTML=combatPanel();}
   if(currentPage==='table')setupMapInteractions();
   if(hadChatFocus){const ci=document.getElementById('chat_input');if(ci){ci.focus();ci.setSelectionRange(ci.value.length,ci.value.length);}}
 }
@@ -2447,16 +2456,26 @@ function playAbilityFX(a,casterInst,targets,start){
   }
 
 /* ---- Panneau latéral : Bibliothèque / Chat + combat ---- */
+let sideDropdown=localStorage.getItem('narbudr-side-dd')==='1';
+function toggleSideDropdown(){sideDropdown=!sideDropdown;localStorage.setItem('narbudr-side-dd',sideDropdown?'1':'0');render();}
+let navDropdown=localStorage.getItem('narbudr-nav-dd')==='1';
+function toggleNavDropdown(){navDropdown=!navDropdown;localStorage.setItem('narbudr-nav-dd',navDropdown?'1':'0');updateNavMode();}
+function gotoPage(p){currentPage=p;activeAbility=null;hoverCell=null;render();}
+function updateNavMode(){
+  document.body.classList.toggle('nav-collapsed',navDropdown);
+  const s=document.getElementById('navSelect');
+  if(s){s.style.display=navDropdown?'':'none';
+    if(navDropdown)s.innerHTML=[...document.querySelectorAll('.sidebar .nav')].filter(n=>n.style.display!=='none').map(n=>`<option value="${n.dataset.page}" ${n.dataset.page===currentPage?'selected':''}>${n.textContent.trim()}</option>`).join('');}
+  const t=document.getElementById('navToggle'); if(t)t.textContent=navDropdown?'▸':'◂';
+}
 function sidePanelHtml(){
   const mj=isMJ();
-  return `<div class="side-tabs">
-    ${mj?`<button class="tab ${sidePanelTab==='library'?'active':''}" onclick="switchSideTab('library')">📚 Bibliothèque</button>`:''}
-    ${mj?`<button class="tab ${sidePanelTab==='maps'?'active':''}" onclick="switchSideTab('maps')">🗺️ Cartes</button>`:''}
-    ${mj?`<button class="tab ${sidePanelTab==='images'?'active':''}" onclick="switchSideTab('images')">🖼️ Images</button>`:''}
-    ${mj?`<button class="tab ${sidePanelTab==='notes'?'active':''}" onclick="switchSideTab('notes')">📝 Notes MJ</button>`:''}
-    <button class="tab ${sidePanelTab==='chat'?'active':''}" onclick="switchSideTab('chat')">💬 Chat</button>
-  </div>
-  <div class="asset-panel">${(mj&&sidePanelTab==='library')?assetPanel():(mj&&sidePanelTab==='maps')?mapsPanel():(mj&&sidePanelTab==='images')?imagesPanel():(mj&&sidePanelTab==='notes')?notesPanel():chatPanel()}${combatPanel()}</div>`;
+  const tabs=[...(mj?[['library','📚 Bibliothèque'],['maps','🗺️ Cartes'],['images','🖼️ Images'],['notes','📝 Notes MJ']]:[]),['chat','💬 Chat']];
+  const head=sideDropdown
+    ?`<div class="side-tabs" style="flex-wrap:nowrap;align-items:center;gap:6px"><select style="flex:1" onchange="switchSideTab(this.value)">${tabs.map(t=>opt(t[0],t[1],sidePanelTab)).join('')}</select><button class="btn ghost" style="padding:2px 8px;margin-bottom:6px" onclick="toggleSideDropdown()" title="Afficher les onglets">▸</button></div>`
+    :`<div class="side-tabs">${tabs.map(t=>`<button class="tab ${sidePanelTab===t[0]?'active':''}" onclick="switchSideTab('${t[0]}')">${t[1]}</button>`).join('')}<button class="btn ghost" style="margin-left:auto;padding:2px 8px" onclick="toggleSideDropdown()" title="Menu déroulant">▾</button></div>`;
+  return `${head}
+  <div class="asset-panel">${(mj&&sidePanelTab==='library')?assetPanel():(mj&&sidePanelTab==='maps')?mapsPanel():(mj&&sidePanelTab==='images')?imagesPanel():(mj&&sidePanelTab==='notes')?notesPanel():chatPanel()}</div>`;
 }
 function switchSideTab(t){sidePanelTab=t;render();}
 function assetPanel(){
