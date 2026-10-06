@@ -625,8 +625,14 @@ async function loadGameState(){
   pushUndoCheckpoint();
 }
 let undoStack=[];
+let localSaveTimer=null;
+function saveLocal(now){
+  clearTimeout(localSaveTimer);
+  const go=()=>{localSaveTimer=null;try{localStorage.setItem('arcanum-vtt', JSON.stringify(S));}catch(e){}};
+  if(now)go(); else localSaveTimer=setTimeout(go,3000);
+}
 function pushUndoCheckpoint(){
-  try{ undoStack.push(JSON.stringify(S)); if(undoStack.length>20)undoStack.shift(); }catch(e){}
+  try{ undoStack.push(JSON.stringify(S)); if(undoStack.length>5)undoStack.shift(); }catch(e){}
 }
 async function undoLast(){
   if(!isMJ()){toast('⛔ Seul le MJ peut annuler.');return;}
@@ -707,12 +713,12 @@ async function flushSave(){
 }
 async function persistState(){
   bumpRev(); pushUndoCheckpoint();
-  try{localStorage.setItem('arcanum-vtt', JSON.stringify(S));}catch(e){}
+  saveLocal();
   await flushSave();
 }
 function saveState(immediate){
   bumpRev(); pushUndoCheckpoint();
-  try{localStorage.setItem('arcanum-vtt', JSON.stringify(S));}catch(e){}
+  saveLocal();
   if(immediate){
     flushSave();
     toast('Sauvegarde effectuée');
@@ -721,7 +727,7 @@ function saveState(immediate){
     saveDebounceTimer=setTimeout(flushSave,40);
   }
 }
-window.addEventListener('beforeunload',()=>{ if(saveDebounceTimer)flushSave(); });
+window.addEventListener('beforeunload',()=>{ if(saveDebounceTimer)flushSave(); if(localSaveTimer)saveLocal(true); });
 let lastTurnCombatant=null;
 function syncTurnSelection(){
   if(!S.combat.active){ lastTurnCombatant=null; return; }
