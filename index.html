@@ -158,6 +158,16 @@ body.nav-collapsed .sidebar .nav{display:none!important}
 .side-panel .asset-panel{flex:1 1 0;min-height:0}
 #charResultsContainer,#mapsResultsContainer,#imagesResultsContainer,#noteResultsContainer{height:auto!important;flex:1 1 0;min-height:200px}
 .log{max-height:none!important;flex:1 1 0;min-height:150px}
+.adv-title{font-weight:700;color:#c8cdd6;padding:6px 2px 4px;text-align:center}
+.adv-card{border:1px solid #555;border-radius:6px;overflow:hidden;margin:4px 0;background:#d6cdb8;color:#111}
+.adv-head{background:linear-gradient(#1f5fa8,#12396b);color:#fff;text-align:center;padding:5px 6px;line-height:1.3}
+.adv-head b{display:block;font-style:italic;letter-spacing:1px;font-size:14px}.adv-head small{font-size:10px}
+.adv-row{display:flex;justify-content:space-between;align-items:center;padding:3px 8px;font-weight:600;line-height:1.4}
+.adv-row:nth-child(even){background:#c4bba5}.adv-row.foe span{color:#a01818}
+.adv-pill{border:1px solid #333;border-radius:3px;padding:0 6px;font-size:12px;min-width:26px;text-align:center}
+.adv-pill.sh{background:#9db4e8}.adv-pill.dm{background:#fff59d}.adv-pill.hl{background:#a5e6a5}.adv-pill.ms{background:#ddd}
+.adv-sum{background:linear-gradient(#6a1a1a,#3a0a0a);color:#fff;font-style:italic;font-weight:700;text-align:center;border:1px solid #222;border-radius:4px;padding:5px 8px;margin:6px 0}
+.adv-sum.ok{background:linear-gradient(#1a5a2a,#0a3a15)}
 </style>
 </head>
 <body>
@@ -1598,10 +1608,17 @@ function outcome(d){
   if(d>=75)return ['Légère réussite',.5]; if(d>=50)return ['Légère réussite',.75]; if(d>=25)return ['Réussite',1];
   if(d>=5)return ['Grande réussite',1.5]; if(d>=2)return ['Réussite critique',2]; return ['Réussite ultime',4];
 }
-function addLog(html,compact){const st=compact===true?html+'<!--CC-->':(compact?html+'<!--C-->'+compact:html);S.chat.push(st);if(S.chat.length>120)S.chat.shift();queueChat(st);}
-function chatCompact(){return localStorage.getItem('narbudr-chat-compact')==='1';}
-function toggleChatCompact(){localStorage.setItem('narbudr-chat-compact',chatCompact()?'0':'1');render();}
-function chatEntriesHtml(){const cp=chatCompact();const out=[];S.chat.slice().reverse().forEach(e=>{const s=String(e);let v;if(s.includes('<!--CC-->'))v=s.replace('<!--CC-->','');else if(s.includes('<!--C-->')){const q=s.split('<!--C-->');v=cp?q[1]:q[0];}else v=cp?null:s;if(v)out.push('<div>'+v+'</div>');});return out.join('')||'<p class="muted tiny">Aucun événement pour l’instant.</p>';}
+function addLog(html,compact,adv){let st=compact===true?html+'<!--CC-->':(compact?html+'<!--C-->'+compact:html);if(adv)st+='<!--A-->'+adv;S.chat.push(st);if(S.chat.length>120)S.chat.shift();queueChat(st);}
+function chatMode(){const m=localStorage.getItem('narbudr-chat-mode');if(m)return m;return localStorage.getItem('narbudr-chat-compact')==='1'?'simple':'detail';}
+function chatCompact(){return chatMode()==='simple';}
+function toggleChatCompact(){const m=chatMode();localStorage.setItem('narbudr-chat-mode',m==='detail'?'simple':m==='simple'?'advanced':'detail');render();}
+function chatModeLabel(){const m=chatMode();return m==='simple'?'Simple':m==='advanced'?'Avancé':'Détaillé';}
+function advCardHtml(ci,a,label,rows,sums){
+  const ic=a.iconImage?`<img src="${esc(a.iconImage)}" style="width:16px;height:16px;vertical-align:middle;border-radius:3px">`:esc(a.icon||'');
+  const r=rows.map(x=>`<div class="adv-row ${x.foe?'foe':''}"><span>${esc(x.txt)}</span><span class="adv-pill ${x.k}">${x.v}</span></div>`).join('');
+  return `<div class="adv-title">${ic} ${esc(ci.label)} lance ${esc(a.name)}</div><div class="adv-card"><div class="adv-head"><b>${esc(a.name)}</b><small>${esc(label)} ♦ ${esc(a.type)}</small></div>${r}</div>`+sums.map(x=>`<div class="adv-sum ${x.ok?'ok':''}">${x.txt}</div>`).join('');
+}
+function chatEntriesHtml(){const md=chatMode();const out=[];S.chat.slice().reverse().forEach(e=>{let s=String(e),adv=null;const ai=s.indexOf('<!--A-->');if(ai>=0){adv=s.slice(ai+8);s=s.slice(0,ai);}let v;if(md==='advanced'&&adv)v=adv;else if(s.includes('<!--CC-->'))v=s.replace('<!--CC-->','');else if(s.includes('<!--C-->')){const q=s.split('<!--C-->');v=md==='simple'?q[1]:q[0];}else v=md==='simple'?null:s;if(v)out.push('<div>'+v+'</div>');});return out.join('')||'<p class="muted tiny">Aucun événement pour l’instant.</p>';}
 const TB_ITEMS=[['fullscreen','⛶ Plein écran',false],['grid','▦ Grille',false],['hud','🎯 HUD',true],['ff','⚔ Tir allié',true],['free','🎯 Placement libre',true],['combat','⚔ Boutons de combat',false],['chat','💬 Chat',false]];
 function tbHidden(){try{return JSON.parse(localStorage.getItem('narbudr-tb-hidden')||'[]');}catch(e){return [];}}
 function tbShow(k){return !tbHidden().includes(k);}
@@ -1972,7 +1989,7 @@ function tablePage(){
       ${isMJ()&&tbShow('hud')?`<button class="btn ${S.hudEnabled?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleHudEnabled()" ${uiCtx('ui_hud')} title="${isMJ()?'Activer/désactiver le HUD flottant (dégâts/soins) et les pop-ups de critiques':'Seul le MJ peut activer cette option'}">${hkTag('ui_hud')}🎯 HUD${S.hudEnabled?' : ON':''}</button>`:''}
       ${isMJ()&&tbShow('ff')?`<button class="btn ${S.friendlyFire?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleFriendlyFire()" ${uiCtx('ui_ff')} title="${isMJ()?'Autoriser/interdire les attaques entre alliés (joueurs entre eux, monstres entre eux)':'Seul le MJ peut activer cette option'}">${hkTag('ui_ff')}⚔ Tir allié${S.friendlyFire?' : ON':''}</button>`:''}
       ${isMJ()&&tbShow('free')?`<button class="btn ${S.freeMovement?'primary':''}" ${(isMJ()&&!S.combat.active)?'':'disabled'} onclick="toggleFreeMovement()" ${uiCtx('ui_free')} title="${S.combat.active?'Indisponible pendant le combat — les tokens sont alignés sur la grille':(isMJ()?'Activer/désactiver le placement libre des tokens (hors combat)':'Seul le MJ peut activer cette option')}">${hkTag('ui_free')}🎯 Placement libre${S.freeMovement?' : ON':''}</button>`:''}
-      ${tbShow('combat')?combatControls:''}${tbShow('chat')?`<button class="btn ${chatCompact()?'primary':''}" onclick="toggleChatCompact()" title="Chat simplifié : uniquement messages, jets et dégâts">💬 Chat${chatCompact()?' : ON':''}</button>`:''}`}${tbAnyVisible()?`<button class="btn ghost fs-hide" style="margin-left:auto;flex-shrink:0" onclick="toggleToolbar()" title="${toolbarHidden?'Afficher':'Masquer'} les options">${toolbarHidden?'▼':'▶'}</button>`:''}
+      ${tbShow('combat')?combatControls:''}${tbShow('chat')?`<button class="btn ${chatMode()!=='detail'?'primary':''}" onclick="toggleChatCompact()" title="Changer de mode de chat : Détaillé / Simple / Avancé">💬 Chat : ${chatModeLabel()}</button>`:''}`}${tbAnyVisible()?`<button class="btn ghost fs-hide" style="margin-left:auto;flex-shrink:0" onclick="toggleToolbar()" title="${toolbarHidden?'Afficher':'Masquer'} les options">${toolbarHidden?'▼':'▶'}</button>`:''}
     </div>
     <div class="map-wrap" id="mapWrap">
       <div class="map-drop-hint" id="mapDropHint">➕ Déposer sur la carte</div>
@@ -3557,6 +3574,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   playAbilityFX(a,casterInst,targets,start);
   gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:targets.map(t=>t.id),start}});
   const cl=[];
+  const advRows=[],advSum=[];
   const lines=[`⚔ <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b>`];
   if(a.desc)lines.push(a.desc);
   if(a.manaCost>0)lines.push(`💧 Coût en mana : ${a.manaCost} (reste ${casterInst.mana}/${casterInst.manaMax})`);
@@ -3592,6 +3610,7 @@ function resolveAbility(a,start,explicitTargetInstId){
       if(!isAoE)broadcastDiceRoll(formulaSides(a.formula),r.rolls);
       const amount=applyMult(Math.ceil(r.total*mult*(effStat(casterTpl,casterInst,a.stat))/100),a.dmgMult);
       if(a._mana)t.mana=Math.min(t.manaMax,t.mana+amount);else t.hp=Math.min(t.hpMax,t.hp+amount);
+      advRows.push({k:'hl',txt:(a._mana?'Mana de ':'Soin sur ')+t.label,v:amount});advSum.push({ok:1,txt:`${esc(t.label)} récupère ${amount} ${a._mana?'de mana':'PV'}.`});
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
       if(a._mana){lines.push(`💧 Mana : ${amount}`);lines.push(`💧 ${esc(t.label)} : +${amount} mana (${t.mana}/${t.manaMax})`);broadcastHud(t.id,{mana:amount});}
       else{lines.push(`💚 Soin : ${amount}`);
@@ -3607,11 +3626,12 @@ function resolveAbility(a,start,explicitTargetInstId){
       if(t.shield>t.shieldMax)t.shieldMax=t.shield;
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
       lines.push(`🛡 Bouclier accordé : ${amount}`);
+      advRows.push({k:'sh',txt:'Bouclier de '+t.label,v:amount});advSum.push({ok:1,txt:`${esc(t.label)} gagne ${amount} de bouclier.`});
       lines.push(`🛡 ${esc(t.label)} : ${t.shield}/${t.shieldMax}`);
       broadcastHud(t.id,{shield:amount});
       continue;
     }
-    if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);continue;}
+    if(mult===0){lines.push(`${esc(t.label)} n'est pas touché·e.`);advRows.push({k:'ms',txt:t.label+' esquive',v:'—',foe:tTpl?.type!=='player'});continue;}
     let raw, elemRoll, wpRaw=0;
     if(isAoE){raw=sharedRoll.abTotal;wpRaw=sharedRoll.wpTotal;elemRoll=sharedElems||{list:[]};}
     else{const rw=rollWithWeapon(a.formula,weaponUsed,casterInst);raw=rw.abTotal;wpRaw=rw.wpTotal;lines.push(rw.logLine);elemRoll=rollWeaponElems(weaponUsed,casterInst);elemRoll.log.forEach(l=>lines.push(l));}
@@ -3627,8 +3647,11 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
     lines.push(`❤️ ${esc(t.label)} : -${hpDamage} PV (${t.hp}/${t.hpMax})`);
     broadcastHud(t.id,{hp:-hpDamage,shield:absorbed>0?-absorbed:0});
+    if(absorbed>0){advRows.push({k:'sh',txt:'Bouclier de '+t.label,v:absorbed,foe:tTpl?.type!=='player'});advSum.push({txt:`${esc(t.label)} perd ${absorbed} de bouclier.`});}
+    advRows.push({k:'dm',txt:'Dégâts sur '+t.label,v:hpDamage,foe:tTpl?.type!=='player'});if(hpDamage>0)advSum.push({txt:`${esc(t.label)} prend ${hpDamage} de dégâts.`});
     if(damage>0)cl.push(`${esc(casterInst.label)} inflige ${damage} dégâts à ${esc(t.label)}`);
     applyMonsterDurabilityHit(casterTpl,t,tTpl,label,lines);
+    if(t.hp<=0)advSum.push({txt:`💀 ${esc(t.label)} est KO.`});
     if(t.hp<=0){
       lines.push(`💀 <b>${esc(t.label)} est KO</b>.`);
       handleInstanceDeath(t,casterInst);
@@ -3636,7 +3659,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   }
 
   if(a.gapClose&&a.area==='single'&&explicitTargetInstId&&inst(explicitTargetInstId)&&inst(casterInst.id))scheduleGapClose(a,casterInst.id,explicitTargetInstId,lines);
-  addLog(lines.join('<br>'),cl.join('<br>'));
+  {const ar=advRows.sort((x,y)=>(x.k==='sh'?0:1)-(y.k==='sh'?0:1));addLog(lines.join('<br>'),cl.join('<br>'),advCardHtml(casterInst,a,label,ar,advSum));}
   activeAbility=null; hoverCell=null;
   afterCast(a,casterInst);
   saveState(); render();
