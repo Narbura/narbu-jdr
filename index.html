@@ -1171,7 +1171,7 @@ function xpNeeded(level){let n=10;for(let i=1;i<(level||1);i++)n=Math.min(Number
 /* ---- Points de caractéristique gagnés par niveau ---- */
 function levelPointsEarned(lvl){let n=0;for(let l=2;l<=(lvl||1);l++)n+=(l%5===0)?20:5;return n;}
 function statPointsAvailable(c){return Math.max(0,levelPointsEarned(c.level||1)-(c.statPointsSpent||0));}
-function statStep(val){return val<50?{gain:2,cost:1}:val<100?{gain:1,cost:1}:{gain:1,cost:2};}
+function statStep(val){return val<50?{gain:2,cost:1}:val<100?{gain:1,cost:1}:val<200?{gain:1,cost:2}:{gain:1,cost:4};}
 let pendingStats={};
 function pendingSim(c){
   const vals={...(c.stats||{})}; let cost=0;
@@ -1257,7 +1257,8 @@ function consumeObjet(ci,a){const c=instTemplate(ci);if(!c)return;const st=(c.ba
 function buffHasDmg(a){const f=String(a.formula||'').trim();return f!==''&&f!=='0';}
 function selfNow(ci,t){return !!(S.combat.active&&ci&&t&&ci.id===t.id&&S.combat.order[S.combat.turn]===t.id);}
 function addDur(o,n){return (o==null||n==null)?null:o+n;}
-function buffDur(a,mult){const k=mult>=4?'ult':mult>=2?'cri':mult>=1.5?'gra':mult>=1?'rea':'leg';const v=a.durBy&&a.durBy[k];if(v>0)return v;return a.duration>0?a.duration:null;}
+let _deg=null;
+function buffDur(a,mult){const k=_deg?degKey(_deg):(mult>=4?'ult':mult>=2?'cri':mult>=1.5?'gra':mult>=1?'rea':'leg');const v=a.durBy&&a.durBy[k];if(v>0)return v;return a.duration>0?a.duration:null;}
 function applyObjetAffliction(a,t,mult,ci,lines){
   if(!(mult>0)||!a.objAffId)return;
   const def=(S.afflictionDefs||[]).find(d=>d.id===a.objAffId); if(!def)return;
@@ -1271,12 +1272,68 @@ function afterCast(a,ci){
   if(!S.combat.active||!ci||S.combat.order[S.combat.turn]!==ci.id)return;
   if(a&&a.bonusAction)ci.bonusUsed=true; else advanceTurn();
 }
-function applyBuffExtras(a,t,mult,ci){
-  if(!(mult>0))return;
-  const out=[];
-  if(a.buffAfflictionId){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=t.afflictions||[];{const nd=buffDur(a,mult),ex=t.afflictions.find(x=>x.defId===def.id);if(ex){ex.left=addDur(ex.left,nd);ex.src=ci?ci.id:ex.src;}else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t)});}out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${buffDur(a,mult)??'∞'} tour(s))`);}}
-  if(a.buffCaRed>0||a.buffDmRed>0){t.defMods=t.defMods||[];{const nd=buffDur(a,mult),ex=t.defMods.find(m=>m.abilityId===a.id);if(ex){ex.turnsLeft=addDur(ex.turnsLeft,nd);ex.ca=a.buffCaRed||0;ex.dm=a.buffDmRed||0;}else t.defMods.push({abilityId:a.id,ca:a.buffCaRed||0,dm:a.buffDmRed||0,turnsLeft:nd});}out.push(`🛡 <b>${esc(t.label)}</b> : ${a.buffCaRed?`CA −${a.buffCaRed} `:''}${a.buffDmRed?`DM −${a.buffDmRed} `:''}(${buffDur(a,mult)??'∞'} tour(s))`);}
+const DEGREES=[['fu','Échec ultime'],['fc','Échec critique'],['f','Échec'],['leg','Légère réussite'],['rea','Réussite'],['gra','Grande réussite'],['cri','Réussite critique'],['ult','Réussite ultime']];
+function degKey(label){return ({'Échec ultime':'fu','Échec critique':'fc','Échec':'f','Légère réussite':'leg','Réussite':'rea','Grande réussite':'gra','Réussite critique':'cri','Réussite ultime':'ult'})[label]||'rea';}
+const REQ_MSG="La cible n'a pas les conditions requise pour être la cible de cet capacité.";
+function targetHasReq(a,t){
+  if(!a||!a.reqOn||!a.reqId)return true;
+  const id=a.reqId.slice(3);
+  if(a.reqId.startsWith('af:'))return (t.afflictions||[]).some(x=>x.defId===id);
+  return (t.statusEffects||[]).some(x=>x.abilityId===id)||(t.defMods||[]).some(m=>m.abilityId===id)||(S.persistentZones||[]).some(z=>z.abilityId===id&&tokenInPersistentZone(t,z));
+}
+function reqPickHtml(cur){
+  const q=(document.getElementById('a_req_search')?.value||'').trim().toLowerCase();
+  const ok=(n,v)=>!q||n.toLowerCase().includes(q)||v===cur;
+  const af=(S.afflictionDefs||[]).filter(d=>ok(d.name,'af:'+d.id)).map(d=>`<option value="af:${esc(d.id)}" ${'af:'+d.id===cur?'selected':''}>${esc(d.name)}</option>`).join('');
+  const ab=S.abilities.filter(x=>(x.type==='Buff'||x.type==='Persistant')&&ok(x.name,'ab:'+x.id)).map(x=>`<option value="ab:${esc(x.id)}" ${'ab:'+x.id===cur?'selected':''}>${esc(x.name)}</option>`).join('');
+  return `<option value="">— Choisir —</option><optgroup label="🩸 Afflictions">${af}</optgroup><optgroup label="✨ Capacités à durée (Buff / Persistant)">${ab}</optgroup>`;
+}
+function filterReqPick(){const sel=document.getElementById('a_reqid');if(sel)sel.innerHTML=reqPickHtml(sel.value);}
+function defVals(a,key,mult){
+  const o=(a.defBy||{})[key]||{};
+  if(['caRed','dmRed','caUp','dmUp'].some(k=>o[k]>0))return {ca:(o.caRed||0)-(o.caUp||0),dm:(o.dmRed||0)-(o.dmUp||0)};
+  if(mult>0)return {ca:(a.buffCaRed||0)-(a.buffCaUp||0),dm:(a.buffDmRed||0)-(a.buffDmUp||0)};
+  return {ca:0,dm:0};
+}
+function affApplies(a,key,mult){return Array.isArray(a.buffAffDeg)?a.buffAffDeg.includes(key):mult>0;}
+function applyBuffExtras(a,t,mult,ci,label){
+  const key=degKey(label), out=[];
+  if(a.buffAfflictionId&&affApplies(a,key,mult)){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=t.afflictions||[];{const nd=buffDur(a,mult),ex=t.afflictions.find(x=>x.defId===def.id);if(ex){ex.left=addDur(ex.left,nd);ex.src=ci?ci.id:ex.src;}else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t)});}out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${buffDur(a,mult)??'∞'} tour(s))`);}}
+  const dv=defVals(a,key,mult);
+  if(dv.ca||dv.dm){t.defMods=t.defMods||[];{const nd=buffDur(a,mult),ex=t.defMods.find(m=>m.abilityId===a.id);if(ex){ex.turnsLeft=addDur(ex.turnsLeft,nd);ex.ca=dv.ca;ex.dm=dv.dm;}else t.defMods.push({abilityId:a.id,ca:dv.ca,dm:dv.dm,turnsLeft:nd});}
+    const f=(n,l)=>n?`${l} ${n>0?'−':'+'}${Math.abs(n)} `:'';
+    out.push(`🛡 <b>${esc(t.label)}</b> : ${f(dv.ca,'CA')}${f(dv.dm,'DM')}(${buffDur(a,mult)??'∞'} tour(s))`);}
   if(out.length)addLog(out.join('<br>'));
+}
+function applyBuffStatus(a,t,mult,ci,ctpl){
+  if(!(mult>0))return;
+  const prev=(t.statusEffects||[]).find(x=>x.abilityId===a.id);
+  t.statusEffects=(t.statusEffects||[]).filter(x=>x.abilityId!==a.id);
+  const dmg=buffHasDmg(a);
+  const se={abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:dmg?a.formula:'0',stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:effStat(ctpl,ci,a.stat),mult,turnsLeft:buffDur(a,mult),marker:!dmg};
+  if(dmg)se.fresh=selfNow(ci,t);
+  if(prev)se.turnsLeft=addDur(prev.turnsLeft,se.turnsLeft);
+  t.statusEffects.push(se);
+}
+/* Malus d'échec critique / ultime (tout type de capacité) */
+function applyFailPenalty(a,ci,label,targets,explicitId){
+  const key=label==='Échec ultime'?'fu':label==='Échec critique'?'fc':null;
+  const p=key&&(a.failPen||{})[key]; if(!p)return [];
+  const L=[], dn=a.defense;
+  const amt=(v,max)=>{v=String(v||'').trim();if(!v)return 0;const m=v.match(/^(\d+(?:[.,]\d+)?)\s*%$/);if(m)return Math.ceil(max*parseFloat(m[1].replace(',','.'))/100);const r=roll(v);if(r.rolls.length)broadcastDiceRoll(formulaSides(v),r.rolls);return Math.max(0,r.total);};
+  const afterDef=(v,t)=>{const d=(dn&&dn!=='none')?(effectiveDef(instTemplate(t),t)[dn]||0):0;return Math.max(0,v-d);};
+  const hurt=(t,v)=>{const ab=Math.min(t.shield||0,v);t.shield=(t.shield||0)-ab;const h=v-ab;t.hp=Math.max(0,t.hp-h);broadcastHud(t.id,{hp:-h,shield:ab>0?-ab:0});return h;};
+  if(p.mana){const v=Math.min(ci.mana||0,amt(p.mana,ci.manaMax));ci.mana-=v;L.push(`💥 ${esc(label)} : <b>${esc(ci.label)}</b> perd ${v} mana.`);if(v)broadcastHud(ci.id,{mana:-v});}
+  if(p.hp){const h=hurt(ci,afterDef(amt(p.hp,ci.hpMax),ci));L.push(`💥 ${esc(label)} : <b>${esc(ci.label)}</b> perd ${h} PV.`);if(ci.hp<=0){L.push(`💀 <b>${esc(ci.label)} est KO</b>.`);handleInstanceDeath(ci,null);}}
+  if(p.ally){
+    const en=(explicitId&&inst(explicitId))||(targets||[])[0];
+    if(en&&inst(ci.id)){
+      const ty=instTemplate(ci)?.type; let best=null,bd=1e9;
+      S.instances.forEach(i=>{if(i.id===ci.id||i.id===en.id||i.isKO||instTemplate(i)?.type!==ty)return;const d=footprintDistance(i.x,i.y,i.sizeW||1,i.sizeH||1,en.x,en.y,en.sizeW||1,en.sizeH||1);if(d<bd){bd=d;best=i;}});
+      if(best){const h=hurt(best,afterDef(amt(p.ally,best.hpMax),best));L.push(`💥 ${esc(label)} : <b>${esc(best.label)}</b> (allié proche de la cible) subit ${h} dégâts.`);if(best.hp<=0){L.push(`💀 <b>${esc(best.label)} est KO</b>.`);handleInstanceDeath(best,ci);}}
+    }
+  }
+  return L;
 }
 function endTurnTick(t){
   if(t){tickAfflictions(t,true);tickStatusEffects(t,true);}
@@ -2516,11 +2573,11 @@ function playAbilityFX(a,casterInst,targets,start){
     }
   };
 
-  if(a.area==='single'){
+  if(a.area==='single'||a.area==='me'){
     (targets||[]).forEach(t=>{
       const [tx,ty]=instCenterPx(t);
       const size=Math.max(cell*1.4,Math.max(t.sizeW||1,t.sizeH||1)*cell*1.4);
-      if(projImg)fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,tx,ty,psize,fps,()=>doImpact(tx,ty,size));
+      if(projImg&&a.area==='single')fxAddProjectile(projImg,projFrames,projRows,fromX,fromY,tx,ty,psize,fps,()=>doImpact(tx,ty,size));
       else doImpact(tx,ty,size);
     });
     return;
@@ -2947,6 +3004,7 @@ function tickStatusEffects(inst_,fresh){
   const tTpl=instTemplate(inst_);
   const remaining=[];
   inst_.statusEffects.forEach(se=>{
+    if(se.marker){remaining.push(se);return;}
     if(!!se.fresh!==!!fresh){remaining.push(se);return;}
     const r=roll(se.formula);
     const raw=applyMult(Math.max(0,Math.ceil(r.total*(se.mult||1)*(se.statValue||0)/100)),se.dmgMult);
@@ -3335,6 +3393,7 @@ function affected(a,start,explicitTargetInstId){
   const casterType=casterTpl?.type||'player';
   const isSupport=(a.type==='Soin'||a.type==='Bouclier');
 
+  if(a.area==='me')return casterInst?[casterInst]:[];
   if(a.area==='self'){
     const inZone=t=>tokenInAura(casterInst,t,{area:'square',areaSize:a.areaSize||1});
     if(isSupport)return S.instances.filter(inZone);
@@ -3555,6 +3614,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     }
   }
   if(a.gapClose&&a.area==='single'&&explicitTargetInstId){const ti0=inst(explicitTargetInstId);if(ti0&&gapPath(casterInst,ti0,a.range)===null){toast('🚫 Vous ne pouvez pas rejoindre ce personnage.');return;}}
+  if(a.reqOn&&a.reqId&&!affected(a,start,explicitTargetInstId).some(t=>targetHasReq(a,t))){toast('🚫 '+REQ_MSG);return;}
   const casterTpl=instTemplate(casterInst);
   if(a.manaCost>0){
     casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
@@ -3570,7 +3630,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   degradeWeaponOnOutcome(casterInst,label);
-  const targets=affected(a,start,explicitTargetInstId);
+  const targets=affected(a,start,explicitTargetInstId).filter(t=>targetHasReq(a,t));
   playAbilityFX(a,casterInst,targets,start);
   gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:targets.map(t=>t.id),start}});
   const cl=[];
@@ -3580,6 +3640,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   if(a.manaCost>0)lines.push(`💧 Coût en mana : ${a.manaCost} (reste ${casterInst.mana}/${casterInst.manaMax})`);
   lines.push(`🎲 ${esc(atkExpr)} : <b>${atk}</b> → ${label}`);
 
+  lines.push(...applyFailPenalty(a,casterInst,label,targets,explicitTargetInstId));
   if(!targets.length){
     lines.push('<span class="muted">Aucune cible valide dans la zone.</span>');
     addLog(lines.join('<br>'));
@@ -3587,7 +3648,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   }
 
   // Pour les sorts de zone (AoE) : un seul jet de dés partagé, appliqué à toutes les cibles.
-  const isAoE=a.area!=='single';
+  const isAoE=a.area!=='single'&&a.area!=='me';
   let sharedRoll=null, sharedElems=null;
   if(isAoE){
     if(a.type==='Soin'||a.type==='Bouclier'){
@@ -3686,6 +3747,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   if(!casterInst){toast('Sélectionne d’abord un personnage.');return;}
   if(!canControlInstance(casterInst.id)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
   const t=inst(targetInstId); if(!t){toast('Cible invalide.');return;}
+  if(!targetHasReq(a,t)){toast('🚫 '+REQ_MSG);return;}
   if(a.manaCost>0&&(casterInst.mana||0)<a.manaCost){
     toast(`🚫 Mana insuffisant (${casterInst.mana}/${a.manaCost}).`);
     return;
@@ -3700,8 +3762,8 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   const atkExpr=a.atkDice||'1d100'; const atkRoll=roll(atkExpr); const atk=atkRoll.total; const [label,mult]=outcome(atk);
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
-  const prevSE=(t.statusEffects||[]).find(se=>se.abilityId===a.id);if(mult>0)t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-  applyBuffExtras(a,t,mult,casterInst);if(mult>0&&buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:effStat(casterTpl,casterInst,a.stat),mult,turnsLeft:buffDur(a,mult),fresh:selfNow(casterInst,t)});if(prevSE&&mult>0&&buffHasDmg(a)){const nse=t.statusEffects[t.statusEffects.length-1];nse.turnsLeft=addDur(prevSE.turnsLeft,nse.turnsLeft);}
+  _deg=label;{const pl=applyFailPenalty(a,casterInst,label,[t],targetInstId);if(pl.length)addLog(pl.join('<br>'));}
+  applyBuffExtras(a,t,mult,casterInst,label);applyBuffStatus(a,t,mult,casterInst,casterTpl);
   playAbilityFX(a,casterInst,[t],[t.x,t.y]);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:[t.id],start:[t.x,t.y]}});
   addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${buffDur(a,mult)??'∞'} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(a.desc?[a.desc]:[])].join('<br>'));
   activeAbility=null; hoverCell=null;
@@ -3716,6 +3778,7 @@ function resolveBuffZone(a,casterInst,start){
     toast(`🚫 Mana insuffisant (${casterInst.mana}/${a.manaCost}).`);
     return;
   }
+  if(a.reqOn&&a.reqId&&!affected(a,start).some(t=>targetHasReq(a,t))){toast('🚫 '+REQ_MSG);return;}
   if(a.range&&a.range>0){
     const dist=footprintDistance(casterInst.x,casterInst.y,casterInst.sizeW||1,casterInst.sizeH||1,start[0],start[1],1,1);
     if(dist>a.range){toast(`🚫 Trop loin (portée max ${a.range} case${a.range>1?'s':''}).`);return;}
@@ -3726,7 +3789,7 @@ function resolveBuffZone(a,casterInst,start){
   const atkExpr=a.atkDice||'1d100'; const atkRoll=roll(atkExpr); const atk=atkRoll.total; const [label,mult]=outcome(atk);
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
-  const targets=affected(a,start);
+  const targets=affected(a,start).filter(t=>targetHasReq(a,t));_deg=label;{const pl=applyFailPenalty(a,casterInst,label,targets);if(pl.length)addLog(pl.join('<br>'));}
   playAbilityFX(a,casterInst,targets,start);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:targets.map(x=>x.id),start}});
   const lines=[`🌀 <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b> en zone (🎲 ${esc(atkExpr)} : ${atk} → ${label})`];
   if(a.desc)lines.push(a.desc);
@@ -3734,8 +3797,7 @@ function resolveBuffZone(a,casterInst,start){
     lines.push('<span class="muted">Aucune cible valide dans la zone.</span>');
   }else{
     targets.forEach(t=>{
-      const prevSE=(t.statusEffects||[]).find(se=>se.abilityId===a.id);if(mult>0)t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-      applyBuffExtras(a,t,mult,casterInst);if(mult>0&&buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:effStat(casterTpl,casterInst,a.stat),mult,turnsLeft:buffDur(a,mult),fresh:selfNow(casterInst,t)});if(prevSE&&mult>0&&buffHasDmg(a)){const nse=t.statusEffects[t.statusEffects.length-1];nse.turnsLeft=addDur(prevSE.turnsLeft,nse.turnsLeft);}
+      applyBuffExtras(a,t,mult,casterInst,label);applyBuffStatus(a,t,mult,casterInst,casterTpl);
       lines.push(mult>0?`🌀 ${esc(t.label)} affecté (${buffDur(a,mult)??'∞'} tour(s))`:`${esc(t.label)} n'est pas affecté·e.`);
     });
   }
@@ -3999,6 +4061,12 @@ function startAbility(id){
     return;
   }
   if(a.type==='Transformation'){ castTransformation(a); return; }
+  if(a.area==='me'){
+    if(a.type==='Persistant'){toast('⚠️ La zone « Soi » n’est pas compatible avec Persistant.');return;}
+    if(a.type==='Buff')resolveBuffAbility(a,caster,caster.id);
+    else resolveAbility(a,[caster.x,caster.y],caster.id);
+    return;
+  }
   if(a.area==='self'){
     if(a.type==='Persistant')resolvePersistentAbility(a,caster,[caster.x,caster.y]);
     else if(a.type==='Buff')resolveBuffZone(a,caster,[caster.x,caster.y]);
@@ -4503,10 +4571,10 @@ function abilityResultsHtml(){
       : a.type==='Passif'
       ? `Aura (${esc(a.area)} ${a.areaSize}) · ${esc(a.formula)} · Effet : ${a.auraEffect==='heal'?'Soin':a.auraEffect==='shield'?'Bouclier':'Dégâts'} · Mana/tick ${a.manaCost||0}`
       : a.type==='Buff'
-      ? `Buff/Débuff · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · ${a.duration||'∞'} tour(s) · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
+      ? `Buff/Débuff · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':a.area==='me'?'Soi-même':(a.area+' '+a.areaSize)} · ${a.duration||'∞'} tour(s) · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
       : a.type==='Persistant'
-      ? `Zone persistante · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?`Ligne (zone ${a.zoneRange||a.range} cases)`:a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3} (zone ${a.zoneRange||a.range} cases)`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · ${a.duration} tour(s) · Portée origine ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
-      : `${esc(a.type)}${a.hotkey?` [${esc(a.hotkey)}]`:''} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`;
+      ? `Zone persistante · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?`Ligne (zone ${a.zoneRange||a.range} cases)`:a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3} (zone ${a.zoneRange||a.range} cases)`:a.area==='self'?'Autour de soi':a.area==='me'?'Soi-même':(a.area+' '+a.areaSize)} · ${a.duration} tour(s) · Portée origine ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
+      : `${esc(a.type)}${a.hotkey?` [${esc(a.hotkey)}]`:''} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':a.area==='me'?'Soi-même':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`;
     return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine} · Niv. ${a.level||1}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button><button class="btn ghost" onclick="duplicateAbility('${a.id}')" title="Dupliquer">📋</button><button class="btn ghost" onclick="deleteAbility('${a.id}')" title="Supprimer">🗑️</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
   }).join('');
 }
@@ -4520,7 +4588,7 @@ function openAbility(id,charId){
   const elementOpts=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres','Poison','Neutre','Soin','Bouclier','Physique','Récupération'].map(v=>opt(v,v,a.element)).join('');
   const statOpts=['Magie','Force','Agilité','Vitesse'].map(v=>opt(v,v,a.stat)).join('');
   const defOpts=[['DM',"Défense magique"],['CA',"Classe d'armure"],['none','Aucune']].map(([v,l])=>opt(v,l,a.defense)).join('');
-  const areaOpts=[['single','Cible unique'],['square','Carré'],['circle','Cercle (aperçu)'],['line','Ligne droite'],['cone','Cône'],['self','Autour de soi']].map(([v,l])=>opt(v,l,a.area)).join('');
+  const areaOpts=[['single','Cible unique'],['square','Carré'],['circle','Cercle (aperçu)'],['line','Ligne droite'],['cone','Cône'],['self','Autour de soi'],['me','Soi (le lanceur)']].map(([v,l])=>opt(v,l,a.area)).join('');
   const linkedIds=a.characterIds||[];
   const charListHtml=S.characters.length?S.characters.map(c=>`<label class="ability-char-item" data-name="${esc(c.name.toLowerCase())}"><input type="checkbox" class="ac-check" value="${c.id}" ${linkedIds.includes(c.id)?'checked':''}> <span>${iconInlineHtml(c)} ${esc(c.name)} <small class="muted">(${charTypeLabel(c)})</small></span></label>`).join(''):'<p class="tiny muted">Aucun personnage créé pour l’instant (page 🧙 Personnages).</p>';
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une capacité${charId?` — pour ${esc(char(charId)?.name||'')} uniquement`:''}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
@@ -4545,7 +4613,7 @@ function openAbility(id,charId){
   <div class="field" id="a_cooldown_field" style="display:${isSkill?'none':''}"><label>Cooldown (tours — vide = aucun)</label><input id="a_cooldown" type="number" min="0" value="${a.cooldown||''}" placeholder="aucun"></div>
   <div class="field" id="ability_passif_extra" style="display:${a.type==='Passif'?'':'none'}"><label>Effet de l'aura</label><select id="a_auraeffect">${opt('damage','Dégâts',a.auraEffect)}${opt('heal','Soin',a.auraEffect)}${opt('shield','Bouclier',a.auraEffect)}</select><p class="tiny muted">Aura auto-centrée sur le lanceur (zone = Carré ou Cercle uniquement), se déclenche à chaque début de son tour.</p></div>
   <div class="field" id="ability_buff_extra" style="display:${(a.type==='Buff'||a.type==='Persistant')?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.type==='Buff'?(a.duration||''):(a.duration||3)}" placeholder="${a.type==='Buff'?'vide = permanent':''}"><p class="tiny muted">${a.type==='Persistant'?"Nombre de tours avant que la zone persistante ne s'estompe. Chaque token qui commence son tour dans la zone subit l'effet (calculé comme si le lanceur agissait à chaque fois).":"Cible unique ou zone (voir champ Zone ci-dessous). Effet auto à chaque début de tour de la/les cible(s) pendant N tours. Choisis toi-même la défense ciblée (dont « Aucune »)."}</p></div>
-  <div class="field full" id="ability_buff_extra2" style="display:${a.type==='Buff'?'':'none'}"><label>🩸 Affliction appliquée si le sort touche (durée = champ Durée)</label><select id="a_buffaff">${opt('','— Aucune —',a.buffAfflictionId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.buffAfflictionId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px"><div class="field"><label>Réduction de CA</label><input id="a_buffca" type="number" min="0" value="${a.buffCaRed||0}"></div><div class="field"><label>Réduction de DM</label><input id="a_buffdm" type="number" min="0" value="${a.buffDmRed||0}"></div></div><label style="margin-top:8px">⏱ Durée selon la réussite (vide = utilise la Durée ; Durée vide aussi = permanent jusqu'à la dissipation)</label><div class="row" style="gap:10px;flex-wrap:wrap">${[['leg','Légère réussite'],['rea','Réussite'],['gra','Grande réussite'],['cri','Réussite critique'],['ult','Réussite ultime']].map(([k,l])=>`<div class="field" style="max-width:120px"><label>${l}</label><input id="a_dur${k}" type="number" min="1" value="${(a.durBy||{})[k]||''}"></div>`).join('')}</div><p class="tiny muted">Appliqué à chaque cible touchée (pas en cas d'échec). Mets la formule à 0 si tu ne veux aucun dégât/soin par tour.</p></div>
+  <div class="field full" id="ability_buff_extra2" style="display:${a.type==='Buff'?'':'none'}"><label>🩸 Affliction appliquée</label><select id="a_buffaff">${opt('','— Aucune —',a.buffAfflictionId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.buffAfflictionId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px;flex-wrap:wrap"><div class="field" style="max-width:110px"><label>CA − (défaut)</label><input id="a_buffca" type="number" min="0" value="${a.buffCaRed||0}"></div><div class="field" style="max-width:110px"><label>DM − (défaut)</label><input id="a_buffdm" type="number" min="0" value="${a.buffDmRed||0}"></div><div class="field" style="max-width:110px"><label>CA + (défaut)</label><input id="a_buffcaup" type="number" min="0" value="${a.buffCaUp||0}"></div><div class="field" style="max-width:110px"><label>DM + (défaut)</label><input id="a_buffdmup" type="number" min="0" value="${a.buffDmUp||0}"></div></div><label style="margin-top:8px">Réglage par degré de réussite / d'échec</label><div style="overflow:auto"><table class="tiny" style="border-collapse:collapse;width:100%"><tr><th style="text-align:left">Degré</th><th>Affliction</th><th>Durée</th><th>CA −</th><th>DM −</th><th>CA +</th><th>DM +</th></tr>${DEGREES.map(([k,l])=>{const o=(a.defBy||{})[k]||{};const on=Array.isArray(a.buffAffDeg)?a.buffAffDeg.includes(k):['leg','rea','gra','cri','ult'].includes(k);const ip=f=>`<td><input id="a_db_${k}_${f}" type="number" min="0" value="${o[f]||''}" style="width:56px"></td>`;return `<tr><td>${l}</td><td style="text-align:center"><input type="checkbox" id="a_da_${k}" ${on?'checked':''}></td><td><input id="a_dur${k}" type="number" min="1" value="${(a.durBy||{})[k]||''}" style="width:56px"></td>${ip('caRed')}${ip('dmRed')}${ip('caUp')}${ip('dmUp')}</tr>`;}).join('')}</table></div><p class="tiny muted">Case Affliction cochée = l'affliction s'applique à ce degré. Durée vide = champ Durée général (vide aussi = permanent jusqu'à dissipation). Si une ligne contient des valeurs de CA/DM, elles remplacent les valeurs par défaut pour ce degré ; ligne vide = valeurs par défaut (réussites seulement). Mets la formule à 0 si tu ne veux aucun dégât/soin par tour.</p></div>
   <div class="field full" id="ability_objet_extra" style="display:${a.type==='Objet'?'':'none'}"><label>🎒 Objet divers consommé à chaque utilisation</label><select id="a_objeteffect" style="margin-bottom:6px">${opt('damage','Effet : dégâts',a.objetEffect||'damage')}${opt('heal','Effet : soin',a.objetEffect||'damage')}${opt('shield','Effet : bouclier',a.objetEffect||'damage')}${opt('mana','Effet : mana',a.objetEffect||'damage')}</select><select id="a_itemeq">${opt('','— Choisir —',a.itemEqId||'')}${(S.equipment||[]).filter(e=>e.itemType==='divers').map(e=>opt(e.id,e.name,a.itemEqId||'')).join('')}</select><label style="margin-top:8px">🩸 Affliction appliquée si réussite</label><select id="a_objaff">${opt('','— Aucune —',a.objAffId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.objAffId||'')).join('')}</select><label style="margin-top:8px">Durée de l'affliction (tours — vide = jusqu'au retrait par le MJ)</label><input id="a_objaffturns" type="number" min="1" value="${a.objAffTurns||''}"></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
     <div class="field full"><label>Se transforme en</label>
@@ -4572,17 +4640,19 @@ function openAbility(id,charId){
   <div class="field"><label>Défense ciblée</label><select id="a_def">${defOpts}</select></div>
   <div class="field"><label>Élément</label><select id="a_element">${elementOpts}</select></div>
   <div class="field"><label>Zone</label><select id="a_area" onchange="toggleAreaFields()">${areaOpts}</select></div>
-  <div class="field" id="a_size_field" style="display:${(a.area==='line'||a.area==='cone')?'none':''}"><label>Taille de zone (cases)</label><input id="a_size" type="number" min="1" value="${a.areaSize||1}"></div>
+  <div class="field" id="a_size_field" style="display:${(a.area==='line'||a.area==='cone'||a.area==='me')?'none':''}"><label>Taille de zone (cases)</label><input id="a_size" type="number" min="1" value="${a.areaSize||1}"></div>
   <div class="field" id="a_conestart_field" style="display:${a.area==='cone'?'':'none'}"><label>Largeur au départ (cases)</label><input id="a_conestart" type="number" min="1" value="${a.coneStart||1}"></div>
   <div class="field" id="a_coneend_field" style="display:${a.area==='cone'?'':'none'}"><label>Largeur à l'arrivée (cases)</label><input id="a_coneend" type="number" min="1" value="${a.coneEnd||3}"></div>
-  <div class="field"><label>Portée maximale (cases, 0 = illimitée)</label><input id="a_range" type="number" min="0" value="${a.range??0}"></div>
+  <div class="field" id="a_range_field" style="display:${a.area==='me'?'none':''}"><label>Portée maximale (cases, 0 = illimitée)</label><input id="a_range" type="number" min="0" value="${a.range??0}"></div>
   <div class="field full" id="a_gapclose_field" style="display:${a.area==='single'?'':'none'}"><label><input type="checkbox" id="a_gapclose" ${a.gapClose?'checked':''}> 🏃 Rejoindre la cible avec le sort (le lanceur se place devant sa cible par le chemin le plus court, portée max de la capacité)</label></div>
   <div class="field" id="a_zonerange_field" style="display:${((a.area==='line'||a.area==='cone')&&a.type==='Persistant')?'':'none'}"><label>Longueur maximale de la zone (cases)</label><input id="a_zonerange" type="number" min="1" value="${a.zoneRange||a.range||3}"></div>
   <p class="tiny muted full" style="grid-column:1/-1">Ligne droite et Cône suivent librement la souris (pixel par pixel), dans la direction du clic. Cône : s'évase du lanceur (largeur « départ ») jusqu'à la longueur de zone (largeur « arrivée »). Multiplicateur : appliqué au résultat (capacité + arme) avant déduction de la défense et de la résistance élémentaire. Pour un sort « Persistant » ligne/cône : « Portée maximale » = distance max à laquelle poser l'origine de la zone (1er clic). « Longueur maximale de la zone » = longueur max de la ligne/cône lui-même. Au 2e clic (direction), la zone s'étend jusqu'au point cliqué, sans dépasser cette longueur max — tu peux donc la faire plus courte.</p>
+  <div class="field full"><label>⛓ Condition de lancement</label><label class="ability-char-item"><input type="checkbox" id="a_reqon" ${a.reqOn?'checked':''}> <span>Ne peut être lancée que si l'affliction ou la capacité choisie est active sur la cible</span></label><input id="a_req_search" placeholder="🔎 Rechercher une affliction / capacité…" oninput="filterReqPick()" style="margin:6px 0"><select id="a_reqid" size="5">${reqPickHtml(a.reqId||'')}</select></div>
+  <div class="field full"><label>💥 Malus en cas d'échec critique / ultime (vide = aucun ; ex : 20%, 250, 2d20+10)</label>${[['fc','Échec critique'],['fu','Échec ultime']].map(([k,l])=>{const pp=(a.failPen||{})[k]||{};return `<div class="row" style="gap:6px;margin-top:4px;flex-wrap:wrap"><b style="width:110px">${l}</b><input id="a_fp_${k}_mana" placeholder="Perte de mana" value="${esc(pp.mana||'')}" style="width:130px"><input id="a_fp_${k}_hp" placeholder="Perte de PV" value="${esc(pp.hp||'')}" style="width:130px"><input id="a_fp_${k}_ally" placeholder="Dégâts allié proche" value="${esc(pp.ally||'')}" style="width:150px"></div>`;}).join('')}<p class="tiny muted">Les PV perdus et les dégâts à l'allié le plus proche de l'ennemi visé tiennent compte de la défense ciblée par le sort (CA ou DM). % = pourcentage du maximum.</p></div>
   <div class="field full"><label>Description</label>${richEditorHtml('a_desc',a.desc||'')}</div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
   <div class="field full"><label><input type="checkbox" id="a_impactpertoken" ${a.impactPerToken?'checked':''}> 💥 Animation d'impact séparée par cible touchée (sinon un seul impact sur toute la zone)</label></div>
-  <div class="field full" id="a_zoneimage_field" style="display:${(a.area==='single'||(a.area==='self'&&a.type!=='Persistant'))?'none':''}">
+  <div class="field full" id="a_zoneimage_field" style="display:${(a.area==='single'||a.area==='me'||(a.area==='self'&&a.type!=='Persistant'))?'none':''}">
     <label>🖼️ Image de zone (remplace la couleur unie par cette image, visible uniquement dans la forme de la zone)</label>
     <div class="icon-dropzone" onclick="document.getElementById('a_zoneimage_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'a_zoneimage','a_zoneimage_preview')">
       <div id="a_zoneimage_preview" class="icon-preview">${a.zoneImage?`<img src="${esc(a.zoneImage)}">`:'<span>🖼️</span>'}</div>
@@ -4609,7 +4679,7 @@ function openAbility(id,charId){
     </div>
   </div>
 ${spriteAutoSelect('a_spriteauto',a.spriteAuto)}
-  <div class="field full" id="a_proj_field" style="display:${a.area==='self'?'none':''}">
+  <div class="field full" id="a_proj_field" style="display:${(a.area==='self'||a.area==='me')?'none':''}">
     <label>🎯 Image du projectile (optionnelle — spritesheet horizontale possible)</label>
     <div class="icon-dropzone" onclick="document.getElementById('a_proj_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'a_projectile','a_proj_preview')">
       <div id="a_proj_preview" class="icon-preview">${a.projectileImage?`<img src="${esc(a.projectileImage)}">`:'<span>➡️</span>'}</div>
@@ -4670,7 +4740,7 @@ function filterTransformCharSelect(){
 function toggleAreaFields(){
   const v=document.getElementById('a_area').value;
   const type=document.getElementById('a_type')?document.getElementById('a_type').value:'';
-  document.getElementById('a_size_field').style.display=(v==='line'||v==='cone')?'none':'';
+  document.getElementById('a_size_field').style.display=(v==='line'||v==='cone'||v==='me')?'none':'';
   document.getElementById('a_conestart_field').style.display=v==='cone'?'':'none';
   document.getElementById('a_coneend_field').style.display=v==='cone'?'':'none';
   const zf=document.getElementById('a_zonerange_field');
@@ -4678,10 +4748,11 @@ function toggleAreaFields(){
   const spf=document.getElementById('a_spin_field');
   if(spf)spf.style.display=(v==='self')?'':'none';
   const zif=document.getElementById('a_zoneimage_field');
-  if(zif)zif.style.display=(v==='single'||(v==='self'&&type!=='Persistant'))?'none':'';
+  if(zif)zif.style.display=(v==='single'||v==='me'||(v==='self'&&type!=='Persistant'))?'none':'';
   const pjf=document.getElementById('a_proj_field');
-  if(pjf)pjf.style.display=(v==='self')?'none':'';
+  if(pjf)pjf.style.display=(v==='self'||v==='me')?'none':'';
   const gcf=document.getElementById('a_gapclose_field'); if(gcf)gcf.style.display=(v==='single')?'':'none';
+  const rgf=document.getElementById('a_range_field'); if(rgf)rgf.style.display=(v==='me')?'none':'';
 }
 function toggleAbilityTypeFields(){
   const val=document.getElementById('a_type').value;
@@ -4768,7 +4839,7 @@ function saveAbility(id,charId){
     target.transformCharId=null; target.triggerOnDeath=false; target.allowRevert=false;
     target.auraEffect=document.getElementById('a_auraeffect')?document.getElementById('a_auraeffect').value:'damage';
     {const dv=Math.floor(+(document.getElementById('a_duration')?.value)||0);target.duration=dv>0?dv:(target.type==='Buff'?null:3);}
-    target.durBy={};[['leg','a_durleg'],['rea','a_durrea'],['gra','a_durgra'],['cri','a_durcri'],['ult','a_durult']].forEach(([k,i])=>{const v=Math.floor(+(document.getElementById(i)?.value)||0);if(v>0)target.durBy[k]=v;});
+    target.durBy={};DEGREES.map(([k])=>[k,'a_dur'+k]).forEach(([k,i])=>{const v=Math.floor(+(document.getElementById(i)?.value)||0);if(v>0)target.durBy[k]=v;});
     target.buffAfflictionId=document.getElementById('a_buffaff')?.value||null;
     target.buffCaRed=Math.max(0,parseNum(document.getElementById('a_buffca')?.value));
     target.buffDmRed=Math.max(0,parseNum(document.getElementById('a_buffdm')?.value));
@@ -4776,6 +4847,14 @@ function saveAbility(id,charId){
     target.objetEffect=target.type==='Objet'?(document.getElementById('a_objeteffect')?.value||'damage'):'damage';
     target.objAffId=target.type==='Objet'?(document.getElementById('a_objaff')?.value||null):null;
     target.objAffTurns=target.type==='Objet'?(Math.floor(+document.getElementById('a_objaffturns')?.value||0)||null):null;
+    target.reqOn=!!document.getElementById('a_reqon')?.checked;
+    target.reqId=document.getElementById('a_reqid')?.value||null;
+    target.failPen={};['fc','fu'].forEach(k=>{const o={};['mana','hp','ally'].forEach(f=>{const v=(document.getElementById(`a_fp_${k}_${f}`)?.value||'').trim();if(v)o[f]=v;});if(Object.keys(o).length)target.failPen[k]=o;});
+    target.buffCaUp=Math.max(0,parseNum(document.getElementById('a_buffcaup')?.value));
+    target.buffDmUp=Math.max(0,parseNum(document.getElementById('a_buffdmup')?.value));
+    target.defBy={};DEGREES.forEach(([k])=>{const o={};['caRed','dmRed','caUp','dmUp'].forEach(f=>{const v=Math.max(0,parseNum(document.getElementById(`a_db_${k}_${f}`)?.value));if(v>0)o[f]=v;});if(Object.keys(o).length)target.defBy[k]=o;});
+    target.buffAffDeg=DEGREES.filter(([k])=>document.getElementById('a_da_'+k)?.checked).map(([k])=>k);
+    if(target.area==='me'){target.range=0;target.areaSize=1;target.gapClose=false;}
     if(target.type==='Passif'){
       if(target.area!=='circle'&&target.area!=='square')target.area='square';
     }
