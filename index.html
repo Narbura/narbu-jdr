@@ -531,18 +531,23 @@ async function loadProfiles(){
 }
 /* ============================= SYNCHRONISATION SUPABASE (6 tables, écritures ciblées) ============================= */
 const SID='main';
-const SETTINGS_KEYS=['freeMovement','friendlyFire','hudEnabled','hudSettings','diceSettings','levelUpSettings','statTestIcons','characterCategories','noteCategories','notesReveal','shopOffer','charReveal'];
+const SETTINGS_KEYS=['freeMovement','friendlyFire','hudEnabled','hudSettings','diceSettings','levelUpSettings','statTestIcons','characterCategories','noteCategories','notesReveal','shopOffer','charReveal','rowsMigrated'];
 const COL_SPECS=[
   {k:'combat',t:'game_sessions',pk:'id',c:'combat_state',get:()=>S.combat,set:v=>{S.combat=v;}},
   {k:'settings',t:'game_sessions',pk:'id',c:'settings',get:()=>{const o={};SETTINGS_KEYS.forEach(k=>{o[k]=S[k]===undefined?null:S[k];});return o;},set:v=>{SETTINGS_KEYS.forEach(k=>{if(v[k]!==null&&v[k]!==undefined)S[k]=v[k];});}},
   {k:'map',t:'game_maps',pk:'id',c:'map_data',get:()=>S.map,set:v=>{S.map=v;}},
   {k:'zones',t:'game_maps',pk:'id',c:'persistent_zones',get:()=>S.persistentZones,set:v=>{S.persistentZones=v;}},
-  {k:'abilities',t:'game_rules_library',pk:'session_id',c:'abilities',get:()=>S.abilities,set:v=>{S.abilities=v;}},
-  {k:'equipment',t:'game_rules_library',pk:'session_id',c:'equipment',get:()=>S.equipment,set:v=>{S.equipment=v;}},
   {k:'consumables',t:'game_rules_library',pk:'session_id',c:'consumables',get:()=>S.consumables,set:v=>{S.consumables=v;}},
   {k:'afflictions',t:'game_rules_library',pk:'session_id',c:'afflictions',get:()=>S.afflictionDefs,set:v=>{S.afflictionDefs=v;}},
-  {k:'characters',t:'game_rules_library',pk:'session_id',c:'characters',get:()=>S.characters,set:v=>{S.characters=v;}}
 ];
+const ROW_SPECS=[
+  {k:'characters',t:'game_characters',get:()=>S.characters,set:v=>{S.characters=v;}},
+  {k:'abilities',t:'game_abilities',get:()=>S.abilities,set:v=>{S.abilities=v;}},
+  {k:'equipment',t:'game_equipment',get:()=>S.equipment,set:v=>{S.equipment=v;}}
+];
+function rowOf(sp,x){return {id:x.id,session_id:SID,data:x};}
+function ensureOrder(){ROW_SPECS.forEach(sp=>{const a=sp.get()||[];let m=0;a.forEach(x=>{if(x._o>m)m=x._o;});a.forEach(x=>{if(x._o===undefined)x._o=++m;});});}
+async function fetchAllRows(t){let out=[],from=0;for(;;){const r=await supabaseClient.from(t).select('*').eq('session_id',SID).order('id').range(from,from+999);if(r.error)throw r.error;out=out.concat(r.data||[]);if(!r.data||r.data.length<1000)break;from+=1000;}return out;}
 let lastSaved=null;          // dernier état connu côté serveur (par clé), sert à ne sauvegarder que ce qui change
 let ownRecent={};            // empreintes de mes propres écritures récentes (pour ignorer leur écho)
 let pendingChat=[];          // messages de chat en attente d'insertion
@@ -559,7 +564,9 @@ function noteRow(n){return {id:n.id,session_id:SID,title:n.title||'',content:n.t
 function noteFromRow(r){return {id:r.id,title:r.title||'',text:r.content||'',categoryId:r.category||null,image:r.image||null};}
 function instRow(i){return {id:i.id,session_id:SID,character_id:i.charId,position_x:Math.round(i.x||0),position_y:Math.round(i.y||0),raw_instance_data:i};}
 function computeSnapshot(){
-  const snap={cols:{},notes:{},insts:{}};
+  const snap={cols:{},notes:{},insts:{},rows:{}};
+  ensureOrder();
+  ROW_SPECS.forEach(sp=>{const o={};(sp.get()||[]).forEach(x=>{o[x.id]=canon(rowOf(sp,x));});snap.rows[sp.k]=o;});
   COL_SPECS.forEach(s=>{snap.cols[s.k]=canon(s.get());});
   (S.notes||[]).forEach(n=>{snap.notes[n.id]=canon(noteRow(n));});
   S.instances.forEach(i=>{snap.insts[i.id]=canon(instRow(i));});
@@ -569,24 +576,32 @@ function noteOwn(key,cn){const a=(ownRecent[key]=ownRecent[key]||[]);a.push(cn);
 function isOwnEcho(key,cn){return (ownRecent[key]||[]).includes(cn);}
 async function loadGameState(){
   try{
-    const [sess,maps,rules,notes,insts,chat]=await Promise.all([
+    const [sess,maps,rules,notes,insts,chat,rowC,rowA,rowE]=await Promise.all([
       supabaseClient.from('game_sessions').select('*').eq('id',SID).maybeSingle(),
       supabaseClient.from('game_maps').select('*').eq('id',SID).maybeSingle(),
       supabaseClient.from('game_rules_library').select('*').eq('session_id',SID).maybeSingle(),
       supabaseClient.from('game_notes').select('*').eq('session_id',SID),
       supabaseClient.from('game_character_instances').select('*').eq('session_id',SID),
-      supabaseClient.from('game_chat').select('id,message').eq('session_id',SID).order('id',{ascending:false}).limit(120)
+      supabaseClient.from('game_chat').select('id,message').eq('session_id',SID).order('id',{ascending:false}).limit(120),
+      fetchAllRows('game_characters'),fetchAllRows('game_abilities'),fetchAllRows('game_equipment')
     ]);
     [sess,maps,rules,notes,insts,chat].forEach(r=>{if(r.error)throw r.error;});
     if(!sess.data){
       S=structuredClone(DEFAULT);
-      lastSaved={cols:{},notes:{},insts:{}};
+      lastSaved={cols:{},notes:{},insts:{},rows:{}};
       normalizeState();
       await flushSave();
     }else{
       S={};
       const src={game_sessions:sess.data,game_maps:maps.data,game_rules_library:rules.data};
       COL_SPECS.forEach(s=>{const v=src[s.t]?src[s.t][s.c]:null;if(v!==null&&v!==undefined)s.set(v);});
+      const rowsBy={characters:rowC,abilities:rowA,equipment:rowE};
+      ROW_SPECS.forEach(sp=>{
+        const rr=rowsBy[sp.k], old=rules.data?rules.data[sp.k]:null;
+        if(!rr.length&&Array.isArray(old)&&old.length&&!S.rowsMigrated)throw new Error('Migration SQL non exécutée ('+sp.k+')');
+        sp.set(rr.map(r=>r.data).filter(x=>x&&x.id).sort((a,b)=>(a._o||0)-(b._o||0)));
+      });
+      const anyRows=rowC.length||rowA.length||rowE.length;
       migrationDirty=false;
       S.notes=(notes.data||[]).map(noteFromRow);
       S.instances=(insts.data||[]).map(r=>r.raw_instance_data).filter(Boolean);
@@ -594,13 +609,14 @@ async function loadGameState(){
       normalizeState();
       instTs={}; S.instances.forEach(i=>{if(i._ts)instTs[i.id]=i._ts;});
       lastSaved=computeSnapshot();
-      if(migrationDirty&&isMJ()){migrationDirty=false;lastSaved.cols.equipment='';lastSaved.cols.characters='';lastSaved.cols.consumables='';setTimeout(flushSave,300);}
+      if(isMJ()&&anyRows&&!S.rowsMigrated){S.rowsMigrated=true;setTimeout(flushSave,300);}
+      if(migrationDirty&&isMJ()){migrationDirty=false;lastSaved.rows.equipment={};lastSaved.rows.characters={};lastSaved.cols.consumables='';setTimeout(flushSave,300);}
       if(isMJ()&&migrateMana())setTimeout(flushSave,300);
     }
   }catch(e){
     console.error('loadGameState', e);
     lastSaved=null; // pas de sauvegarde en ligne tant que le chargement a échoué (évite d'écraser la base)
-    toast('⚠️ Impossible de charger la partie en ligne, utilisation de la sauvegarde locale (lecture seule côté serveur).');
+    toast(String(e&&e.message).includes('Migration SQL')?'⚠️ Exécute d’abord le SQL de migration dans Supabase, puis recharge.':'⚠️ Impossible de charger la partie en ligne, utilisation de la sauvegarde locale (lecture seule côté serveur).');
     S=JSON.parse(localStorage.getItem('arcanum-vtt')||'null')||structuredClone(DEFAULT);
     normalizeState();
   }
@@ -644,7 +660,7 @@ async function flushSave(){
   try{
     const snap=computeSnapshot();
     if(snap.cols.combat!==old.cols.combat){S.combat._t=Date.now();snap.cols.combat=canon(S.combat);}
-    const rows={}, delta={cols:{},notes:[],notesDel:[],insts:[],instsDel:[],chat:[]};
+    const rows={}, delta={cols:{},notes:[],notesDel:[],insts:[],instsDel:[],chat:[],rw:{},rwDel:{}};
     COL_SPECS.forEach(s=>{
       if(snap.cols[s.k]===old.cols[s.k])return;
       const v=s.get(); delta.cols[s.k]=v;
@@ -656,6 +672,13 @@ async function flushSave(){
     Object.keys(old.notes).forEach(id=>{if(!(id in snap.notes))delta.notesDel.push(id);});
     S.instances.forEach(i=>{if(snap.insts[i.id]!==old.insts[i.id]){const ts=Math.max(Date.now(),(instTs[i.id]||0)+1);i._ts=ts;instTs[i.id]=ts;snap.insts[i.id]=canon(instRow(i));instUp.push(instRow(i));delta.insts.push(i);noteOwn('i:'+i.id,snap.insts[i.id]);}});
     Object.keys(old.insts).forEach(id=>{if(!(id in snap.insts))delta.instsDel.push(id);});
+    const rowUp={}, rowDel={}, oldRows=old.rows||{};
+    ROW_SPECS.forEach(sp=>{
+      const o=oldRows[sp.k]||{}, n=snap.rows[sp.k];
+      (sp.get()||[]).forEach(x=>{if(n[x.id]!==o[x.id]){(rowUp[sp.k]=rowUp[sp.k]||[]).push(x);noteOwn('r:'+sp.k+':'+x.id,n[x.id]);}});
+      Object.keys(o).forEach(id=>{if(!(id in n))(rowDel[sp.k]=rowDel[sp.k]||[]).push(id);});
+    });
+    delta.rw=rowUp; delta.rwDel=rowDel;
     chat=pendingChat.splice(0);
     delta.chat=chat.map(c=>({cid:c.raw_data.cid,html:c.message}));
     lastSaved=snap;
@@ -665,6 +688,8 @@ async function flushSave(){
     if(delta.notesDel.length)ops.push(supabaseClient.from('game_notes').delete().in('id',delta.notesDel));
     if(instUp.length)ops.push(supabaseClient.from('game_character_instances').upsert(instUp));
     if(delta.instsDel.length)ops.push(supabaseClient.from('game_character_instances').delete().in('id',delta.instsDel));
+    Object.entries(rowUp).forEach(([k,arr])=>{const sp=ROW_SPECS.find(x=>x.k===k);for(let i=0;i<arr.length;i+=200)ops.push(supabaseClient.from(sp.t).upsert(arr.slice(i,i+200).map(x=>rowOf(sp,x))));});
+    Object.entries(rowDel).forEach(([k,ids])=>{const sp=ROW_SPECS.find(x=>x.k===k);for(let i=0;i<ids.length;i+=100)ops.push(supabaseClient.from(sp.t).delete().in('id',ids.slice(i,i+100)));});
     if(chat.length)ops.push(supabaseClient.from('game_chat').insert(chat));
     if(ops.length){
       try{ const p={...delta}; if(JSON.stringify(p).length<230000)gameChannel?.send({type:'broadcast',event:'delta',payload:p}); }catch(e){}
@@ -738,6 +763,21 @@ function applyRemoteInst(o){
   if(ts)instTs[o.id]=ts;
   touched.push(['i',o.id]); return true;
 }
+function applyRemoteRow(k,item){
+  const sp=ROW_SPECS.find(x=>x.k===k); if(!sp||!item||!item.id||!lastSaved)return false;
+  const cn=canon(rowOf(sp,item));
+  if(cn===(lastSaved.rows[k]||{})[item.id]||isOwnEcho('r:'+k+':'+item.id,cn))return false;
+  const arr=sp.get(), i=arr.findIndex(x=>x.id===item.id);
+  if(i>=0)arr[i]=item; else arr.push(item);
+  arr.sort((a,b)=>(a._o||0)-(b._o||0));
+  touched.push(['r',k,item.id]); return true;
+}
+function applyRemoteRowDel(k,id){
+  const sp=ROW_SPECS.find(x=>x.k===k); if(!sp||!id||!lastSaved)return false;
+  if(!sp.get().some(x=>x.id===id))return false;
+  sp.set(sp.get().filter(x=>x.id!==id)); if(lastSaved.rows[k])delete lastSaved.rows[k][id];
+  return true;
+}
 function applyRemoteDel(type,id){
   if(!id||!lastSaved)return false;
   if(type==='i'){
@@ -758,8 +798,9 @@ function applyRemoteChat(cid,html){
 }
 function afterRemote(){
   normalizeState();
-  touched.forEach(([t,k])=>{
-    if(t==='c'){const s=COL_SPECS.find(x=>x.k===k);if(s)lastSaved.cols[k]=canon(s.get());}
+  touched.forEach(([t,k,rid])=>{
+    if(t==='r'){const sp=ROW_SPECS.find(x=>x.k===k);const o=sp&&sp.get().find(x=>x.id===rid);if(o){(lastSaved.rows[k]=lastSaved.rows[k]||{})[rid]=canon(rowOf(sp,o));}}
+    else if(t==='c'){const s=COL_SPECS.find(x=>x.k===k);if(s)lastSaved.cols[k]=canon(s.get());}
     else if(t==='i'){const o=inst(k);if(o)lastSaved.insts[k]=canon(instRow(o));}
     else if(t==='n'){const o=(S.notes||[]).find(x=>x.id===k);if(o)lastSaved.notes[k]=canon(noteRow(o));}
   });
@@ -774,6 +815,10 @@ function subscribeRealtime(){
   pg('game_sessions',p=>{if(p.new&&handleColRow('game_sessions',p.new))afterRemote();});
   pg('game_maps',p=>{if(p.new&&handleColRow('game_maps',p.new))afterRemote();});
   pg('game_rules_library',p=>{if(p.new&&handleColRow('game_rules_library',p.new))afterRemote();});
+  ROW_SPECS.forEach(sp=>pg(sp.t,p=>{
+    const c=p.eventType==='DELETE'?applyRemoteRowDel(sp.k,p.old&&p.old.id):applyRemoteRow(sp.k,p.new&&p.new.data);
+    if(c)afterRemote();
+  }));
   pg('game_notes',p=>{
     const c=p.eventType==='DELETE'?applyRemoteDel('n',p.old&&p.old.id):applyRemoteNote(p.new&&noteFromRow(p.new));
     if(c)afterRemote();
@@ -792,6 +837,8 @@ function subscribeRealtime(){
       (d.insts||[]).forEach(o=>{if(applyRemoteInst(o))ch=true;});
       (d.instsDel||[]).forEach(id=>{if(applyRemoteDel('i',id))ch=true;});
       (d.chat||[]).forEach(c=>{if(applyRemoteChat(c.cid,c.html))ch=true;});
+      Object.entries(d.rw||{}).forEach(([k,arr])=>arr.forEach(x=>{if(applyRemoteRow(k,x))ch=true;}));
+      Object.entries(d.rwDel||{}).forEach(([k,ids])=>ids.forEach(id=>{if(applyRemoteRowDel(k,id))ch=true;}));
       if(ch)afterRemote();
     })
     .on('broadcast',{event:'fx'},payload=>{
