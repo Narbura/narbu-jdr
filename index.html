@@ -363,6 +363,7 @@ function normalizeState(){
     if(!Array.isArray(t.afflictions))t.afflictions=[];
     if(!Array.isArray(t.activeAuras))t.activeAuras=[];
     if(!Array.isArray(t.statusEffects))t.statusEffects=[];
+    if(!Array.isArray(t.statBuffs))t.statBuffs=[];
     if(t.movementBlocked===undefined)t.movementBlocked=false;
     if(t.isKO===undefined)t.isKO=false;
     if(t.origForm===undefined)t.origForm=null;
@@ -1193,6 +1194,7 @@ function endTurnTick(t){
   t.afflictions=(t.afflictions||[]).filter(af=>{if(af.left==null)return true;af.left--;if(af.left>0)return true;const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);addLog(`🩸 <b>${esc(d?d.name:'')}</b> se termine sur <b>${esc(t.label)}</b>.`);return false;});
   t.statusEffects=(t.statusEffects||[]).filter(se=>{if(se.turnsLeft==null)return true;se.turnsLeft--;if(se.turnsLeft>0)return true;addLog(`🌀 <b>${esc(se.name)}</b> se termine sur <b>${esc(t.label)}</b>.`);return false;});
   tickDefModsEnd(t);
+  t.statBuffs=(t.statBuffs||[]).filter(b=>{if(b.turnsLeft==null)return true;b.turnsLeft--;if(b.turnsLeft>0)return true;addLog(`🧪 Le bonus de <b>${esc(b.name)}</b> (${esc(b.stat)}) se termine sur <b>${esc(t.label)}</b>.`);return false;});
 }
 function tickDefModsEnd(t){if(!t.defMods||!t.defMods.length)return;t.defMods.forEach(m=>{if(m.turnsLeft!=null)m.turnsLeft--;});const end=t.defMods.filter(m=>m.turnsLeft!=null&&m.turnsLeft<=0);t.defMods=t.defMods.filter(m=>m.turnsLeft==null||m.turnsLeft>0);end.forEach(m=>{const a=S.abilities.find(x=>x.id===m.abilityId);addLog(`🛡 La réduction de défense « ${esc(a?a.name:'')} » se termine sur <b>${esc(t.label)}</b>.`);});}
 function scheduleGapClose(a,cid,tid,lines){
@@ -1203,6 +1205,7 @@ function scheduleGapClose(a,cid,tid,lines){
     setTimeout(()=>{const c2=inst(cid),t2=inst(tid);if(!c2||!t2||c2.isKO)return;const l=[];gapCloseToTarget(c2,t2,a.range,l);if(l.length)addLog(l.join('<br>'));saveState();render();},delay);
   }else gapCloseToTarget(ci,ti,a.range,lines);
 }
+function effStat(tpl,t,stat){let v=(tpl&&tpl.stats&&tpl.stats[stat])||0;((t&&t.statBuffs)||[]).forEach(b=>{if(b.stat===stat)v+=b.amount;});return v;}
 function equip(id){return (S.equipment||[]).find(e=>e.id===id);}
 function naturalRes(c){return {ca:Math.ceil((c.stats?.Constitution||0)/10),dm:Math.ceil((c.stats?.Magie||0)/10)};}
 /* ---- Durabilité (armures hors anneaux/amulette, et armes) — suivie par jeton ---- */
@@ -1538,7 +1541,7 @@ function rollStatTest(stat){
   if(casterInst.isKO){toast('💀 Ce personnage est inconscient.');return;}
   const tpl=instTemplate(casterInst); if(!tpl)return;
   if(tpl.type!=='player'){toast('⚠️ Tests réservés aux personnages joueurs.');return;}
-  const value=tpl.stats?.[stat]||0;
+  const value=effStat(tpl,casterInst,stat);
   const r=roll('1d100'); const raw=r.total;
   const mod=skillStatMod(tpl,stat); const d=Math.max(1,raw+mod);
   broadcastDiceRoll(100,[raw]);
@@ -2786,7 +2789,7 @@ function startCombat(){
 function endCombat(){
   if(!isMJ()){toast('⛔ Seul le MJ peut terminer le combat.');return;}
   S.combat={active:false,order:[],turn:0,initiatives:{}};
-  S.instances.forEach(t=>{t.cooldowns={};(t.afflictions||[]).forEach(a=>delete a.fresh);(t.statusEffects||[]).forEach(a=>delete a.fresh);});
+  S.instances.forEach(t=>{t.statBuffs=[];t.cooldowns={};(t.afflictions||[]).forEach(a=>delete a.fresh);(t.statusEffects||[]).forEach(a=>delete a.fresh);});
   lastTurnCombatant=null;
   addLog('⏹ Fin du combat.');
   S.freeMovement=true;
@@ -2819,7 +2822,7 @@ function triggerAuras(casterInst){
     const lines=[`🌀 <b>${esc(casterInst.label)}</b> — aura <b>${esc(a.name)}</b> : ${esc(a.formula)} = ${r.total}`];
     targets.forEach(t=>{
       const tTpl=instTemplate(t);
-      const amount=applyMult(Math.ceil(r.total*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
+      const amount=applyMult(Math.ceil(r.total*(effStat(casterTpl,casterInst,a.stat))/100),a.dmgMult);
       if(a.auraEffect==='heal'){
         t.hp=Math.min(t.hpMax,t.hp+amount);
         lines.push(`💚 ${esc(t.label)} : +${amount} PV`);
@@ -3333,10 +3336,10 @@ function resolveOpportunityAttack(attackerInst,targetInst){
     return;
   }
   const rw=rollWithWeapon(oa.formula,weaponUsed,attackerInst);
-  let damage=Math.ceil(rw.abTotal*mult*(attackerTpl.stats[statKey]||0)/100);
-  const wpPart=weaponPhysDamage(rw.wpTotal,mult,attackerTpl.stats[statKey]||0,'',lines);
+  let damage=Math.ceil(rw.abTotal*mult*(effStat(attackerTpl,attackerInst,statKey))/100);
+  const wpPart=weaponPhysDamage(rw.wpTotal,mult,effStat(attackerTpl,attackerInst,statKey),'',lines);
   const oe=rollWeaponElems(weaponUsed,attackerInst); oe.log.forEach(l=>lines.push(l));
-  const ep=elemBonusDamage(oe.list,mult,attackerTpl.stats[statKey]||0,'',targetTpl,targetInst,lines);
+  const ep=elemBonusDamage(oe.list,mult,effStat(attackerTpl,attackerInst,statKey),'',targetTpl,targetInst,lines);
   const fin=finalizeDamage([{raw:damage,el:oa.element||'Neutre',pool:isPhys?'CA':'DM'},{raw:wpPart,el:'Physique',pool:'CA'},...ep],targetTpl,targetInst);
   damage=fin.total; fin.detail.forEach(l=>lines.push(l));
   const absorbed=Math.min(targetInst.shield||0,damage); targetInst.shield-=absorbed; const hpDamage=damage-absorbed;
@@ -3507,7 +3510,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(a.type==='Soin'){
       const r=isAoE?sharedRoll:roll(a.formula);
       if(!isAoE)broadcastDiceRoll(formulaSides(a.formula),r.rolls);
-      const amount=applyMult(Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
+      const amount=applyMult(Math.ceil(r.total*mult*(effStat(casterTpl,casterInst,a.stat))/100),a.dmgMult);
       if(a._mana)t.mana=Math.min(t.manaMax,t.mana+amount);else t.hp=Math.min(t.hpMax,t.hp+amount);
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
       if(a._mana){lines.push(`💧 Mana : ${amount}`);lines.push(`💧 ${esc(t.label)} : +${amount} mana (${t.mana}/${t.manaMax})`);broadcastHud(t.id,{mana:amount});}
@@ -3519,7 +3522,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(a.type==='Bouclier'){
       const r=isAoE?sharedRoll:roll(a.formula);
       if(!isAoE)broadcastDiceRoll(formulaSides(a.formula),r.rolls);
-      const amount=applyMult(Math.ceil(r.total*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
+      const amount=applyMult(Math.ceil(r.total*mult*(effStat(casterTpl,casterInst,a.stat))/100),a.dmgMult);
       t.shield=(t.shield||0)+amount;
       if(t.shield>t.shieldMax)t.shieldMax=t.shield;
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
@@ -3532,9 +3535,9 @@ function resolveAbility(a,start,explicitTargetInstId){
     let raw, elemRoll, wpRaw=0;
     if(isAoE){raw=sharedRoll.abTotal;wpRaw=sharedRoll.wpTotal;elemRoll=sharedElems||{list:[]};}
     else{const rw=rollWithWeapon(a.formula,weaponUsed,casterInst);raw=rw.abTotal;wpRaw=rw.wpTotal;lines.push(rw.logLine);elemRoll=rollWeaponElems(weaponUsed,casterInst);elemRoll.log.forEach(l=>lines.push(l));}
-    let damage=applyMult(Math.ceil(raw*mult*(casterTpl.stats[a.stat]||0)/100),a.dmgMult);
-    const wpPart=weaponPhysDamage(wpRaw,mult,casterTpl.stats[a.stat]||0,a.dmgMult,lines);
-    const elemParts=elemBonusDamage(elemRoll.list,mult,casterTpl.stats[a.stat]||0,a.dmgMult,tTpl,t,lines);
+    let damage=applyMult(Math.ceil(raw*mult*(effStat(casterTpl,casterInst,a.stat))/100),a.dmgMult);
+    const wpPart=weaponPhysDamage(wpRaw,mult,effStat(casterTpl,casterInst,a.stat),a.dmgMult,lines);
+    const elemParts=elemBonusDamage(elemRoll.list,mult,effStat(casterTpl,casterInst,a.stat),a.dmgMult,tTpl,t,lines);
     const fin=finalizeDamage([{raw:damage,el:a.element,pool:a.defense==='CA'?'CA':(a.defense==='DM'?'DM':null)},{raw:wpPart,el:'Physique',pool:'CA'},...elemParts],tTpl,t);
     damage=fin.total; fin.detail.forEach(l=>lines.push(l));
     const beforeShield=t.shield||0; const absorbed=Math.min(beforeShield,damage);
@@ -3595,7 +3598,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   const prevSE=(t.statusEffects||[]).find(se=>se.abilityId===a.id);if(mult>0)t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-  applyBuffExtras(a,t,mult,casterInst);if(mult>0&&buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:buffDur(a,mult),fresh:selfNow(casterInst,t)});if(prevSE&&mult>0&&buffHasDmg(a)){const nse=t.statusEffects[t.statusEffects.length-1];nse.turnsLeft=addDur(prevSE.turnsLeft,nse.turnsLeft);}
+  applyBuffExtras(a,t,mult,casterInst);if(mult>0&&buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:effStat(casterTpl,casterInst,a.stat),mult,turnsLeft:buffDur(a,mult),fresh:selfNow(casterInst,t)});if(prevSE&&mult>0&&buffHasDmg(a)){const nse=t.statusEffects[t.statusEffects.length-1];nse.turnsLeft=addDur(prevSE.turnsLeft,nse.turnsLeft);}
   playAbilityFX(a,casterInst,[t],[t.x,t.y]);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:[t.id],start:[t.x,t.y]}});
   addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${buffDur(a,mult)??'∞'} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(a.desc?[a.desc]:[])].join('<br>'));
   activeAbility=null; hoverCell=null;
@@ -3629,7 +3632,7 @@ function resolveBuffZone(a,casterInst,start){
   }else{
     targets.forEach(t=>{
       const prevSE=(t.statusEffects||[]).find(se=>se.abilityId===a.id);if(mult>0)t.statusEffects=(t.statusEffects||[]).filter(se=>se.abilityId!==a.id);
-      applyBuffExtras(a,t,mult,casterInst);if(mult>0&&buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,mult,turnsLeft:buffDur(a,mult),fresh:selfNow(casterInst,t)});if(prevSE&&mult>0&&buffHasDmg(a)){const nse=t.statusEffects[t.statusEffects.length-1];nse.turnsLeft=addDur(prevSE.turnsLeft,nse.turnsLeft);}
+      applyBuffExtras(a,t,mult,casterInst);if(mult>0&&buffHasDmg(a))t.statusEffects.push({abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:a.formula,stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:effStat(casterTpl,casterInst,a.stat),mult,turnsLeft:buffDur(a,mult),fresh:selfNow(casterInst,t)});if(prevSE&&mult>0&&buffHasDmg(a)){const nse=t.statusEffects[t.statusEffects.length-1];nse.turnsLeft=addDur(prevSE.turnsLeft,nse.turnsLeft);}
       lines.push(mult>0?`🌀 ${esc(t.label)} affecté (${buffDur(a,mult)??'∞'} tour(s))`:`${esc(t.label)} n'est pas affecté·e.`);
     });
   }
@@ -3665,7 +3668,7 @@ function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   applyCooldown(a,casterInst);
   const casterTpl=instTemplate(casterInst);
-  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:casterTpl?.stats?.[a.stat]||0,casterLabel:casterInst.label,casterInstId:casterInst.id,turnsLeft:a.duration||3,effect:a.effect,zoneImage:a.zoneImage||null};
+  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:effStat(casterTpl,casterInst,a.stat),casterLabel:casterInst.label,casterInstId:casterInst.id,turnsLeft:a.duration||3,effect:a.effect,zoneImage:a.zoneImage||null};
   if(a.area==='line'||a.area==='cone'){
     const axis=axisOverride||zoneAxis(a,start,originOverride,a.zoneRange||a.range||1);
     if(!axis){toast('Sélectionne d’abord un personnage.');return;}
@@ -3863,7 +3866,7 @@ function promptSetHotkey(charId,abilityId){
   setHotkeyMap(m);
   render();
 }
-function consumableStacks(c){return ((c&&c.bag)||[]).filter(b=>{const e=equip(b.eqId);return e&&e.itemType==='divers'&&e.diversCat==='consommable'&&e.useAmount>0&&(b.qty||1)>0;});}
+function consumableStacks(c){return ((c&&c.bag)||[]).filter(b=>{const e=equip(b.eqId);return e&&e.itemType==='divers'&&e.diversCat==='consommable'&&(e.useAmount>0||e.useForce>0||e.useMagie>0)&&(b.qty||1)>0;});}
 function consumablesButtonsHtml(selInst){
   const tpl=instTemplate(selInst); if(!tpl)return '';
   return consumableStacks(tpl).map(b=>{
@@ -4867,13 +4870,19 @@ function useConsumable(charId,eqId){
   const myTurnInst=turnId&&targets.find(t=>t.id===turnId);
   if(S.combat.active&&!isMJ()&&!myTurnInst){toast('⏳ Ce n’est pas le tour de ce personnage.');return;}
   const amt=def.useAmount||0, isMana=def.useResource==='Mana';
+  const bF=def.useForce||0, bM=def.useMagie||0, bD=Math.max(1,def.useDuration||1);
   targets.forEach(t=>{
-    if(isMana){t.mana=Math.min(t.manaMax,t.mana+amt);broadcastHud(t.id,{mana:amt});}
-    else{t.hp=Math.min(t.hpMax,t.hp+amt);broadcastHud(t.id,{hp:amt});}
+    if(amt>0){
+      if(isMana){t.mana=Math.min(t.manaMax,t.mana+amt);broadcastHud(t.id,{mana:amt});}
+      else{t.hp=Math.min(t.hpMax,t.hp+amt);broadcastHud(t.id,{hp:amt});}
+    }
+    t.statBuffs=t.statBuffs||[];
+    const inCombat=S.combat.active, own=myTurnInst&&t.id===myTurnInst.id;
+    [['Force',bF],['Magie',bM]].forEach(([k,v])=>{if(v>0)t.statBuffs.push({stat:k,amount:v,name:def.name,turnsLeft:inCombat?bD+(own?1:0):null});});
   });
   st.qty=(st.qty||1)-1;
   if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);
-  addLog(`🧪 <b>${esc(c.name)}</b> utilise <b>${esc(def.name)}</b> (+${amt} ${isMana?'💧 Mana':'❤️ PV'}).`);
+  addLog(`🧪 <b>${esc(c.name)}</b> utilise <b>${esc(def.name)}</b>${amt>0?` (+${amt} ${isMana?'💧 Mana':'❤️ PV'})`:''}${bF?` (+${bF} Force`+(S.combat.active?`, ${bD} tour(s)`:'')+')':''}${bM?` (+${bM} Magie`+(S.combat.active?`, ${bD} tour(s)`:'')+')':''}.`);
   if(myTurnInst)advanceTurn();
   saveState(); render(); if(sheetModalChar===charId)refreshSheetModal();
 }
@@ -4959,7 +4968,7 @@ function openEquipment(id){
   <div class="field full"><label>💰 Prix (or / argent / cuivre)</label><div class="row" style="gap:6px"><input id="eq_p_gold" type="number" min="0" value="${moneySplit(e.price||0).g}" style="width:90px"><span class="tiny muted">or</span><input id="eq_p_silver" type="number" min="0" value="${moneySplit(e.price||0).s}" style="width:70px"><span class="tiny muted">arg</span><input id="eq_p_copper" type="number" min="0" value="${moneySplit(e.price||0).c}" style="width:70px"><span class="tiny muted">cu</span></div></div>
   <div class="field" id="eq_category_field" style="display:${(isWeapon||isDivers)?'none':''}"><label>Catégorie (emplacement)</label><select id="eq_category" onchange="toggleDurabilityField()">${catOpts}</select></div>
   <div class="field" id="eq_diverscat_field" style="display:${isDivers?'':'none'}"><label>Catégorie divers</label><select id="eq_diverscat" onchange="toggleEquipTypeFields()">${DIVERS_CATS.map(([k,l])=>opt(k,l,e.diversCat||'autres')).join('')}</select></div>
-  <div class="field full" id="eq_consumable_fields" style="display:${(isDivers&&e.diversCat==='consommable')?'':'none'}"><div class="row" style="gap:10px"><div class="field"><label>Ressource restaurée à l'utilisation</label><select id="eq_useres">${opt('Vie','❤️ PV',e.useResource||'Vie')}${opt('Mana','💧 Mana',e.useResource||'Vie')}</select></div><div class="field"><label>Valeur fixe restaurée</label><input id="eq_useamt" type="number" min="1" value="${e.useAmount||10}"></div></div></div>
+  <div class="field full" id="eq_consumable_fields" style="display:${(isDivers&&e.diversCat==='consommable')?'':'none'}"><div class="row" style="gap:10px"><div class="field"><label>Ressource restaurée à l'utilisation</label><select id="eq_useres">${opt('Vie','❤️ PV',e.useResource||'Vie')}${opt('Mana','💧 Mana',e.useResource||'Vie')}</select></div><div class="field"><label>Valeur fixe restaurée (0 = aucune)</label><input id="eq_useamt" type="number" min="0" value="${e.useAmount??10}"></div></div><div class="row" style="gap:10px;margin-top:8px"><div class="field"><label>⚔ Bonus de Force provisoire</label><input id="eq_useforce" type="number" min="0" value="${e.useForce||0}"></div><div class="field"><label>✨ Bonus de Magie provisoire</label><input id="eq_usemagie" type="number" min="0" value="${e.useMagie||0}"></div><div class="field"><label>Durée (tours en combat)</label><input id="eq_usedur" type="number" min="1" value="${e.useDuration||3}"></div></div><p class="tiny muted">Le bonus s'applique à l'utilisation, dure ce nombre de tours du personnage en combat, et s'arrête à la fin du combat (hors combat : jusqu'à la fin du prochain combat).</p></div>
   <div class="field" id="eq_durability_field" style="display:${(isWeapon||(!isDivers&&e.category!=='anneau'&&e.category!=='amulette'))?'':'none'}"><label>Durabilité maximale (vide ou 0 = indestructible)</label><input id="eq_durabilitymax" type="number" min="0" value="${e.durabilityMax||''}"></div>
   <div class="field full">
     <label>Icône personnalisée (petite, listes)</label>
@@ -5063,7 +5072,11 @@ function saveEquipment(id){
     target.category='divers';
     target.diversCat=document.getElementById('eq_diverscat').value||'autres';
     target.useResource=document.getElementById('eq_useres').value==='Mana'?'Mana':'Vie';
-    target.useAmount=Math.max(1,parseNum(document.getElementById('eq_useamt').value)||10);
+    target.useAmount=Math.max(0,parseNum(document.getElementById('eq_useamt').value)||0);
+    target.useForce=Math.max(0,parseNum(document.getElementById('eq_useforce')?.value)||0);
+    target.useMagie=Math.max(0,parseNum(document.getElementById('eq_usemagie')?.value)||0);
+    target.useDuration=Math.max(1,Math.floor(parseNum(document.getElementById('eq_usedur')?.value)||3));
+    if(!(target.useAmount>0||target.useForce>0||target.useMagie>0))target.useAmount=10;
     target.damageFormula='';
     target.ca=0; target.dm=0;
     target.description=document.getElementById('eq_description').value||'';
@@ -5183,11 +5196,12 @@ function myCharacterCard(c){
   const instancesHtml=instances.length
     ? instances.map(i=>{
       const afTxt=(i.afflictions&&i.afflictions.length)?(' · 🩸 '+i.afflictions.map(af=>{const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);return d?esc(d.name):'';}).filter(Boolean).join(', ')):'';
+      const sbTxt=(i.statBuffs&&i.statBuffs.length)?(' · 🧪 '+i.statBuffs.map(b=>`+${b.amount} ${esc(b.stat)}(${b.turnsLeft??'∞'})`).join(', ')):'';
       const seTxt=(i.statusEffects&&i.statusEffects.length)?(' · 🌀 '+i.statusEffects.map(se=>`${esc(se.name)}(${se.turnsLeft??'∞'})`).join(', ')):'';
-      return `<div class="row between" style="padding:8px;background:#20232a;border-radius:8px;margin-bottom:6px"><span>${esc(i.label)} — case (${i.x+1}, ${i.y+1})</span><span class="tiny">❤️ ${i.hp}/${i.hpMax} · 💧 ${i.mana}/${i.manaMax} · 🛡 ${i.shield}/${i.shieldMax}${afTxt}${seTxt}</span></div>`;
+      return `<div class="row between" style="padding:8px;background:#20232a;border-radius:8px;margin-bottom:6px"><span>${esc(i.label)} — case (${i.x+1}, ${i.y+1})</span><span class="tiny">❤️ ${i.hp}/${i.hpMax} · 💧 ${i.mana}/${i.manaMax} · 🛡 ${i.shield}/${i.shieldMax}${afTxt}${seTxt}${sbTxt}</span></div>`;
     }).join('')
     : `<p class="tiny muted">Ce personnage n'est pas actuellement sur la carte.</p>`;
-  const bagListHtml=(c.bag&&c.bag.length)?c.bag.map(b=>{const it=equip(b.eqId);if(!it)return '';const q=b.qty||1;const durTxt=it.durabilityMax?` · 🔧 ${b.dur}/${it.durabilityMax}`:'';const isCons=it.itemType==='divers'&&it.diversCat==='consommable'&&it.useAmount>0;const btns=canAlloc?((targetSlotFor(c,it)?`<button class="btn" style="padding:4px 8px" onclick="equipFromBag('${c.id}','${b.uid}')">Équiper</button>`:'')+(isCons?`<button class="btn" style="padding:4px 8px" onclick="useConsumable('${c.id}','${b.eqId}')">Utiliser</button>`:'')):'';return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px;gap:8px"><span>${iconInlineHtml(it)} <b>${esc(it.name)}</b>${q>1?` ×${q}`:''} <small class="muted">(${fmtNum((it.poids||0)*q)} kg)</small><br><span class="tiny muted">${equipSummary(it)}${durTxt}</span></span><span class="row" style="gap:4px">${btns}</span></div>`;}).join(''):'<p class="tiny muted">Sac vide.</p>';
+  const bagListHtml=(c.bag&&c.bag.length)?c.bag.map(b=>{const it=equip(b.eqId);if(!it)return '';const q=b.qty||1;const durTxt=it.durabilityMax?` · 🔧 ${b.dur}/${it.durabilityMax}`:'';const isCons=it.itemType==='divers'&&it.diversCat==='consommable'&&(it.useAmount>0||it.useForce>0||it.useMagie>0);const btns=canAlloc?((targetSlotFor(c,it)?`<button class="btn" style="padding:4px 8px" onclick="equipFromBag('${c.id}','${b.uid}')">Équiper</button>`:'')+(isCons?`<button class="btn" style="padding:4px 8px" onclick="useConsumable('${c.id}','${b.eqId}')">Utiliser</button>`:'')):'';return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px;gap:8px"><span>${iconInlineHtml(it)} <b>${esc(it.name)}</b>${q>1?` ×${q}`:''} <small class="muted">(${fmtNum((it.poids||0)*q)} kg)</small><br><span class="tiny muted">${equipSummary(it)}${durTxt}</span></span><span class="row" style="gap:4px">${btns}</span></div>`;}).join(''):'<p class="tiny muted">Sac vide.</p>';
   const moneyBlockHtml=c.type==='player'?`<div class="stat" style="margin-bottom:8px"><label>💰 Argent</label><strong>${fmtMoney(c.money||0)}</strong></div><div class="stat" style="margin-bottom:8px"><label>🎒 Sac (non équipé)</label><div style="margin-top:6px">${bagListHtml}</div></div>`:'';
   const lvl=c.level||1, xpNow=c.xp||0, xpNeed=xpNeeded(lvl);
   const xpBlock=c.type==='player'?`<div class="stat" style="margin-bottom:8px"><label>⭐ Niveau ${lvl}</label><div class="mini-bar" style="width:100%;height:8px"><i style="width:${pct(xpNow,xpNeed)}%;background:#e7b85c"></i></div><div class="tiny muted" style="margin-top:4px">XP : ${fmtNum(xpNow)} / ${fmtNum(xpNeed)} · Reste ${fmtNum(xpNeed-xpNow)} pour le niveau ${lvl+1}</div></div>`:'';
@@ -6507,7 +6521,7 @@ function bagWeight(c){return ((c&&c.bag)||[]).reduce((w,b)=>{const e=equip(b.eqI
 function equipSummary(e){
   const catLabel=(EQUIP_CATEGORIES.find(c=>c[0]===e.category)||['','?'])[1];
   if(e.itemType==='weapon')return `⚔ ${esc(catLabel)} · Dégâts ${esc(e.damageFormula||'—')}${weaponElemText(e)}${handsTxt(e)}`;
-  if(e.itemType==='divers')return `🎒 ${esc(diversCatLabel(e))}${(e.diversCat==='consommable'&&e.useAmount)?` · +${e.useAmount} ${e.useResource==='Mana'?'💧 Mana':'❤️ PV'}`:''}${e.description?' · '+esc(e.description).slice(0,60):''}`;
+  if(e.itemType==='divers')return `🎒 ${esc(diversCatLabel(e))}${(e.diversCat==='consommable')?((e.useAmount?` · +${e.useAmount} ${e.useResource==='Mana'?'💧 Mana':'❤️ PV'}`:'')+(e.useForce?` · +${e.useForce} Force`:'')+(e.useMagie?` · +${e.useMagie} Magie`:'')+((e.useForce||e.useMagie)?` (${e.useDuration||3} t.)`:'')):''}${e.description?' · '+esc(e.description).slice(0,60):''}`;
   const resTxt=ELEMENT_RES_KEYS.filter(k=>e.res&&e.res[k]).map(k=>`${k} +${e.res[k]}%`).join(', ');
   return `🛡 ${esc(catLabel)} · CA +${e.ca||0} · DM +${e.dm||0}${resTxt?' · '+resTxt:''}`;
 }
