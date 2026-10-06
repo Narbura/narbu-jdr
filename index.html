@@ -942,6 +942,26 @@ function updateUserBadge(){
 }
 
 /* ============================= UTILITAIRES ============================= */
+function askPrompt(title,fields,cb){
+  document.getElementById('askOkBox')?.remove();
+  const d=document.createElement('div'); d.id='askOkBox';
+  d.style.cssText='position:fixed;inset:0;background:#0009;display:flex;align-items:center;justify-content:center;z-index:600';
+  d.innerHTML='<div class="modal" style="width:min(420px,92vw);resize:none"><h2 style="font-size:16px"></h2><div class="form" style="grid-template-columns:1fr"></div><div class="modal-actions"><button class="btn" id="askNo">Annuler</button><button class="btn primary" id="askYes">OK</button></div></div>';
+  d.querySelector('h2').textContent=title;
+  const box=d.querySelector('.form');
+  fields.forEach((f,i)=>{
+    const w=document.createElement('div'); w.className='field';
+    const l=document.createElement('label'); l.textContent=f.label;
+    const inp=document.createElement('input'); inp.value=f.value||''; inp.dataset.i=i; if(f.max)inp.maxLength=f.max;
+    w.appendChild(l); w.appendChild(inp); box.appendChild(w);
+  });
+  document.body.appendChild(d);
+  const ok=()=>{const v=[...d.querySelectorAll('input')].map(x=>x.value);d.remove();cb(v);};
+  d.querySelector('#askNo').onclick=()=>d.remove();
+  d.querySelector('#askYes').onclick=ok;
+  d.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();ok();}else if(e.key==='Escape'){e.stopPropagation();d.remove();}});
+  const first=d.querySelector('input'); first?.focus(); first?.select();
+}
 let _askOk=false;
 function askOk(msg,again){
   if(_askOk){_askOk=false;return true;}
@@ -1012,8 +1032,7 @@ function rteAddCol(id){
 }
 function rteDeleteTable(id){
   const table=rteFindTable(id); if(!table){toast('⚠️ Clique dans un tableau d’abord.');return;}
-  if(!confirm('Supprimer ce tableau ?'))return;
-  table.remove();
+  askOk('Supprimer ce tableau ?',()=>table.remove());
 }
 function richEditorHtml(id,initialHtml,minHeight){
   return `<div class="rte-toolbar">
@@ -1107,14 +1126,19 @@ document.addEventListener('keydown',e=>{
   }
 });
 function rteInsertTable(id){
-  const cols=parseInt(prompt('Nombre de colonnes ?','3'),10);
-  if(!cols||cols<1)return;
-  const rows=parseInt(prompt('Nombre de lignes ?','2'),10)||2;
-  let html='<table>';
-  for(let r=0;r<rows;r++){html+='<tr>';for(let c=0;c<cols;c++)html+='<td>&nbsp;</td>';html+='</tr>';}
-  html+='</table><p><br></p>';
-  document.getElementById(id)?.focus();
-  document.execCommand('insertHTML',false,html);
+  const sel=window.getSelection(), content=document.getElementById(id);
+  const range=(sel&&sel.rangeCount&&content&&content.contains(sel.anchorNode))?sel.getRangeAt(0).cloneRange():null;
+  askPrompt('Insérer un tableau',[{label:'Nombre de colonnes',value:'3'},{label:'Nombre de lignes',value:'2'}],v=>{
+    const cols=parseInt(v[0],10);
+    if(!cols||cols<1)return;
+    const rows=parseInt(v[1],10)||2;
+    let html='<table>';
+    for(let r=0;r<rows;r++){html+='<tr>';for(let c=0;c<cols;c++)html+='<td>&nbsp;</td>';html+='</tr>';}
+    html+='</table><p><br></p>';
+    content?.focus();
+    if(range){const s2=window.getSelection();s2.removeAllRanges();s2.addRange(range);}
+    document.execCommand('insertHTML',false,html);
+  });
 }
 function rteHtml(id){return document.getElementById(id)?.innerHTML||'';}
 function opt(value,label,current){return `<option value="${esc(value)}" ${value===current?'selected':''}>${esc(label)}</option>`;}
@@ -3908,8 +3932,9 @@ function myHotkeyFor(charId,abilityId){return (getHotkeyMap()[charId]||{})[abili
 function uiCtx(id){return `oncontextmenu="event.preventDefault();promptSetHotkey('__ui__','${id}')"`;}
 function hkTag(id){const k=myHotkeyFor('__ui__',id);return k?`[${esc(k)}] `:'';}
 function promptSetHotkey(charId,abilityId){
-  const key=prompt('Touche pour ce raccourci (1-9, lettre, ou symbole comme & é " \' ( § è ! ç à) — laisse vide pour retirer :','');
-  if(key===null)return;
+  askPrompt('Raccourci clavier',[{label:'Touche (1-9, lettre ou symbole) — laisse vide pour retirer',value:'',max:1}],v=>applyHotkey(charId,abilityId,v[0]));
+}
+function applyHotkey(charId,abilityId,key){
   const m=getHotkeyMap();
   if(!m[charId])m[charId]={};
   const trimmed=key;
@@ -6667,8 +6692,10 @@ function addCharBagItem(cid){
   if(!isMJ())return;
   const id=document.getElementById('c_addbag_select')?.value; if(!id){toast('⚠️ Choisis un équipement.');return;}
   const c=char(cid); if(!c)return;
-  const qty=parseInt(prompt('Quantité à ajouter ?','1'),10); if(!qty||qty<1)return;
-  bagAdd(c,id,null,qty); saveState(); reopenCharacter(cid);
+  askPrompt('Ajouter au sac',[{label:'Quantité à ajouter',value:'1'}],v=>{
+    const qty=parseInt(v[0],10); if(!qty||qty<1)return;
+    bagAdd(c,id,null,qty); saveState(); reopenCharacter(cid);
+  });
 }
 function removeCharBagItem(cid,uid){
   if(!isMJ())return;
