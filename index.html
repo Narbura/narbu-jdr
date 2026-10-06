@@ -192,7 +192,7 @@ body.nav-collapsed .sidebar .nav{display:none!important}
   <button class="btn ghost" style="width:100%" onclick="logout()">↩ Se déconnecter</button>
 </aside>
 <main class="main">
-<header class="top"><h1 id="pageTitle">Table de jeu</h1><div class="actions"><button class="btn" id="undoBtn" onclick="undoLast()" title="Annuler la dernière modification">↺ Annuler</button><button class="btn" id="resetBtn" onclick="resetDemo()">Réinitialiser la démo</button><button class="btn primary" onclick="saveState(true)">💾 Sauvegarder</button></div></header>
+<header class="top"><h1 id="pageTitle">Table de jeu</h1><div class="actions"><button class="btn" id="undoBtn" onclick="undoLast()" title="Annuler la dernière modification">↺ Annuler</button><button class="btn primary" onclick="saveState(true)">💾 Sauvegarder</button></div></header>
 <section class="content" id="content"></section>
 </main>
 </div>
@@ -921,8 +921,6 @@ function updateUserBadge(){
   const el=document.getElementById('serverInfo');
   if(!el||!currentUser)return;
   el.innerHTML=`${isMJ()?'🎲 <b>Maître du Jeu</b>':'🧙 Joueur'}<br><span class="tiny">${esc(myDisplayName())}</span>`;
-  const resetBtn=document.getElementById('resetBtn');
-  if(resetBtn) resetBtn.style.display=isMJ()?'':'none';
   const undoBtn=document.getElementById('undoBtn');
   if(undoBtn) undoBtn.style.display=isMJ()?'':'none';
   const libNav=document.querySelector('.nav[data-page="library"]');
@@ -944,14 +942,6 @@ function updateUserBadge(){
 }
 
 /* ============================= UTILITAIRES ============================= */
-function resetDemo(){
-  if(!isMJ()){toast('⛔ Seul le MJ peut réinitialiser la partie.');return;}
-  if(!confirm('Réinitialiser les données de démonstration pour TOUTE la table ?'))return;
-  S=structuredClone(DEFAULT);
-  normalizeState();
-  selectedToken=null; activeAbility=null; hoverCell=null;
-  saveState(); render();
-}
 function toast(t){const e=document.getElementById('toast');e.textContent=t;e.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>e.classList.remove('show'),1800);}
 function esc(x){return String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function iconBoxHtml(entity,radius,fit){
