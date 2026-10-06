@@ -942,6 +942,19 @@ function updateUserBadge(){
 }
 
 /* ============================= UTILITAIRES ============================= */
+let _askOk=false;
+function askOk(msg,again){
+  if(_askOk){_askOk=false;return true;}
+  document.getElementById('askOkBox')?.remove();
+  const d=document.createElement('div'); d.id='askOkBox';
+  d.style.cssText='position:fixed;inset:0;background:#0009;display:flex;align-items:center;justify-content:center;z-index:600';
+  d.innerHTML='<div class="modal" style="width:min(420px,92vw);resize:none"><p style="margin:0 0 6px;line-height:1.5"></p><div class="modal-actions"><button class="btn" id="askNo">Annuler</button><button class="btn" id="askYes" style="background:var(--danger);border-color:var(--danger)">Confirmer</button></div></div>';
+  d.querySelector('p').textContent=msg;
+  document.body.appendChild(d);
+  d.querySelector('#askNo').onclick=()=>d.remove();
+  d.querySelector('#askYes').onclick=()=>{d.remove();_askOk=true;try{again();}finally{_askOk=false;}};
+  return false;
+}
 function toast(t){const e=document.getElementById('toast');e.textContent=t;e.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>e.classList.remove('show'),1800);}
 function esc(x){return String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function iconBoxHtml(entity,radius,fit){
@@ -4897,7 +4910,7 @@ function saveAfflictionDef(id){
 }
 function deleteAfflictionDef(id){
   if(!isMJ())return;
-  if(!confirm('Supprimer cette affliction ? Elle sera retirée de tous les jetons.'))return;
+  if(!askOk('Supprimer cette affliction ? Elle sera retirée de tous les jetons.',()=>deleteAfflictionDef(id)))return;
   S.instances.forEach(t=>{t.afflictions=(t.afflictions||[]).filter(a=>a.defId!==id);});
   S.afflictionDefs=(S.afflictionDefs||[]).filter(x=>x.id!==id);
   saveState(); render();
@@ -4957,7 +4970,7 @@ function duplicateCharacter(id){
 function deleteAbility(id){
   if(!isMJ())return;
   const a=S.abilities.find(x=>x.id===id); if(!a)return;
-  if(!confirm('Supprimer définitivement la capacité « '+a.name+' » ?'))return;
+  if(!askOk('Supprimer définitivement la capacité « '+a.name+' » ?',()=>deleteAbility(id)))return;
   S.abilities=S.abilities.filter(x=>x.id!==id);
   S.instances.forEach(t=>{t.activeAuras=(t.activeAuras||[]).filter(x=>x!==id);if(t.cooldowns)delete t.cooldowns[id];});
   if(activeAbility===id)activeAbility=null;
@@ -5149,7 +5162,7 @@ function saveEquipment(id){
 }
 function confirmDeleteEquipment(id){
   if(!isMJ())return;
-  if(!confirm('Supprimer cet équipement ? Il sera automatiquement déséquipé de tous les personnages.'))return;
+  if(!askOk('Supprimer cet équipement ? Il sera automatiquement déséquipé de tous les personnages.',()=>confirmDeleteEquipment(id)))return;
   S.characters.forEach(c=>{if(c.equipmentSlots){EQUIP_SLOTS.forEach(([k])=>{if(c.equipmentSlots[k]===id)c.equipmentSlots[k]=null;});}c.bag=(c.bag||[]).filter(b=>b.eqId!==id);if(c.merchant)c.merchant.buy=(c.merchant.buy||[]).filter(b=>b.eqId!==id);});
   S.equipment=(S.equipment||[]).filter(x=>x.id!==id);
   saveState(); render();
@@ -5915,7 +5928,7 @@ async function renameImage(id,newName){
 function confirmDeleteImage(id){
   if(!isMJ())return;
   const m=imageLibrary.find(x=>x.id===id); if(!m)return;
-  if(!confirm(`Supprimer définitivement « ${m.displayName} » du serveur ?`))return;
+  if(!askOk(`Supprimer définitivement « ${m.displayName} » du serveur ?`,()=>confirmDeleteImage(id)))return;
   deleteImage(id);
 }
 async function deleteImage(id){
@@ -6143,7 +6156,7 @@ function saveNote(id){
 }
 function deleteNote(id){
   if(!isMJ())return;
-  if(!confirm('Supprimer cette note ?'))return;
+  if(!askOk('Supprimer cette note ?',()=>deleteNote(id)))return;
   S.notes=(S.notes||[]).filter(x=>x.id!==id);
   saveState(); render();
 }
