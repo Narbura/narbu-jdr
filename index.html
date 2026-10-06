@@ -168,6 +168,13 @@ body.nav-collapsed .sidebar .nav{display:none!important}
 .adv-pill.sh{background:#9db4e8}.adv-pill.dm{background:#fff59d}.adv-pill.hl{background:#a5e6a5}.adv-pill.ms{background:#ddd}
 .adv-sum{background:linear-gradient(#6a1a1a,#3a0a0a);color:#fff;font-style:italic;font-weight:700;text-align:center;border:1px solid #222;border-radius:4px;padding:5px 8px;margin:6px 0}
 .adv-sum.ok{background:linear-gradient(#1a5a2a,#0a3a15)}
+.log .adv-entry{padding:0;border-bottom:0}
+.log .adv-entry div{padding:0;border-bottom:0}
+.log .adv-entry .adv-title{padding:6px 2px 3px}
+.log .adv-entry .adv-card{margin:0;border-bottom:1px solid #555}
+.log .adv-entry .adv-head{padding:5px 6px}
+.log .adv-entry .adv-row{padding:3px 8px}
+.log .adv-entry .adv-sum{padding:5px 8px;margin:4px 0 0;border-bottom:1px solid #222}
 </style>
 </head>
 <body>
@@ -1672,12 +1679,13 @@ function chatMode(){const m=localStorage.getItem('narbudr-chat-mode');if(m)retur
 function chatCompact(){return chatMode()==='simple';}
 function toggleChatCompact(){const m=chatMode();localStorage.setItem('narbudr-chat-mode',m==='detail'?'simple':m==='simple'?'advanced':'detail');render();}
 function chatModeLabel(){const m=chatMode();return m==='simple'?'Simple':m==='advanced'?'Avancé':'Détaillé';}
+function tokOf(t){const c=instTemplate(t);return `<span title="${esc(t.label)}">${c?iconInlineHtml(c,18):esc(t.label)}</span>`;}
 function advCardHtml(ci,a,label,rows,sums){
   const ic=a.iconImage?`<img src="${esc(a.iconImage)}" style="width:16px;height:16px;vertical-align:middle;border-radius:3px">`:esc(a.icon||'');
   const r=rows.map(x=>`<div class="adv-row ${x.foe?'foe':''}"><span>${esc(x.txt)}</span><span class="adv-pill ${x.k}">${x.v}</span></div>`).join('');
   return `<div class="adv-title">${ic} ${esc(ci.label)} lance ${esc(a.name)}</div><div class="adv-card"><div class="adv-head"><b>${esc(a.name)}</b><small>${esc(label)} ♦ ${esc(a.type)}</small></div>${r}</div>`+sums.map(x=>`<div class="adv-sum ${x.ok?'ok':''}">${x.txt}</div>`).join('');
 }
-function chatEntriesHtml(){const md=chatMode();const out=[];S.chat.slice().reverse().forEach(e=>{let s=String(e),adv=null;const ai=s.indexOf('<!--A-->');if(ai>=0){adv=s.slice(ai+8);s=s.slice(0,ai);}let v;if(md==='advanced'&&adv)v=adv;else if(s.includes('<!--CC-->'))v=s.replace('<!--CC-->','');else if(s.includes('<!--C-->')){const q=s.split('<!--C-->');v=md==='simple'?q[1]:q[0];}else v=md==='simple'?null:s;if(v)out.push('<div>'+v+'</div>');});return out.join('')||'<p class="muted tiny">Aucun événement pour l’instant.</p>';}
+function chatEntriesHtml(){const md=chatMode();const out=[];S.chat.slice().reverse().forEach(e=>{let s=String(e),adv=null;const ai=s.indexOf('<!--A-->');if(ai>=0){adv=s.slice(ai+8);s=s.slice(0,ai);}let v;if(md==='advanced'&&adv)v=adv;else if(s.includes('<!--CC-->'))v=s.replace('<!--CC-->','');else if(s.includes('<!--C-->')){const q=s.split('<!--C-->');v=md==='simple'?q[1]:q[0];}else v=md==='simple'?null:s;if(v)out.push((md==='advanced'&&adv)?'<div class="adv-entry">'+v+'</div>':'<div>'+v+'</div>');});return out.join('')||'<p class="muted tiny">Aucun événement pour l’instant.</p>';}
 const TB_ITEMS=[['fullscreen','⛶ Plein écran',false],['grid','▦ Grille',false],['hud','🎯 HUD',true],['ff','⚔ Tir allié',true],['free','🎯 Placement libre',true],['combat','⚔ Boutons de combat',false],['chat','💬 Chat',false]];
 function tbHidden(){try{return JSON.parse(localStorage.getItem('narbudr-tb-hidden')||'[]');}catch(e){return [];}}
 function tbShow(k){return !tbHidden().includes(k);}
@@ -3675,7 +3683,7 @@ function resolveAbility(a,start,explicitTargetInstId){
       if(!isAoE)broadcastDiceRoll(formulaSides(a.formula),r.rolls);
       const amount=applyMult(Math.ceil(r.total*mult*(effStat(casterTpl,casterInst,a.stat))/100),a.dmgMult);
       if(a._mana)t.mana=Math.min(t.manaMax,t.mana+amount);else t.hp=Math.min(t.hpMax,t.hp+amount);
-      advRows.push({k:'hl',txt:(a._mana?'Mana de ':'Soin sur ')+t.label,v:amount});advSum.push({ok:1,txt:`${esc(t.label)} récupère ${amount} ${a._mana?'de mana':'PV'}.`});
+      advRows.push({k:'hl',txt:(a._mana?'Mana de ':'Soin sur ')+t.label,v:amount});advSum.push({ok:1,txt:`${tokOf(t)} récupère ${amount} ${a._mana?'de mana':'PV'}.`});
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
       if(a._mana){lines.push(`💧 Mana : ${amount}`);lines.push(`💧 ${esc(t.label)} : +${amount} mana (${t.mana}/${t.manaMax})`);broadcastHud(t.id,{mana:amount});}
       else{lines.push(`💚 Soin : ${amount}`);
@@ -3691,7 +3699,7 @@ function resolveAbility(a,start,explicitTargetInstId){
       if(t.shield>t.shieldMax)t.shieldMax=t.shield;
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
       lines.push(`🛡 Bouclier accordé : ${amount}`);
-      advRows.push({k:'sh',txt:'Bouclier de '+t.label,v:amount});advSum.push({ok:1,txt:`${esc(t.label)} gagne ${amount} de bouclier.`});
+      advRows.push({k:'sh',txt:'Bouclier de '+t.label,v:amount});advSum.push({ok:1,txt:`${tokOf(t)} gagne ${amount} de bouclier.`});
       lines.push(`🛡 ${esc(t.label)} : ${t.shield}/${t.shieldMax}`);
       broadcastHud(t.id,{shield:amount});
       continue;
@@ -3713,11 +3721,11 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(absorbed>0)lines.push(`🛡 Bouclier : ${absorbed} absorbé(s)`);
     lines.push(`❤️ ${esc(t.label)} : -${hpDamage} PV (${t.hp}/${t.hpMax})`);
     broadcastHud(t.id,{hp:-hpDamage,shield:absorbed>0?-absorbed:0});
-    if(absorbed>0){advRows.push({k:'sh',txt:'Bouclier de '+t.label,v:absorbed,foe:tTpl?.type!=='player'});advSum.push({txt:`${esc(t.label)} perd ${absorbed} de bouclier.`});}
-    advRows.push({k:'dm',txt:'Dégâts sur '+t.label,v:hpDamage,foe:tTpl?.type!=='player'});if(hpDamage>0)advSum.push({txt:`${esc(t.label)} prend ${hpDamage} de dégâts.`});
+    if(absorbed>0){advRows.push({k:'sh',txt:'Bouclier de '+t.label,v:absorbed,foe:tTpl?.type!=='player'});advSum.push({txt:`${tokOf(t)} perd ${absorbed} de bouclier.`});}
+    advRows.push({k:'dm',txt:'Dégâts sur '+t.label,v:hpDamage,foe:tTpl?.type!=='player'});if(hpDamage>0)advSum.push({txt:`${tokOf(t)} prend ${hpDamage} de dégâts${t.hp<=0?' et est KO 💀':''}.`});
     if(damage>0)cl.push(`${esc(casterInst.label)} inflige ${damage} dégâts à ${esc(t.label)}`);
     applyMonsterDurabilityHit(casterTpl,t,tTpl,label,lines);
-    if(t.hp<=0)advSum.push({txt:`💀 ${esc(t.label)} est KO.`});
+    if(t.hp<=0&&!(hpDamage>0))advSum.push({txt:`💀 ${tokOf(t)} est KO.`});
     if(t.hp<=0){
       lines.push(`💀 <b>${esc(t.label)} est KO</b>.`);
       handleInstanceDeath(t,casterInst);
