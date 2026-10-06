@@ -511,7 +511,7 @@ let selBox=null;      // rectangle de sélection en cours
 let chatDraft='';     // texte en cours de saisie dans le chat
 let currentCharCategory=null; // dossier courant dans la bibliothèque de personnages
 let charSearchQuery='';       // recherche texte dans la bibliothèque de personnages
-let lastShownNotesReveal=null; let lastShownShop=null; // évite de rouvrir la même note en boucle
+let lastShownNotesReveal=null; let lastShownShop=null; let lastShownCharReveal=null; // évite de rouvrir la même note en boucle
 let currentNoteCategory=null;  // dossier courant dans les notes du MJ
 let noteSearchQuery='';        // recherche texte dans les notes du MJ
 let mySheetTabs={};            // onglet actif ('bio' ou 'stats') par personnage, page Ma fiche
@@ -531,7 +531,7 @@ async function loadProfiles(){
 }
 /* ============================= SYNCHRONISATION SUPABASE (6 tables, écritures ciblées) ============================= */
 const SID='main';
-const SETTINGS_KEYS=['freeMovement','friendlyFire','hudEnabled','hudSettings','diceSettings','levelUpSettings','statTestIcons','characterCategories','noteCategories','notesReveal','shopOffer'];
+const SETTINGS_KEYS=['freeMovement','friendlyFire','hudEnabled','hudSettings','diceSettings','levelUpSettings','statTestIcons','characterCategories','noteCategories','notesReveal','shopOffer','charReveal'];
 const COL_SPECS=[
   {k:'combat',t:'game_sessions',pk:'id',c:'combat_state',get:()=>S.combat,set:v=>{S.combat=v;}},
   {k:'settings',t:'game_sessions',pk:'id',c:'settings',get:()=>{const o={};SETTINGS_KEYS.forEach(k=>{o[k]=S[k]===undefined?null:S[k];});return o;},set:v=>{SETTINGS_KEYS.forEach(k=>{if(v[k]!==null&&v[k]!==undefined)S[k]=v[k];});}},
@@ -605,7 +605,7 @@ async function loadGameState(){
     normalizeState();
   }
   syncTurnSelection();
-  lastShownNotesReveal=S.notesReveal?S.notesReveal.ts:null; lastShownShop=S.shopOffer?S.shopOffer.ts:null;
+  lastShownNotesReveal=S.notesReveal?S.notesReveal.ts:null; lastShownShop=S.shopOffer?S.shopOffer.ts:null; lastShownCharReveal=S.charReveal?S.charReveal.ts:null;
   pushUndoCheckpoint();
 }
 let undoStack=[];
@@ -1821,7 +1821,7 @@ function removeInstance(id){
 
 /* ============================= RENDU ============================= */
 function render(){
-  checkNotesReveal();
+  checkNotesReveal(); checkCharReveal();
   checkShopOffer();
   const hadChatFocus=document.activeElement?.id==='chat_input';
   if(S.combat.active)multiSel=[]; else multiSel=multiSel.filter(id=>inst(id));
@@ -4169,7 +4169,7 @@ function openCharacter(id){
     ${imagePickerHtml('c_profileimage','c_profile_preview')}
   </div>
   <div class="field full"><label>Description</label>${richEditorHtml('c_bio',base.bio||'','280px')}</div>`;
-  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une fiche</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><div class="row" style="gap:8px"><h2>${id?'Modifier':'Créer'} une fiche</h2>${id?`<button class="btn ghost" style="padding:2px 8px" onclick="showCharToPlayers('${id}')" title="Montrer l'image de profil et la description aux joueurs">👁</button>`:''}</div><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
   <div class="tabs" id="charModalTabs">
     <button type="button" class="tab active" data-tab="general" onclick="switchCharModalTab('general')">🪪 Description</button>
     <button type="button" class="tab" data-tab="stats" onclick="switchCharModalTab('stats')">📊 Statistiques</button>
@@ -4876,13 +4876,13 @@ function useConsumable(charId,eqId){
       if(isMana){t.mana=Math.min(t.manaMax,t.mana+amt);broadcastHud(t.id,{mana:amt});}
       else{t.hp=Math.min(t.hpMax,t.hp+amt);broadcastHud(t.id,{hp:amt});}
     }
-    t.statBuffs=t.statBuffs||[];
-    const inCombat=S.combat.active, own=myTurnInst&&t.id===myTurnInst.id;
-    [['Force',bF],['Magie',bM]].forEach(([k,v])=>{if(v>0)t.statBuffs.push({stat:k,amount:v,name:def.name,turnsLeft:inCombat?bD+(own?1:0):null});});
+    t.statBuffs=(t.statBuffs||[]).filter(b=>b.eqId!==eqId);
+    const own=myTurnInst&&t.id===myTurnInst.id;
+    [['Force',bF],['Magie',bM]].forEach(([k,v])=>{if(v>0)t.statBuffs.push({stat:k,amount:v,name:def.name,eqId,turnsLeft:bD+(own?1:0)});});
   });
   st.qty=(st.qty||1)-1;
   if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);
-  addLog(`🧪 <b>${esc(c.name)}</b> utilise <b>${esc(def.name)}</b>${amt>0?` (+${amt} ${isMana?'💧 Mana':'❤️ PV'})`:''}${bF?` (+${bF} Force`+(S.combat.active?`, ${bD} tour(s)`:'')+')':''}${bM?` (+${bM} Magie`+(S.combat.active?`, ${bD} tour(s)`:'')+')':''}.`);
+  addLog(`🧪 <b>${esc(c.name)}</b> utilise <b>${esc(def.name)}</b>${amt>0?` (+${amt} ${isMana?'💧 Mana':'❤️ PV'})`:''}${bF?` (+${bF} Force, ${bD} tour(s))`:''}${bM?` (+${bM} Magie, ${bD} tour(s))`:''}.`);
   if(myTurnInst)advanceTurn();
   saveState(); render(); if(sheetModalChar===charId)refreshSheetModal();
 }
@@ -4968,7 +4968,7 @@ function openEquipment(id){
   <div class="field full"><label>💰 Prix (or / argent / cuivre)</label><div class="row" style="gap:6px"><input id="eq_p_gold" type="number" min="0" value="${moneySplit(e.price||0).g}" style="width:90px"><span class="tiny muted">or</span><input id="eq_p_silver" type="number" min="0" value="${moneySplit(e.price||0).s}" style="width:70px"><span class="tiny muted">arg</span><input id="eq_p_copper" type="number" min="0" value="${moneySplit(e.price||0).c}" style="width:70px"><span class="tiny muted">cu</span></div></div>
   <div class="field" id="eq_category_field" style="display:${(isWeapon||isDivers)?'none':''}"><label>Catégorie (emplacement)</label><select id="eq_category" onchange="toggleDurabilityField()">${catOpts}</select></div>
   <div class="field" id="eq_diverscat_field" style="display:${isDivers?'':'none'}"><label>Catégorie divers</label><select id="eq_diverscat" onchange="toggleEquipTypeFields()">${DIVERS_CATS.map(([k,l])=>opt(k,l,e.diversCat||'autres')).join('')}</select></div>
-  <div class="field full" id="eq_consumable_fields" style="display:${(isDivers&&e.diversCat==='consommable')?'':'none'}"><div class="row" style="gap:10px"><div class="field"><label>Ressource restaurée à l'utilisation</label><select id="eq_useres">${opt('Vie','❤️ PV',e.useResource||'Vie')}${opt('Mana','💧 Mana',e.useResource||'Vie')}</select></div><div class="field"><label>Valeur fixe restaurée (0 = aucune)</label><input id="eq_useamt" type="number" min="0" value="${e.useAmount??10}"></div></div><div class="row" style="gap:10px;margin-top:8px"><div class="field"><label>⚔ Bonus de Force provisoire</label><input id="eq_useforce" type="number" min="0" value="${e.useForce||0}"></div><div class="field"><label>✨ Bonus de Magie provisoire</label><input id="eq_usemagie" type="number" min="0" value="${e.useMagie||0}"></div><div class="field"><label>Durée (tours en combat)</label><input id="eq_usedur" type="number" min="1" value="${e.useDuration||3}"></div></div><p class="tiny muted">Le bonus s'applique à l'utilisation, dure ce nombre de tours du personnage en combat, et s'arrête à la fin du combat (hors combat : jusqu'à la fin du prochain combat).</p></div>
+  <div class="field full" id="eq_consumable_fields" style="display:${(isDivers&&e.diversCat==='consommable')?'':'none'}"><div class="row" style="gap:10px"><div class="field"><label>Ressource restaurée à l'utilisation</label><select id="eq_useres">${opt('Vie','❤️ PV',e.useResource||'Vie')}${opt('Mana','💧 Mana',e.useResource||'Vie')}</select></div><div class="field"><label>Valeur fixe restaurée (0 = aucune)</label><input id="eq_useamt" type="number" min="0" value="${e.useAmount??10}"></div></div><div class="row" style="gap:10px;margin-top:8px"><div class="field"><label>⚔ Bonus de Force provisoire</label><input id="eq_useforce" type="number" min="0" value="${e.useForce||0}"></div><div class="field"><label>✨ Bonus de Magie provisoire</label><input id="eq_usemagie" type="number" min="0" value="${e.useMagie||0}"></div><div class="field"><label>Durée (tours en combat)</label><input id="eq_usedur" type="number" min="1" value="${e.useDuration||3}"></div></div><p class="tiny muted">Le bonus dure ce nombre de tours du personnage en combat (hors combat, il ne commence à s'écouler qu'au début d'un combat). Reprendre le même consommable remplace le bonus au lieu de le cumuler ; des consommables différents se cumulent.</p></div>
   <div class="field" id="eq_durability_field" style="display:${(isWeapon||(!isDivers&&e.category!=='anneau'&&e.category!=='amulette'))?'':'none'}"><label>Durabilité maximale (vide ou 0 = indestructible)</label><input id="eq_durabilitymax" type="number" min="0" value="${e.durabilityMax||''}"></div>
   <div class="field full">
     <label>Icône personnalisée (petite, listes)</label>
@@ -6111,6 +6111,23 @@ function showNoteToPlayers(id){
   addLog(`📝 Le MJ montre la note « ${esc(n.title)} » aux joueurs.`);
   saveState(); render();
   toast('👁 Note affichée à tous les joueurs.');
+}
+function showCharToPlayers(id){
+  if(!isMJ())return;
+  const c=char(id); if(!c)return;
+  S.charReveal={charId:id,ts:Date.now()};
+  saveState(); toast('👁 Affiché à tous les joueurs (version enregistrée de la fiche).');
+}
+function checkCharReveal(){
+  const r=S.charReveal; if(!r||r.ts===lastShownCharReveal)return;
+  lastShownCharReveal=r.ts;
+  if(isMJ())return;
+  const c=char(r.charId); if(!c)return;
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${esc(c.name)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  ${c.profileImage?`<img src="${esc(c.profileImage)}" style="max-width:100%;display:block;margin:0 auto 12px;border-radius:10px">`:''}
+  <div class="rte-view">${c.bio||''}</div>
+  <div class="modal-actions"><button class="btn primary" onclick="closeModal()">Fermer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
 }
 function checkNotesReveal(){
   if(S.notesReveal && S.notesReveal.ts!==lastShownNotesReveal){
