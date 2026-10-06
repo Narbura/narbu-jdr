@@ -1264,8 +1264,8 @@ function applyObjetAffliction(a,t,mult,ci,lines){
   const def=(S.afflictionDefs||[]).find(d=>d.id===a.objAffId); if(!def)return;
   t.afflictions=t.afflictions||[];
   const nd=a.objAffTurns>0?a.objAffTurns:null, ex=t.afflictions.find(x=>x.defId===def.id);
-  if(ex){ex.left=addDur(ex.left,nd);ex.src=ci?ci.id:ex.src;}
-  else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t)});
+  if(ex){ex.left=addDur(ex.left,nd);ex.src=ci?ci.id:ex.src;if(selfNow(ci,t))ex.skipDec=true;}
+  else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t),skipDec:selfNow(ci,t)||undefined});
   lines.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${a.objAffTurns>0?a.objAffTurns+' tour(s)':"jusqu'au retrait"})`);
 }
 function afterCast(a,ci){
@@ -1298,9 +1298,9 @@ function defVals(a,key,mult){
 function affApplies(a,key,mult){return Array.isArray(a.buffAffDeg)?a.buffAffDeg.includes(key):mult>0;}
 function applyBuffExtras(a,t,mult,ci,label){
   const key=degKey(label), out=[];
-  if(a.buffAfflictionId&&affApplies(a,key,mult)){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=t.afflictions||[];{const nd=buffDur(a,mult),ex=t.afflictions.find(x=>x.defId===def.id);if(ex){ex.left=addDur(ex.left,nd);ex.src=ci?ci.id:ex.src;}else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t)});}out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${buffDur(a,mult)??'∞'} tour(s))`);}}
+  if(a.buffAfflictionId&&affApplies(a,key,mult)){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=t.afflictions||[];{const nd=buffDur(a,mult),ex=t.afflictions.find(x=>x.defId===def.id);if(ex){ex.left=addDur(ex.left,nd);ex.src=ci?ci.id:ex.src;if(selfNow(ci,t))ex.skipDec=true;}else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t),skipDec:selfNow(ci,t)||undefined});}out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${buffDur(a,mult)??'∞'} tour(s))`);}}
   const dv=defVals(a,key,mult);
-  if(dv.ca||dv.dm){t.defMods=t.defMods||[];{const nd=buffDur(a,mult),ex=t.defMods.find(m=>m.abilityId===a.id);if(ex){ex.turnsLeft=addDur(ex.turnsLeft,nd);ex.ca=dv.ca;ex.dm=dv.dm;}else t.defMods.push({abilityId:a.id,ca:dv.ca,dm:dv.dm,turnsLeft:nd});}
+  if(dv.ca||dv.dm){t.defMods=t.defMods||[];{const nd=buffDur(a,mult),ex=t.defMods.find(m=>m.abilityId===a.id);if(ex){ex.turnsLeft=addDur(ex.turnsLeft,nd);ex.ca=dv.ca;ex.dm=dv.dm;if(selfNow(ci,t))ex.skipDec=true;}else t.defMods.push({abilityId:a.id,ca:dv.ca,dm:dv.dm,turnsLeft:nd,skipDec:selfNow(ci,t)||undefined});}
     const f=(n,l)=>n?`${l} ${n>0?'−':'+'}${Math.abs(n)} `:'';
     out.push(`🛡 <b>${esc(t.label)}</b> : ${f(dv.ca,'CA')}${f(dv.dm,'DM')}(${buffDur(a,mult)??'∞'} tour(s))`);}
   if(out.length)addLog(out.join('<br>'));
@@ -1312,6 +1312,7 @@ function applyBuffStatus(a,t,mult,ci,ctpl){
   const dmg=buffHasDmg(a);
   const se={abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:dmg?a.formula:'0',stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:effStat(ctpl,ci,a.stat),mult,turnsLeft:buffDur(a,mult),marker:!dmg};
   if(dmg)se.fresh=selfNow(ci,t);
+  if(selfNow(ci,t))se.skipDec=true;
   if(prev)se.turnsLeft=addDur(prev.turnsLeft,se.turnsLeft);
   t.statusEffects.push(se);
 }
@@ -1338,12 +1339,12 @@ function applyFailPenalty(a,ci,label,targets,explicitId){
 function endTurnTick(t){
   if(t){tickAfflictions(t,true);tickStatusEffects(t,true);}
   if(!t)return;
-  t.afflictions=(t.afflictions||[]).filter(af=>{if(af.left==null)return true;af.left--;if(af.left>0)return true;const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);addLog(`🩸 <b>${esc(d?d.name:'')}</b> se termine sur <b>${esc(t.label)}</b>.`);return false;});
-  t.statusEffects=(t.statusEffects||[]).filter(se=>{if(se.turnsLeft==null)return true;se.turnsLeft--;if(se.turnsLeft>0)return true;addLog(`🌀 <b>${esc(se.name)}</b> se termine sur <b>${esc(t.label)}</b>.`);return false;});
+  t.afflictions=(t.afflictions||[]).filter(af=>{if(af.left==null)return true;if(af.skipDec){delete af.skipDec;return true;}af.left--;if(af.left>0)return true;const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);addLog(`🩸 <b>${esc(d?d.name:'')}</b> se termine sur <b>${esc(t.label)}</b>.`);return false;});
+  t.statusEffects=(t.statusEffects||[]).filter(se=>{if(se.turnsLeft==null)return true;if(se.skipDec){delete se.skipDec;return true;}se.turnsLeft--;if(se.turnsLeft>0)return true;addLog(`🌀 <b>${esc(se.name)}</b> se termine sur <b>${esc(t.label)}</b>.`);return false;});
   tickDefModsEnd(t);
   t.statBuffs=(t.statBuffs||[]).filter(b=>{if(b.turnsLeft==null)return true;b.turnsLeft--;if(b.turnsLeft>0)return true;addLog(`🧪 Le bonus de <b>${esc(b.name)}</b> (${esc(b.stat)}) se termine sur <b>${esc(t.label)}</b>.`);return false;});
 }
-function tickDefModsEnd(t){if(!t.defMods||!t.defMods.length)return;t.defMods.forEach(m=>{if(m.turnsLeft!=null)m.turnsLeft--;});const end=t.defMods.filter(m=>m.turnsLeft!=null&&m.turnsLeft<=0);t.defMods=t.defMods.filter(m=>m.turnsLeft==null||m.turnsLeft>0);end.forEach(m=>{const a=S.abilities.find(x=>x.id===m.abilityId);addLog(`🛡 La réduction de défense « ${esc(a?a.name:'')} » se termine sur <b>${esc(t.label)}</b>.`);});}
+function tickDefModsEnd(t){if(!t.defMods||!t.defMods.length)return;t.defMods.forEach(m=>{if(m.skipDec){delete m.skipDec;return;}if(m.turnsLeft!=null)m.turnsLeft--;});const end=t.defMods.filter(m=>m.turnsLeft!=null&&m.turnsLeft<=0);t.defMods=t.defMods.filter(m=>m.turnsLeft==null||m.turnsLeft>0);end.forEach(m=>{const a=S.abilities.find(x=>x.id===m.abilityId);addLog(`🛡 La réduction de défense « ${esc(a?a.name:'')} » se termine sur <b>${esc(t.label)}</b>.`);});}
 function scheduleGapClose(a,cid,tid,lines){
   const ci=inst(cid),ti=inst(tid); if(!ci||!ti)return;
   if(a.projectileImage){
@@ -1430,10 +1431,10 @@ function rollWeaponElems(w,casterInst){
   });
   return out;
 }
-function weaponPhysDamage(wp,mult,statVal,dmgMult,lines){
+function weaponPhysDamage(wp,mult,statVal,dmgMult,lines,mag,el){
   if(!(wp>0))return 0;
   const d=applyMult(Math.ceil(wp*mult*statVal/100),dmgMult);
-  lines.push(`⚔ Physique (arme) : ${d}`);
+  lines.push(mag?`🔮 ${esc(el)} (arme magique) : ${d}`:`⚔ Physique (arme) : ${d}`);
   return d;
 }
 function elemBonusDamage(list,mult,statVal,dmgMult,tTpl,t,lines){
@@ -3067,7 +3068,7 @@ function advanceTurn(){
   while(true){
     if(S.combat.turn>=0)endTurnTick(inst(S.combat.order[S.combat.turn]));
     S.combat.turn=(S.combat.turn+1)%S.combat.order.length;
-    if(S.combat.turn===0)decayPersistentZones(); // tout le monde a joué : un tour complet s'écoule
+    if(S.combat.turn===0)decayPersistentZones(null,true); // zones orphelines (lanceur disparu)
     const nt=inst(S.combat.order[S.combat.turn]);
     if(nt){
       const tpl=instTemplate(nt);
@@ -3077,6 +3078,7 @@ function advanceTurn(){
       triggerAuras(nt);
       tickStatusEffects(nt);
       
+      decayPersistentZones(nt.id);
       tickPersistentZones(nt);
       const res=tickAfflictions(nt);
       nt.movementBlocked=nt.isKO?true:res.blockMove;
@@ -3493,10 +3495,11 @@ function resolveOpportunityAttack(attackerInst,targetInst){
   }
   const rw=rollWithWeapon(oa.formula,weaponUsed,attackerInst);
   let damage=Math.ceil(rw.abTotal*mult*(effStat(attackerTpl,attackerInst,statKey))/100);
-  const wpPart=weaponPhysDamage(rw.wpTotal,mult,effStat(attackerTpl,attackerInst,statKey),'',lines);
+  const wMag=!!weaponUsed&&weaponUsed.weaponStat==='Magie';
+  const wpPart=weaponPhysDamage(rw.wpTotal,mult,effStat(attackerTpl,attackerInst,statKey),'',lines,wMag,oa.element||'Neutre');
   const oe=rollWeaponElems(weaponUsed,attackerInst); oe.log.forEach(l=>lines.push(l));
   const ep=elemBonusDamage(oe.list,mult,effStat(attackerTpl,attackerInst,statKey),'',targetTpl,targetInst,lines);
-  const fin=finalizeDamage([{raw:damage,el:oa.element||'Neutre',pool:isPhys?'CA':'DM'},{raw:wpPart,el:'Physique',pool:'CA'},...ep],targetTpl,targetInst);
+  const fin=finalizeDamage([{raw:damage,el:oa.element||'Neutre',pool:isPhys?'CA':'DM'},(wMag?{raw:wpPart,el:oa.element||'Neutre',pool:'DM'}:{raw:wpPart,el:'Physique',pool:'CA'}),...ep],targetTpl,targetInst);
   damage=fin.total; fin.detail.forEach(l=>lines.push(l));
   const absorbed=Math.min(targetInst.shield||0,damage); targetInst.shield-=absorbed; const hpDamage=damage-absorbed;
   targetInst.hp=Math.max(0,targetInst.hp-hpDamage);
@@ -3697,9 +3700,10 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(isAoE){raw=sharedRoll.abTotal;wpRaw=sharedRoll.wpTotal;elemRoll=sharedElems||{list:[]};}
     else{const rw=rollWithWeapon(a.formula,weaponUsed,casterInst);raw=rw.abTotal;wpRaw=rw.wpTotal;lines.push(rw.logLine);elemRoll=rollWeaponElems(weaponUsed,casterInst);elemRoll.log.forEach(l=>lines.push(l));}
     let damage=applyMult(Math.ceil(raw*mult*(effStat(casterTpl,casterInst,a.stat))/100),a.dmgMult);
-    const wpPart=weaponPhysDamage(wpRaw,mult,effStat(casterTpl,casterInst,a.stat),a.dmgMult,lines);
+    const wMag=!!weaponUsed&&weaponUsed.weaponStat==='Magie';
+    const wpPart=weaponPhysDamage(wpRaw,mult,effStat(casterTpl,casterInst,a.stat),a.dmgMult,lines,wMag,a.element);
     const elemParts=elemBonusDamage(elemRoll.list,mult,effStat(casterTpl,casterInst,a.stat),a.dmgMult,tTpl,t,lines);
-    const fin=finalizeDamage([{raw:damage,el:a.element,pool:a.defense==='CA'?'CA':(a.defense==='DM'?'DM':null)},{raw:wpPart,el:'Physique',pool:'CA'},...elemParts],tTpl,t);
+    const fin=finalizeDamage([{raw:damage,el:a.element,pool:a.defense==='CA'?'CA':(a.defense==='DM'?'DM':null)},(wMag?{raw:wpPart,el:a.element,pool:a.defense==='CA'?'CA':(a.defense==='DM'?'DM':null)}:{raw:wpPart,el:'Physique',pool:'CA'}),...elemParts],tTpl,t);
     damage=fin.total; fin.detail.forEach(l=>lines.push(l));
     const beforeShield=t.shield||0; const absorbed=Math.min(beforeShield,damage);
     t.shield-=absorbed; const hpDamage=damage-absorbed;
@@ -3900,9 +3904,10 @@ function applyPersistentZones(nt,onlyDamage){
     }
   });
 }
-function decayPersistentZones(){
+function decayPersistentZones(cid,wrap){
   if(!S.persistentZones||!S.persistentZones.length)return;
   S.persistentZones=S.persistentZones.filter(z=>{
+    if(!((cid&&z.casterInstId===cid)||(wrap&&!inst(z.casterInstId))))return true;
     z.turnsLeft--;
     if(z.turnsLeft<=0){addLog(`🌫️ <b>${esc(z.name)}</b> se dissipe.`);return false;}
     return true;
