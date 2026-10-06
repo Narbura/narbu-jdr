@@ -1289,14 +1289,27 @@ function targetHasReq(a,t){
   if(a.reqId.startsWith('af:'))return (t.afflictions||[]).some(x=>x.defId===id);
   return (t.statusEffects||[]).some(x=>x.abilityId===id)||(t.defMods||[]).some(m=>m.abilityId===id)||(S.persistentZones||[]).some(z=>z.abilityId===id&&tokenInPersistentZone(t,z));
 }
-function reqPickHtml(cur){
-  const q=(document.getElementById('a_req_search')?.value||'').trim().toLowerCase();
-  const ok=(n,v)=>!q||n.toLowerCase().includes(q)||v===cur;
-  const af=(S.afflictionDefs||[]).filter(d=>ok(d.name,'af:'+d.id)).map(d=>`<option value="af:${esc(d.id)}" ${'af:'+d.id===cur?'selected':''}>${esc(d.name)}</option>`).join('');
-  const ab=S.abilities.filter(x=>(x.type==='Buff'||x.type==='Persistant')&&ok(x.name,'ab:'+x.id)).map(x=>`<option value="ab:${esc(x.id)}" ${'ab:'+x.id===cur?'selected':''}>${esc(x.name)}</option>`).join('');
-  return `<option value="">— Choisir —</option><optgroup label="🩸 Afflictions">${af}</optgroup><optgroup label="✨ Capacités à durée (Buff / Persistant)">${ab}</optgroup>`;
+function reqLabel(v){
+  if(!v)return '— Choisir —';
+  const id=v.slice(3);
+  if(v.startsWith('af:')){const d=(S.afflictionDefs||[]).find(x=>x.id===id);return d?'🩸 '+d.name:'— Choisir —';}
+  const x=S.abilities.find(y=>y.id===id);return x?'✨ '+x.name:'— Choisir —';
 }
-function filterReqPick(){const sel=document.getElementById('a_reqid');if(sel)sel.innerHTML=reqPickHtml(sel.value);}
+function reqListHtml(){
+  const q=(document.getElementById('a_req_search')?.value||'').trim().toLowerCase();
+  const ok=n=>!q||n.toLowerCase().includes(q);
+  const it=(v,l)=>`<div class="asset-item" style="cursor:pointer" onclick="selectReq('${esc(v)}')">${l}</div>`;
+  const af=(S.afflictionDefs||[]).filter(d=>ok(d.name)).map(d=>it('af:'+d.id,'🩸 '+esc(d.name))).join('');
+  const ab=S.abilities.filter(x=>(x.type==='Buff'||x.type==='Persistant')&&ok(x.name)).map(x=>it('ab:'+x.id,'✨ '+esc(x.name))).join('');
+  return it('','— Aucune —')+af+ab;
+}
+function filterReqPick(){const l=document.getElementById('a_req_list');if(l)l.innerHTML=reqListHtml();}
+function toggleReqPanel(){const p=document.getElementById('a_req_panel');if(p)p.style.display=p.style.display==='none'?'block':'none';}
+function selectReq(v){
+  document.getElementById('a_reqid').value=v;
+  document.getElementById('a_reqid_btn').textContent=reqLabel(v)+' ▾';
+  document.getElementById('a_req_panel').style.display='none';
+}
 function defVals(a,key,mult){
   const o=(a.defBy||{})[key]||{};
   if(['caRed','dmRed','caUp','dmUp'].some(k=>o[k]>0))return {ca:(o.caRed||0)-(o.caUp||0),dm:(o.dmRed||0)-(o.dmUp||0)};
@@ -4661,7 +4674,7 @@ function openAbility(id,charId){
   <div class="field full" id="a_gapclose_field" style="display:${a.area==='single'?'':'none'}"><label><input type="checkbox" id="a_gapclose" ${a.gapClose?'checked':''}> 🏃 Rejoindre la cible avec le sort (le lanceur se place devant sa cible par le chemin le plus court, portée max de la capacité)</label></div>
   <div class="field" id="a_zonerange_field" style="display:${((a.area==='line'||a.area==='cone')&&a.type==='Persistant')?'':'none'}"><label>Longueur maximale de la zone (cases)</label><input id="a_zonerange" type="number" min="1" value="${a.zoneRange||a.range||3}"></div>
   <p class="tiny muted full" style="grid-column:1/-1">Ligne droite et Cône suivent librement la souris (pixel par pixel), dans la direction du clic. Cône : s'évase du lanceur (largeur « départ ») jusqu'à la longueur de zone (largeur « arrivée »). Multiplicateur : appliqué au résultat (capacité + arme) avant déduction de la défense et de la résistance élémentaire. Pour un sort « Persistant » ligne/cône : « Portée maximale » = distance max à laquelle poser l'origine de la zone (1er clic). « Longueur maximale de la zone » = longueur max de la ligne/cône lui-même. Au 2e clic (direction), la zone s'étend jusqu'au point cliqué, sans dépasser cette longueur max — tu peux donc la faire plus courte.</p>
-  <div class="field full"><label>⛓ Condition de lancement</label><label class="ability-char-item"><input type="checkbox" id="a_reqon" ${a.reqOn?'checked':''}> <span>Ne peut être lancée que si l'affliction ou la capacité choisie est active sur la cible</span></label><input id="a_req_search" placeholder="🔎 Rechercher une affliction / capacité…" oninput="filterReqPick()" style="margin:6px 0"><select id="a_reqid" size="5">${reqPickHtml(a.reqId||'')}</select></div>
+  <div class="field full"><label>⛓ Condition de lancement</label><label class="ability-char-item"><input type="checkbox" id="a_reqon" ${a.reqOn?'checked':''}> <span>Ne peut être lancée que si l'affliction ou la capacité choisie est active sur la cible</span></label><input type="hidden" id="a_reqid" value="${esc(a.reqId||'')}"><button type="button" class="btn" id="a_reqid_btn" style="text-align:left;margin-top:6px" onclick="toggleReqPanel()">${esc(reqLabel(a.reqId))} ▾</button><div id="a_req_panel" style="display:none;border:1px solid #3a3e48;border-radius:8px;padding:6px;margin-top:4px"><input id="a_req_search" placeholder="🔎 Rechercher une affliction / capacité…" oninput="filterReqPick()"><div id="a_req_list" style="max-height:180px;overflow:auto;margin-top:6px">${reqListHtml()}</div></div></div>
   <div class="field full"><label>💥 Malus en cas d'échec critique / ultime (vide = aucun ; ex : 20%, 250, 2d20+10)</label>${[['fc','Échec critique'],['fu','Échec ultime']].map(([k,l])=>{const pp=(a.failPen||{})[k]||{};return `<div class="row" style="gap:6px;margin-top:4px;flex-wrap:wrap"><b style="width:110px">${l}</b><input id="a_fp_${k}_mana" placeholder="Perte de mana" value="${esc(pp.mana||'')}" style="width:130px"><input id="a_fp_${k}_hp" placeholder="Perte de PV" value="${esc(pp.hp||'')}" style="width:130px"><input id="a_fp_${k}_ally" placeholder="Dégâts allié proche" value="${esc(pp.ally||'')}" style="width:150px"></div>`;}).join('')}<p class="tiny muted">Les PV perdus et les dégâts à l'allié le plus proche de l'ennemi visé tiennent compte de la défense ciblée par le sort (CA ou DM). % = pourcentage du maximum.</p></div>
   <div class="field full"><label>Description</label>${richEditorHtml('a_desc',a.desc||'')}</div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
