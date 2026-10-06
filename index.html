@@ -1256,6 +1256,7 @@ function objetCount(c,a){if(!a||!a.itemEqId)return 0;return ((c&&c.bag)||[]).fil
 function consumeObjet(ci,a){const c=instTemplate(ci);if(!c)return;const st=(c.bag||[]).find(b=>b.eqId===a.itemEqId&&(b.qty||1)>0);if(!st)return;st.qty=(st.qty||1)-1;if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);const e=equip(a.itemEqId);addLog(`🎒 <b>${esc(ci.label)}</b> utilise <b>${esc(e?e.name:'un objet')}</b> (reste ${objetCount(c,a)}).`);}
 function buffHasDmg(a){const f=String(a.formula||'').trim();return f!==''&&f!=='0';}
 function selfNow(ci,t){return !!(S.combat.active&&ci&&t&&ci.id===t.id&&S.combat.order[S.combat.turn]===t.id);}
+function maxDur(o,n){return (o==null||n==null)?null:Math.max(o,n);}
 function addDur(o,n){return (o==null||n==null)?null:o+n;}
 let _deg=null;
 function buffDur(a,mult){const k=_deg?degKey(_deg):(mult>=4?'ult':mult>=2?'cri':mult>=1.5?'gra':mult>=1?'rea':'leg');const v=a.durBy&&a.durBy[k];if(v>0)return v;return a.duration>0?a.duration:null;}
@@ -1264,7 +1265,7 @@ function applyObjetAffliction(a,t,mult,ci,lines){
   const def=(S.afflictionDefs||[]).find(d=>d.id===a.objAffId); if(!def)return;
   t.afflictions=t.afflictions||[];
   const nd=a.objAffTurns>0?a.objAffTurns:null, ex=t.afflictions.find(x=>x.defId===def.id);
-  if(ex){ex.left=addDur(ex.left,nd);ex.src=ci?ci.id:ex.src;if(selfNow(ci,t))ex.skipDec=true;}
+  if(ex){ex.left=maxDur(ex.left,nd);ex.src=ci?ci.id:ex.src;if(selfNow(ci,t))ex.skipDec=true;}
   else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t),skipDec:selfNow(ci,t)||undefined});
   lines.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${a.objAffTurns>0?a.objAffTurns+' tour(s)':"jusqu'au retrait"})`);
 }
@@ -1298,9 +1299,9 @@ function defVals(a,key,mult){
 function affApplies(a,key,mult){return Array.isArray(a.buffAffDeg)?a.buffAffDeg.includes(key):mult>0;}
 function applyBuffExtras(a,t,mult,ci,label){
   const key=degKey(label), out=[];
-  if(a.buffAfflictionId&&affApplies(a,key,mult)){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=t.afflictions||[];{const nd=buffDur(a,mult),ex=t.afflictions.find(x=>x.defId===def.id);if(ex){ex.left=addDur(ex.left,nd);ex.src=ci?ci.id:ex.src;if(selfNow(ci,t))ex.skipDec=true;}else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t),skipDec:selfNow(ci,t)||undefined});}out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${buffDur(a,mult)??'∞'} tour(s))`);}}
+  if(a.buffAfflictionId&&affApplies(a,key,mult)){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=t.afflictions||[];{const nd=buffDur(a,mult),ex=t.afflictions.find(x=>x.defId===def.id);if(ex){ex.left=maxDur(ex.left,nd);ex.src=ci?ci.id:ex.src;if(selfNow(ci,t))ex.skipDec=true;}else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t),skipDec:selfNow(ci,t)||undefined});}out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${buffDur(a,mult)??'∞'} tour(s))`);}}
   const dv=defVals(a,key,mult);
-  if(dv.ca||dv.dm){t.defMods=t.defMods||[];{const nd=buffDur(a,mult),ex=t.defMods.find(m=>m.abilityId===a.id);if(ex){ex.turnsLeft=addDur(ex.turnsLeft,nd);ex.ca=dv.ca;ex.dm=dv.dm;if(selfNow(ci,t))ex.skipDec=true;}else t.defMods.push({abilityId:a.id,ca:dv.ca,dm:dv.dm,turnsLeft:nd,skipDec:selfNow(ci,t)||undefined});}
+  if(dv.ca||dv.dm){t.defMods=t.defMods||[];{const nd=buffDur(a,mult),ex=t.defMods.find(m=>m.abilityId===a.id);if(ex){ex.turnsLeft=maxDur(ex.turnsLeft,nd);ex.ca=dv.ca;ex.dm=dv.dm;if(selfNow(ci,t))ex.skipDec=true;}else t.defMods.push({abilityId:a.id,ca:dv.ca,dm:dv.dm,turnsLeft:nd,skipDec:selfNow(ci,t)||undefined});}
     const f=(n,l)=>n?`${l} ${n>0?'−':'+'}${Math.abs(n)} `:'';
     out.push(`🛡 <b>${esc(t.label)}</b> : ${f(dv.ca,'CA')}${f(dv.dm,'DM')}(${buffDur(a,mult)??'∞'} tour(s))`);}
   if(out.length)addLog(out.join('<br>'));
@@ -1311,9 +1312,9 @@ function applyBuffStatus(a,t,mult,ci,ctpl){
   t.statusEffects=(t.statusEffects||[]).filter(x=>x.abilityId!==a.id);
   const dmg=buffHasDmg(a);
   const se={abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:dmg?a.formula:'0',stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:effStat(ctpl,ci,a.stat),mult,turnsLeft:buffDur(a,mult),marker:!dmg};
+  if(prev)se.turnsLeft=maxDur(prev.turnsLeft,se.turnsLeft);
   if(dmg)se.fresh=selfNow(ci,t);
   if(selfNow(ci,t))se.skipDec=true;
-  if(prev)se.turnsLeft=addDur(prev.turnsLeft,se.turnsLeft);
   t.statusEffects.push(se);
 }
 /* Malus d'échec critique / ultime (tout type de capacité) */
