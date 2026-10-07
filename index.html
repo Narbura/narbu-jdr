@@ -3662,6 +3662,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   const advRows=[],advSum=[];
   const lines=[`⚔ <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b>`];
   if(a.desc)lines.push(a.desc);
+  lines.push(...degDesc(a,label));
   if(a.manaCost>0)lines.push(`💧 Coût en mana : ${a.manaCost} (reste ${casterInst.mana}/${casterInst.manaMax})`);
   lines.push(`🎲 ${esc(atkExpr)} : <b>${atk}</b> → ${label}`);
 
@@ -3791,7 +3792,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   _deg=label;{const pl=applyFailPenalty(a,casterInst,label,[t],targetInstId);if(pl.length)addLog(pl.join('<br>'));}
   applyBuffExtras(a,t,mult,casterInst,label);applyBuffStatus(a,t,mult,casterInst,casterTpl);
   playAbilityFX(a,casterInst,[t],[t.x,t.y]);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:[t.id],start:[t.x,t.y]}});
-  addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${buffDur(a,mult)??'∞'} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(a.desc?[a.desc]:[])].join('<br>'));
+  addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${buffDur(a,mult)??'∞'} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(a.desc?[a.desc]:[]),...degDesc(a,label)].join('<br>'));
   activeAbility=null; hoverCell=null;
   afterCast(a,casterInst);
   saveState(); render();
@@ -3819,6 +3820,7 @@ function resolveBuffZone(a,casterInst,start){
   playAbilityFX(a,casterInst,targets,start);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:targets.map(x=>x.id),start}});
   const lines=[`🌀 <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b> en zone (🎲 ${esc(atkExpr)} : ${atk} → ${label})`];
   if(a.desc)lines.push(a.desc);
+  lines.push(...degDesc(a,label));
   if(!targets.length){
     lines.push('<span class="muted">Aucune cible valide dans la zone.</span>');
   }else{
@@ -4605,11 +4607,16 @@ function abilityResultsHtml(){
     return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine} · Niv. ${a.level||1}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button><button class="btn ghost" onclick="duplicateAbility('${a.id}')" title="Dupliquer">📋</button><button class="btn ghost" onclick="deleteAbility('${a.id}')" title="Supprimer">🗑️</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
   }).join('');
 }
+let _descDraft={},_descCur='none';
+function commitDesc(){if(document.getElementById('a_desc'))_descDraft[_descCur]=rteHtml('a_desc');}
+function switchDescDegree(k){commitDesc();_descCur=k;const e=document.getElementById('a_desc');if(e)e.innerHTML=_descDraft[k]||'';}
+function degDesc(a,label){const d=(a.descBy||{})[degKey(label)];return d?[d]:[];}
 function openAbility(id,charId){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les capacités.');return;}
   const a=id?(charId?abOf(id,charId):S.abilities.find(x=>x.id===id)):{id:'a'+Date.now(),name:'Nouvelle capacité',icon:'✨',iconImage:null,type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'single',areaSize:1,range:6,manaCost:0,desc:'',effect:'✨',transformCharId:null,triggerOnDeath:false,hotkey:null};
   const isTransfo=a.type==='Transformation';
   const isSkill=a.type==='Compétence';
+  _descDraft={none:a.desc||'',...(a.descBy||{})};_descCur='none';
   const typeOpts=ABILITY_TYPES.map(v=>opt(v,v,a.type)).join('');
   const transformCharOpts=`<option value="">— Choisir un personnage —</option>`+S.characters.map(c=>`<option value="${esc(c.id)}" ${a.transformCharId===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
   const elementOpts=['Feu','Eau','Terre','Air','Glace','Foudre','Lumière','Ténèbres','Poison','Neutre','Soin','Bouclier','Physique','Récupération'].map(v=>opt(v,v,a.element)).join('');
@@ -4676,7 +4683,7 @@ function openAbility(id,charId){
   <p class="tiny muted full" style="grid-column:1/-1">Ligne droite et Cône suivent librement la souris (pixel par pixel), dans la direction du clic. Cône : s'évase du lanceur (largeur « départ ») jusqu'à la longueur de zone (largeur « arrivée »). Multiplicateur : appliqué au résultat (capacité + arme) avant déduction de la défense et de la résistance élémentaire. Pour un sort « Persistant » ligne/cône : « Portée maximale » = distance max à laquelle poser l'origine de la zone (1er clic). « Longueur maximale de la zone » = longueur max de la ligne/cône lui-même. Au 2e clic (direction), la zone s'étend jusqu'au point cliqué, sans dépasser cette longueur max — tu peux donc la faire plus courte.</p>
   <div class="field full"><label>⛓ Condition de lancement</label><label class="ability-char-item"><input type="checkbox" id="a_reqon" ${a.reqOn?'checked':''}> <span>Ne peut être lancée que si l'affliction ou la capacité choisie est active sur la cible</span></label><input type="hidden" id="a_reqid" value="${esc(a.reqId||'')}"><button type="button" class="btn" id="a_reqid_btn" style="text-align:left;margin-top:6px" onclick="toggleReqPanel()">${esc(reqLabel(a.reqId))} ▾</button><div id="a_req_panel" style="display:none;border:1px solid #3a3e48;border-radius:8px;padding:6px;margin-top:4px"><input id="a_req_search" placeholder="🔎 Rechercher une affliction / capacité…" oninput="filterReqPick()"><div id="a_req_list" style="max-height:180px;overflow:auto;margin-top:6px">${reqListHtml()}</div></div></div>
   <div class="field full"><label>💥 Malus en cas d'échec critique / ultime (vide = aucun ; ex : 20%, 250, 2d20+10)</label>${[['fc','Échec critique'],['fu','Échec ultime']].map(([k,l])=>{const pp=(a.failPen||{})[k]||{};return `<div class="row" style="gap:6px;margin-top:4px;flex-wrap:wrap"><b style="width:110px">${l}</b><input id="a_fp_${k}_mana" placeholder="Perte de mana" value="${esc(pp.mana||'')}" style="width:130px"><input id="a_fp_${k}_hp" placeholder="Perte de PV" value="${esc(pp.hp||'')}" style="width:130px"><input id="a_fp_${k}_ally" placeholder="Dégâts allié proche" value="${esc(pp.ally||'')}" style="width:150px"></div>`;}).join('')}<p class="tiny muted">Les PV perdus et les dégâts à l'allié le plus proche de l'ennemi visé tiennent compte de la défense ciblée par le sort (CA ou DM). % = pourcentage du maximum.</p></div>
-  <div class="field full"><label>Description</label>${richEditorHtml('a_desc',a.desc||'')}</div>
+  <div class="field full"><label>Description affichée selon le résultat du dé</label><select id="a_desc_sel" onchange="switchDescDegree(this.value)" style="margin-bottom:6px"><option value="none">Aucun (toujours affichée)</option>${DEGREES.map(([k,l])=>`<option value="${k}">${l}</option>`).join('')}</select>${richEditorHtml('a_desc',a.desc||'')}<p class="tiny muted">« Aucun » s'affiche quel que soit le résultat ; les autres s'affichent en plus, seulement pour le degré correspondant.</p></div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
   <div class="field full"><label><input type="checkbox" id="a_impactpertoken" ${a.impactPerToken?'checked':''}> 💥 Animation d'impact séparée par cible touchée (sinon un seul impact sur toute la zone)</label></div>
   <div class="field full" id="a_zoneimage_field" style="display:${(a.area==='single'||a.area==='me'||(a.area==='self'&&a.type!=='Persistant'))?'none':''}">
@@ -4845,7 +4852,7 @@ function saveAbility(id,charId){
     target.coneEnd=Math.max(1,+document.getElementById('a_coneend').value||3);
     target.range=Math.max(0,+document.getElementById('a_range').value||0);
     target.zoneRange=Math.max(1,+document.getElementById('a_zonerange').value||target.range||3);
-    target.desc=rteHtml('a_desc');
+    commitDesc();target.desc=_descDraft.none||'';target.descBy={};DEGREES.forEach(([k])=>{const v=_descDraft[k];if(v&&v.replace(/<[^>]*>|&nbsp;/g,'').trim())target.descBy[k]=v;});
     target.effect=document.getElementById('a_effect').value||'✨';
     target.impactPerToken=document.getElementById('a_impactpertoken')?.checked||false;
     target.zoneImage=document.getElementById('a_zoneimage').value.trim()||null;
