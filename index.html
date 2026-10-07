@@ -175,7 +175,7 @@ body.nav-collapsed .sidebar .nav{display:none!important}
 .log .adv-entry .adv-head{padding:5px 6px}
 .log .adv-entry .adv-row{padding:3px 8px}
 .log .adv-entry .adv-sum{padding:5px 8px;margin:4px 0 0;border-bottom:1px solid #222}
-.log .rte-desc{display:block}
+.log .rte-desc{display:inline}
 .log .rte-desc div,.log .rte-desc p{padding:0;margin:0;border-bottom:0}
 </style>
 </head>
@@ -4612,7 +4612,15 @@ function abilityResultsHtml(){
 let _descDraft={},_descCur='none';
 function commitDesc(){if(document.getElementById('a_desc'))_descDraft[_descCur]=rteHtml('a_desc');}
 function switchDescDegree(k){commitDesc();_descCur=k;const e=document.getElementById('a_desc');if(e)e.innerHTML=_descDraft[k]||'';}
-function descHtml(h){h=String(h||'').replace(/^(\s|<br\s*\/?>|<div>\s*(<br\s*\/?>)?\s*<\/div>|<p>\s*(<br\s*\/?>)?\s*<\/p>)+/i,'').replace(/(\s|<br\s*\/?>|<div>\s*(<br\s*\/?>)?\s*<\/div>|<p>\s*(<br\s*\/?>)?\s*<\/p>)+$/i,'');return h?'<span class="rte-desc">'+h+'</span>':'';}
+function descHtml(h){
+  h=String(h||'');
+  if(!/<table/i.test(h))h=h.replace(/<\/(div|p)>/gi,'<br>').replace(/<(div|p)(\s[^>]*)?>/gi,'');
+  const E='(?:\\s|&nbsp;|<br\\s*\\/?>)', T='(?:span|font|b|i|u)';
+  for(let k=0;k<3;k++)h=h.replace(new RegExp('<'+T+'[^>]*>'+E+'*<\\/'+T+'>','gi'),'');
+  h=h.replace(new RegExp('^((?:<'+T+'[^>]*>)*)'+E+'+','i'),'$1').replace(new RegExp(E+'+((?:<\\/'+T+'>)*)$','i'),'$1');
+  h=h.replace(new RegExp('^'+E+'+','i'),'').replace(new RegExp(E+'+$','i'),'');
+  return h?'<span class="rte-desc">'+h+'</span>':'';
+}
 function degDesc(a,label){const d=descHtml((a.descBy||{})[degKey(label)]);return d?[d]:[];}
 function openAbility(id,charId){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les capacités.');return;}
