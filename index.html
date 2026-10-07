@@ -175,6 +175,8 @@ body.nav-collapsed .sidebar .nav{display:none!important}
 .log .adv-entry .adv-head{padding:5px 6px}
 .log .adv-entry .adv-row{padding:3px 8px}
 .log .adv-entry .adv-sum{padding:5px 8px;margin:4px 0 0;border-bottom:1px solid #222}
+.log .rte-desc{display:block}
+.log .rte-desc div,.log .rte-desc p{padding:0;margin:0;border-bottom:0}
 </style>
 </head>
 <body>
@@ -3661,7 +3663,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   const cl=[];
   const advRows=[],advSum=[];
   const lines=[`⚔ <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b>`];
-  if(a.desc)lines.push(a.desc);
+  if(a.desc)lines.push(descHtml(a.desc));
   lines.push(...degDesc(a,label));
   if(a.manaCost>0)lines.push(`💧 Coût en mana : ${a.manaCost} (reste ${casterInst.mana}/${casterInst.manaMax})`);
   lines.push(`🎲 ${esc(atkExpr)} : <b>${atk}</b> → ${label}`);
@@ -3792,7 +3794,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   _deg=label;{const pl=applyFailPenalty(a,casterInst,label,[t],targetInstId);if(pl.length)addLog(pl.join('<br>'));}
   applyBuffExtras(a,t,mult,casterInst,label);applyBuffStatus(a,t,mult,casterInst,casterTpl);
   playAbilityFX(a,casterInst,[t],[t.x,t.y]);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:[t.id],start:[t.x,t.y]}});
-  addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${buffDur(a,mult)??'∞'} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(a.desc?[a.desc]:[]),...degDesc(a,label)].join('<br>'));
+  addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${buffDur(a,mult)??'∞'} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(a.desc?[descHtml(a.desc)]:[]),...degDesc(a,label)].join('<br>'));
   activeAbility=null; hoverCell=null;
   afterCast(a,casterInst);
   saveState(); render();
@@ -3819,7 +3821,7 @@ function resolveBuffZone(a,casterInst,start){
   const targets=affected(a,start).filter(t=>targetHasReq(a,t));_deg=label;{const pl=applyFailPenalty(a,casterInst,label,targets);if(pl.length)addLog(pl.join('<br>'));}
   playAbilityFX(a,casterInst,targets,start);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:targets.map(x=>x.id),start}});
   const lines=[`🌀 <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b> en zone (🎲 ${esc(atkExpr)} : ${atk} → ${label})`];
-  if(a.desc)lines.push(a.desc);
+  if(a.desc)lines.push(descHtml(a.desc));
   lines.push(...degDesc(a,label));
   if(!targets.length){
     lines.push('<span class="muted">Aucune cible valide dans la zone.</span>');
@@ -3875,7 +3877,7 @@ function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride
     zone.y=Math.max(0,Math.min(S.map.rows-size,start[1]));
   }
   S.persistentZones.push(zone);
-  addLog([`🌫️ <b>${esc(casterInst.label)}</b> invoque <b>${esc(a.name)}</b> (zone persistante, ${zone.turnsLeft} tour(s)).`,...(a.desc?[a.desc]:[])].join('<br>'));
+  addLog([`🌫️ <b>${esc(casterInst.label)}</b> invoque <b>${esc(a.name)}</b> (zone persistante, ${zone.turnsLeft} tour(s)).`,...(a.desc?[descHtml(a.desc)]:[])].join('<br>'));
   activeAbility=null; hoverCell=null;
   afterCast(a,casterInst);
   saveState(); render();
@@ -4610,7 +4612,8 @@ function abilityResultsHtml(){
 let _descDraft={},_descCur='none';
 function commitDesc(){if(document.getElementById('a_desc'))_descDraft[_descCur]=rteHtml('a_desc');}
 function switchDescDegree(k){commitDesc();_descCur=k;const e=document.getElementById('a_desc');if(e)e.innerHTML=_descDraft[k]||'';}
-function degDesc(a,label){const d=(a.descBy||{})[degKey(label)];return d?[d]:[];}
+function descHtml(h){h=String(h||'').replace(/^(\s|<br\s*\/?>|<div>\s*(<br\s*\/?>)?\s*<\/div>|<p>\s*(<br\s*\/?>)?\s*<\/p>)+/i,'').replace(/(\s|<br\s*\/?>|<div>\s*(<br\s*\/?>)?\s*<\/div>|<p>\s*(<br\s*\/?>)?\s*<\/p>)+$/i,'');return h?'<span class="rte-desc">'+h+'</span>':'';}
+function degDesc(a,label){const d=descHtml((a.descBy||{})[degKey(label)]);return d?[d]:[];}
 function openAbility(id,charId){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les capacités.');return;}
   const a=id?(charId?abOf(id,charId):S.abilities.find(x=>x.id===id)):{id:'a'+Date.now(),name:'Nouvelle capacité',icon:'✨',iconImage:null,type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'single',areaSize:1,range:6,manaCost:0,desc:'',effect:'✨',transformCharId:null,triggerOnDeath:false,hotkey:null};
