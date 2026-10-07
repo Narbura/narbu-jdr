@@ -337,6 +337,7 @@ function normalizeState(){
   if(!S.combat)S.combat=structuredClone(DEFAULT.combat);
   if(S.freeMovement===undefined)S.freeMovement=false;
   if(S.friendlyFire===undefined)S.friendlyFire=false;
+  if(S.multiToken===undefined)S.multiToken=false;
   if(!S.characters)S.characters=[];
   if(!S.abilities)S.abilities=[];
   if(!S.consumables)S.consumables=[];
@@ -551,7 +552,7 @@ async function loadProfiles(){
 }
 /* ============================= SYNCHRONISATION SUPABASE (6 tables, écritures ciblées) ============================= */
 const SID='main';
-const SETTINGS_KEYS=['freeMovement','friendlyFire','hudEnabled','hudSettings','diceSettings','levelUpSettings','statTestIcons','characterCategories','noteCategories','notesReveal','shopOffer','charReveal','rowsMigrated'];
+const SETTINGS_KEYS=['freeMovement','friendlyFire','hudEnabled','hudSettings','diceSettings','levelUpSettings','statTestIcons','characterCategories','noteCategories','notesReveal','shopOffer','charReveal','rowsMigrated','multiToken'];
 const COL_SPECS=[
   {k:'combat',t:'game_sessions',pk:'id',c:'combat_state',get:()=>S.combat,set:v=>{S.combat=v;}},
   {k:'settings',t:'game_sessions',pk:'id',c:'settings',get:()=>{const o={};SETTINGS_KEYS.forEach(k=>{o[k]=S[k]===undefined?null:S[k];});return o;},set:v=>{SETTINGS_KEYS.forEach(k=>{if(v[k]!==null&&v[k]!==undefined)S[k]=v[k];});}},
@@ -651,7 +652,7 @@ function saveLocal(now){
   const go=()=>{localSaveTimer=null;try{localStorage.setItem('arcanum-vtt', JSON.stringify(S));}catch(e){}};
   if(now)go(); else localSaveTimer=setTimeout(go,3000);
 }
-function pushUndoCheckpoint(){
+function pushUndoCheckpoint(){if(_grp)return;
   try{ undoStack.push(JSON.stringify(S)); if(undoStack.length>5)undoStack.shift(); }catch(e){}
 }
 async function undoLast(){
@@ -1690,7 +1691,7 @@ function outcome(d){
   if(d>=75)return ['Légère réussite',.5]; if(d>=50)return ['Légère réussite',.75]; if(d>=25)return ['Réussite',1];
   if(d>=5)return ['Grande réussite',1.5]; if(d>=2)return ['Réussite critique',2]; return ['Réussite ultime',4];
 }
-function addLog(html,compact,adv){let st=compact===true?html+'<!--CC-->':(compact?html+'<!--C-->'+compact:html);if(adv)st+='<!--A-->'+adv;S.chat.push(st);if(S.chat.length>120)S.chat.shift();queueChat(st);}
+function addLog(html,compact,adv){if(_grp)return;let st=compact===true?html+'<!--CC-->':(compact?html+'<!--C-->'+compact:html);if(adv)st+='<!--A-->'+adv;S.chat.push(st);if(S.chat.length>120)S.chat.shift();queueChat(st);}
 function chatMode(){const m=localStorage.getItem('narbudr-chat-mode');if(m)return m;return localStorage.getItem('narbudr-chat-compact')==='1'?'simple':'detail';}
 function chatCompact(){return chatMode()==='simple';}
 function toggleChatCompact(){const m=chatMode();localStorage.setItem('narbudr-chat-mode',m==='detail'?'simple':m==='simple'?'advanced':'detail');render();}
@@ -1702,7 +1703,7 @@ function advCardHtml(ci,a,label,rows,sums){
   return `<div class="adv-title">${tokOf(ci,40)} lance ${esc(a.name)}</div><div class="adv-card"><div class="adv-head"><b>${esc(a.name)}</b><small>${esc(label)} ♦ ${esc(a.type)}</small></div>${r}</div>`+sums.map(x=>`<div class="adv-sum ${x.ok?'ok':''}">${x.txt}</div>`).join('');
 }
 function chatEntriesHtml(){const md=chatMode();const out=[];S.chat.slice().reverse().forEach(e=>{let s=String(e),adv=null;const ai=s.indexOf('<!--A-->');if(ai>=0){adv=s.slice(ai+8);s=s.slice(0,ai);}let v;if(md==='advanced'&&adv)v=adv;else if(s.includes('<!--CC-->'))v=s.replace('<!--CC-->','');else if(s.includes('<!--C-->')){const q=s.split('<!--C-->');v=md==='simple'?q[1]:q[0];}else v=md==='simple'?null:s;if(v)out.push((md==='advanced'&&adv)?'<div class="adv-entry">'+v+'</div>':'<div>'+v+'</div>');});return out.join('')||'<p class="muted tiny">Aucun événement pour l’instant.</p>';}
-const TB_ITEMS=[['fullscreen','⛶ Plein écran',false],['grid','▦ Grille',false],['hud','🎯 HUD',true],['ff','⚔ Tir allié',true],['free','🎯 Placement libre',true],['combat','⚔ Boutons de combat',false],['chat','💬 Chat',false]];
+const TB_ITEMS=[['fullscreen','⛶ Plein écran',false],['grid','▦ Grille',false],['hud','🎯 HUD',true],['ff','⚔ Tir allié',true],['free','🎯 Placement libre',true],['mk','🧩 MK',true],['combat','⚔ Boutons de combat',false],['chat','💬 Chat',false]];
 function tbHidden(){try{return JSON.parse(localStorage.getItem('narbudr-tb-hidden')||'[]');}catch(e){return [];}}
 function tbShow(k){return !tbHidden().includes(k);}
 function tbAnyVisible(){return TB_ITEMS.filter(i=>!i[2]||isMJ()).some(i=>tbShow(i[0]));}
@@ -1748,14 +1749,24 @@ function saveUiPrefsToProfile(){
     catch(e){ console.error('saveUiPrefsToProfile',e); }
   },800);
 }
-function charHotbar(charId){
-  const cfg=getHotbarConfig();
-  if(!cfg[charId])cfg[charId]={bars:Array.from({length:9},()=>Array(9).fill(null)),activeBar:0};
-  if(!cfg[charId].bars)cfg[charId].bars=Array.from({length:9},()=>Array(9).fill(null));
-  if(cfg[charId].activeBar===undefined)cfg[charId].activeBar=0;
-  return cfg[charId];
+const AUTO_TYPE_ORDER=['Attaque','Sort','Soin','Bouclier','Buff','Persistant','Passif','Objet'];
+function autoBars(charId){
+  const c=char(charId), ids=[]; if(!c)return Array.from({length:9},()=>Array(9).fill(null));
+  const abs=characterAbilities(charId);
+  AUTO_TYPE_ORDER.forEach(t=>abs.filter(a=>a.type===t).forEach(a=>ids.push(a.id)));
+  consumableStacks(c).forEach(b=>{if(!ids.includes(b.eqId))ids.push(b.eqId);});
+  ['Transformation','Compétence'].forEach(t=>abs.filter(a=>a.type===t).forEach(a=>ids.push(a.id)));
+  if(c.type==='player')STAT_TESTS.forEach(st=>ids.push('stat_'+st));
+  const list=ids.slice(0,81);
+  return Array.from({length:9},(_,i)=>Array.from({length:9},(_,j)=>list[i*9+j]||null));
 }
-function saveCharHotbar(charId,data){const cfg=getHotbarConfig();cfg[charId]=data;setHotbarConfigAll(cfg);}
+function charHotbar(charId){
+  const st=getHotbarConfig()[charId]||{};
+  if(st.custom&&Array.isArray(st.bars))return {bars:st.bars,activeBar:st.activeBar||0,custom:true};
+  return {bars:autoBars(charId),activeBar:st.activeBar||0,custom:false};
+}
+function saveCharHotbar(charId,data){const cfg=getHotbarConfig();cfg[charId]={custom:!!data.custom,activeBar:data.activeBar||0,bars:data.custom?data.bars:undefined};setHotbarConfigAll(cfg);}
+function hotbarResetAuto(){const cfg=getHotbarConfig();cfg[hotbarEditChar]={custom:false,activeBar:0};setHotbarConfigAll(cfg);render();}
 function hotbarIconOnly(){return localStorage.getItem('narbudr-hotbar-icononly')==='1';}
 function setHotbarIconOnly(v){localStorage.setItem('narbudr-hotbar-icononly',v?'1':'0');}
 function hotbarItemLookup(charId,itemId){
@@ -2072,7 +2083,7 @@ function tablePage(){
       ${isMJ()&&tbShow('hud')?`<button class="btn ${S.hudEnabled?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleHudEnabled()" ${uiCtx('ui_hud')} title="${isMJ()?'Activer/désactiver le HUD flottant (dégâts/soins) et les pop-ups de critiques':'Seul le MJ peut activer cette option'}">${hkTag('ui_hud')}🎯 HUD${S.hudEnabled?' : ON':''}</button>`:''}
       ${isMJ()&&tbShow('ff')?`<button class="btn ${S.friendlyFire?'primary':''}" ${isMJ()?'':'disabled'} onclick="toggleFriendlyFire()" ${uiCtx('ui_ff')} title="${isMJ()?'Autoriser/interdire les attaques entre alliés (joueurs entre eux, monstres entre eux)':'Seul le MJ peut activer cette option'}">${hkTag('ui_ff')}⚔ Tir allié${S.friendlyFire?' : ON':''}</button>`:''}
       ${isMJ()&&tbShow('free')?`<button class="btn ${S.freeMovement?'primary':''}" ${(isMJ()&&!S.combat.active)?'':'disabled'} onclick="toggleFreeMovement()" ${uiCtx('ui_free')} title="${S.combat.active?'Indisponible pendant le combat — les tokens sont alignés sur la grille':(isMJ()?'Activer/désactiver le placement libre des tokens (hors combat)':'Seul le MJ peut activer cette option')}">${hkTag('ui_free')}🎯 Placement libre${S.freeMovement?' : ON':''}</button>`:''}
-      ${tbShow('combat')?combatControls:''}${tbShow('chat')?`<button class="btn ${chatMode()!=='detail'?'primary':''}" onclick="toggleChatCompact()" title="Changer de mode de chat : Détaillé / Simple / Avancé">💬 Chat : ${chatModeLabel()}</button>`:''}`}${tbAnyVisible()?`<button class="btn ghost fs-hide" style="margin-left:auto;flex-shrink:0" onclick="toggleToolbar()" title="${toolbarHidden?'Afficher':'Masquer'} les options">${toolbarHidden?'▼':'▶'}</button>`:''}
+      ${isMJ()&&tbShow('mk')?`<button class="btn ${S.multiToken?'primary':''}" onclick="toggleMultiToken()" ${uiCtx('ui_mk')} title="MK : déposer plusieurs tokens d'un coup">${hkTag('ui_mk')}🧩 MK${S.multiToken?' : ON':''}</button>`:''}${tbShow('combat')?combatControls:''}${tbShow('chat')?`<button class="btn ${chatMode()!=='detail'?'primary':''}" onclick="toggleChatCompact()" title="Changer de mode de chat : Détaillé / Simple / Avancé">💬 Chat : ${chatModeLabel()}</button>`:''}`}${tbAnyVisible()?`<button class="btn ghost fs-hide" style="margin-left:auto;flex-shrink:0" onclick="toggleToolbar()" title="${toolbarHidden?'Afficher':'Masquer'} les options">${toolbarHidden?'▼':'▶'}</button>`:''}
     </div>
     <div class="map-wrap" id="mapWrap">
       <div class="map-drop-hint" id="mapDropHint">➕ Déposer sur la carte</div>
@@ -2081,6 +2092,7 @@ function tablePage(){
     </div>
     <div class="bottom-abilities ${bottomHidden?'is-hidden':''}">${bottomHidden?'':(()=>{
       const selInst=selectedToken?inst(selectedToken):null;
+      if(!selInst&&isMJ()&&!S.combat.active&&multiSel.length>1)return groupAbilitiesHtml();
       if(!selInst)return '<span class="tiny muted">Sélectionne un personnage sur la carte pour voir ses capacités.</span>';
       let abilitiesHtml='';
       if(selInst.isKO){
@@ -3171,23 +3183,10 @@ function setupMapInteractions(){
     }
 
     // Cas 3 : personnage / monstre glissé depuis la bibliothèque
-    const charId=data; const tpl=char(charId); if(!tpl)return;
+    const charId=data; if(!char(charId))return;
     const pt=mapPoint(e.clientX,e.clientY);
-    const free=findFreeCell(pt[0],pt[1]);
-    if(!free){toast('🚫 Plus aucune case libre sur la carte.');return;}
-    const created=spawnInstance(charId,free[0],free[1]);
-    if(created){
-      selectedToken=created.id;
-      addLog(`➕ ${esc(created.label)} apparaît sur la carte.`);
-      if(free[0]!==pt[0]||free[1]!==pt[1])toast(`⚠️ Case occupée — ${created.label} placé sur la case libre la plus proche.`);
-      if(S.combat.active){
-        const initVal=roll('1d20').total+(tpl?.stats?.Vitesse||0);
-        S.combat.order.push(created.id);
-        S.combat.initiatives[created.id]=initVal;
-        addLog(`⚔ ${esc(created.label)} rejoint le combat en dernière position (initiative ${initVal}).`);
-      }
-    }
-    saveState(); render();
+    if(S.multiToken){askPrompt('Nombre de tokens à déposer',[{label:'Nombre',value:'1'}],v=>{dropChars(charId,pt,Math.max(1,Math.min(50,parseInt(v[0],10)||1)));});return;}
+    dropChars(charId,pt,1);
   };
   wrap.oncontextmenu=e=>{
     e.preventDefault();
@@ -3221,7 +3220,7 @@ function setupMapInteractions(){
           }
           else if(a.type==='Persistant'&&(a.area==='line'||a.area==='cone'))handlePersistentLineConeClick(a,inst(selectedToken),pt);
           else if(a.type==='Persistant')resolvePersistentAbility(a,inst(selectedToken),pt);
-          else resolveAbility(a,pt,a.area==='single'?id:undefined);
+          else castOrGroup(a,pt,a.area==='single'?id:undefined);
         }
         return;
       }
@@ -3254,7 +3253,7 @@ function setupMapInteractions(){
         }
         else if(a.type==='Persistant'&&(a.area==='line'||a.area==='cone'))handlePersistentLineConeClick(a,inst(selectedToken),pt);
         else if(a.type==='Persistant')resolvePersistentAbility(a,inst(selectedToken),pt);
-        else resolveAbility(a,pt);
+        else castOrGroup(a,pt);
       }
       return;
     }
@@ -3649,6 +3648,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   }
   applyCooldown(a,casterInst);
   if(a.type==='Objet'||a._objet)consumeObjet(casterInst,a);
+  if(_grp)_grp.casters.push({id:casterInst.id,charId:casterInst.charId,ref:casterInst});
   let weaponFormula=null, weaponUsed=null;
   if(casterTpl?.type==='player'&&casterTpl.equipmentSlots){
     const w=equip(casterTpl.equipmentSlots['arme']);
@@ -3731,6 +3731,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     const elemParts=elemBonusDamage(elemRoll.list,mult,effStat(casterTpl,casterInst,a.stat),a.dmgMult,tTpl,t,lines);
     const fin=finalizeDamage([{raw:damage,el:a.element,pool:a.defense==='CA'?'CA':(a.defense==='DM'?'DM':null)},(wMag?{raw:wpPart,el:a.element,pool:a.defense==='CA'?'CA':(a.defense==='DM'?'DM':null)}:{raw:wpPart,el:'Physique',pool:'CA'}),...elemParts],tTpl,t);
     damage=fin.total; fin.detail.forEach(l=>lines.push(l));
+    if(_grp){_grp.dmg[t.id]=(_grp.dmg[t.id]||0)+damage;_grp.tg[t.id]=t;}
     const beforeShield=t.shield||0; const absorbed=Math.min(beforeShield,damage);
     t.shield-=absorbed; const hpDamage=damage-absorbed;
     t.hp=Math.max(0,t.hp-hpDamage);
@@ -5516,7 +5517,7 @@ function hotbarPage(){
   <div class="card"><h2>🎯 Mes Compétences</h2>
   <div class="field"><label>Personnage</label>${isMJ()?`<input placeholder="🔎 Rechercher un personnage / monstre…" value="${esc(hotbarCharSearch)}" oninput="onHotbarCharSearch(this.value)" style="margin-bottom:6px">`:''}<div id="hotbarCharContainer">${hotbarCharSelectHtml()}</div></div>
   <label class="row" style="gap:8px;margin:10px 0"><input type="checkbox" ${hotbarIconOnly()?'checked':''} onchange="setHotbarIconOnly(this.checked);render()"> Afficher uniquement les icônes sur la table de jeu (grille de raccourcis)</label>
-  <p class="tiny muted">Glisse une capacité vers une case. Clic droit sur une case pour la vider.</p>
+  <p class="tiny muted">Rangement automatique par type (81 max). Glisse une capacité vers une case pour personnaliser, clic droit pour vider.</p><button class="btn" onclick="hotbarResetAuto()">↺ Rangement automatique</button>
   ${barsHtml}
   </div>
   <div class="card"><h2>Capacités disponibles</h2>
@@ -5542,14 +5543,14 @@ function hotbarDrop(ev,bi,ci){
   ev.preventDefault();
   const itemId=hotbarDragItem||ev.dataTransfer.getData('text/plain'); if(!itemId)return;
   const cfg=charHotbar(hotbarEditChar);
-  cfg.bars[bi][ci]=itemId;
+  cfg.bars[bi][ci]=itemId;cfg.custom=true;
   saveCharHotbar(hotbarEditChar,cfg);
   hotbarDragItem=null;
   render();
 }
 function hotbarClear(bi,ci){
   const cfg=charHotbar(hotbarEditChar);
-  cfg.bars[bi][ci]=null;
+  cfg.bars[bi][ci]=null;cfg.custom=true;
   saveCharHotbar(hotbarEditChar,cfg);
   render();
 }
@@ -6572,7 +6573,7 @@ document.addEventListener('keydown',e=>{
   if(currentPage!=='table')return;
   const m=getHotkeyMap()['__ui__']||{};
   const id=Object.keys(m).find(k=>m[k]===e.key);
-  const acts={ui_next:()=>S.combat.active&&nextTurn(),ui_start:()=>S.combat.active?endCombat():startCombat(),ui_end:()=>S.combat.active?endCombat():startCombat(),ui_fullscreen:toggleFullscreen,ui_grid:toggleGridVisible,ui_ff:toggleFriendlyFire,ui_hud:toggleHudEnabled,ui_free:toggleFreeMovement,ui_aff:()=>{if(isMJ()&&selectedToken)openManageAfflictions(selectedToken);},ui_diss:()=>{if(isMJ())startDissipation();},ui_rest_s:()=>applyRest(0.5),ui_rest_l:()=>applyRest(1)};
+  const acts={ui_next:()=>S.combat.active&&nextTurn(),ui_start:()=>S.combat.active?endCombat():startCombat(),ui_end:()=>S.combat.active?endCombat():startCombat(),ui_fullscreen:toggleFullscreen,ui_grid:toggleGridVisible,ui_ff:toggleFriendlyFire,ui_hud:toggleHudEnabled,ui_free:toggleFreeMovement,ui_mk:toggleMultiToken,ui_aff:()=>{if(isMJ()&&selectedToken)openManageAfflictions(selectedToken);},ui_diss:()=>{if(isMJ())startDissipation();},ui_rest_s:()=>applyRest(0.5),ui_rest_l:()=>applyRest(1)};
   if(!id||!acts[id])return;
   e.preventDefault(); e.stopImmediatePropagation(); acts[id]();
 });
@@ -7127,6 +7128,85 @@ function smithRepair(kind,key){
   saveState(); render(); refreshSmithModal();
 }
 
+var _grp=null;
+function toggleMultiToken(){
+  if(!isMJ()){toast('⛔ Seul le MJ peut activer MK.');return;}
+  S.multiToken=!S.multiToken;
+  addLog(S.multiToken?'🧩 Le MJ active MK (dépôt multiple de tokens).':'🧩 Le MJ désactive MK.');
+  saveState(); render();
+}
+function dropChars(charId,pt,n){
+  const tpl=char(charId); if(!tpl)return;
+  let last=null;
+  for(let k=0;k<n;k++){
+    const free=findFreeCell(pt[0],pt[1]);
+    if(!free){toast('🚫 Plus aucune case libre sur la carte.');break;}
+    const created=spawnInstance(charId,free[0],free[1]);
+    if(!created)continue;
+    last=created;
+    addLog(`➕ ${esc(created.label)} apparaît sur la carte.`);
+    if(S.combat.active){
+      const initVal=roll('1d20').total+(tpl.stats?.Vitesse||0);
+      S.combat.order.push(created.id);
+      S.combat.initiatives[created.id]=initVal;
+      addLog(`⚔ ${esc(created.label)} rejoint le combat en dernière position (initiative ${initVal}).`);
+    }
+  }
+  if(last)selectedToken=last.id;
+  saveState(); render();
+}
+/* ---- Attaque groupée (MJ, hors combat, multisélection) ---- */
+const GROUP_TYPES=['Attaque','Sort'];
+function groupCommonAbilities(){
+  const insts=multiSel.map(inst).filter(Boolean); if(insts.length<2)return [];
+  let common=null;
+  insts.forEach(i=>{const ids=characterAbilities(i.charId).filter(a=>GROUP_TYPES.includes(a.type)).map(a=>a.id);common=common?common.filter(x=>ids.includes(x)):ids;});
+  return (common||[]).map(id=>S.abilities.find(a=>a.id===id)).filter(Boolean);
+}
+function groupAbilitiesHtml(){
+  const list=groupCommonAbilities();
+  return `<span class="tiny muted">👥 Attaque groupée (${multiSel.length}) :</span>`+(list.length?list.map(a=>`<button class="btn ${activeAbility===a.id?'primary':''}" onclick="startGroupAbility('${a.id}')">${iconInlineHtml(a)} ${esc(a.name)}</button>`).join(''):'<span class="tiny muted">Aucune attaque/sort commun à tous les tokens.</span>');
+}
+function startGroupAbility(id){
+  const a=S.abilities.find(x=>x.id===id); if(!a)return;
+  if(a.area==='me'||a.area==='self'){toast('⚠️ Zone « Soi / Autour de soi » non supportée en groupe.');return;}
+  pendingPersistentOrigin=null; activeAbility=id; hoverCell=null; render();
+  toast('🎯 Attaque groupée : clique sur une cible ou une case (Échap pour annuler)');
+}
+function castOrGroup(a,start,tid){
+  if(isMJ()&&!S.combat.active&&!selectedToken&&multiSel.length>1)return resolveGroupAbility(a,start,tid);
+  return resolveAbility(a,start,tid);
+}
+function resolveGroupAbility(a0,start,tid){
+  const atk=multiSel.map(inst).filter(Boolean);
+  const g=_grp={casters:[],dmg:{},tg:{}};
+  try{
+    atk.forEach(ci=>{
+      if(!inst(ci.id)||ci.isKO)return;
+      selectedToken=ci.id;
+      resolveAbility(abOf(a0.id,ci.charId)||a0,start,tid);
+    });
+  }finally{_grp=null; selectedToken=null;}
+  activeAbility=null; hoverCell=null;
+  if(!g.casters.length){render();return;}
+  const cnt={}; g.casters.forEach(c=>cnt[c.charId]=(cnt[c.charId]||0)+1);
+  const topId=Object.keys(cnt).sort((x,y)=>cnt[y]-cnt[x])[0];
+  const rep=g.casters.find(c=>c.charId===topId).ref;
+  const nm=esc(char(topId)?.name||rep.label), N=g.casters.length;
+  const lines=[`⚔ <b>${nm}</b> (×${N}) attaque en groupe avec <b>${esc(a0.name)}</b>`];
+  const cl=[],rows=[],sums=[], ids=Object.keys(g.dmg);
+  ids.forEach(id=>{
+    const t=g.tg[id], d=g.dmg[id], cur=inst(id), ko=!cur||cur.hp<=0||cur.isKO;
+    lines.push(`✨ ${esc(t.label)} subit ${d} dégâts de l'attaque groupée`+(cur?` — ❤️ ${cur.hp}/${cur.hpMax}`:''));
+    if(ko)lines.push(`💀 <b>${esc(t.label)} est KO</b>.`);
+    if(d>0)cl.push(`${nm} (×${N}) infligent ${d} dégâts à ${esc(t.label)}`);
+    rows.push({k:'dm',txt:'Dégâts sur '+t.label,v:d,foe:instTemplate(t)?.type!=='player'});
+    sums.push({txt:`${tokOf(t)} prend ${d} de dégâts${ko?' et est KO 💀':''}.`});
+  });
+  if(!ids.length)lines.push('<span class="muted">Aucune cible touchée.</span>');
+  addLog(lines.join('<br>'),cl.join('<br>'),advCardHtml(rep,a0,'Attaque groupée',rows,sums).replace(' lance ',' attaque en groupe avec '));
+  saveState(); render();
+}
 /* ============================= NAVIGATION / INIT ============================= */
 document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>{currentPage=n.dataset.page;activeAbility=null;hoverCell=null;render();});
 </script>
