@@ -2928,7 +2928,7 @@ function finishGroupDrag(){
       changed=false;
     }
   }
-  if(changed){if(!S.freeMovement)g.forEach(o=>{const t=inst(o.id);if(t){t.px=null;t.py=null;}});addLog(`↦ Le MJ déplace ${g.length} tokens.`);saveState();flushSave();}
+  if(changed){if(!S.freeMovement)g.forEach(o=>{const t=inst(o.id);if(t){t.px=null;t.py=null;}});addLog(`↦ Le MJ déplace ${g.length} tokens.`);if(lastSaved)g.forEach(o=>{delete lastSaved.insts[o.id];});saveState();flushSave();}
   render();
 }
 function finishSelBox(){
