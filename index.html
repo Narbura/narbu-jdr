@@ -3072,9 +3072,7 @@ function tickStatusEffects(inst_,fresh){
       broadcastHud(inst_.id,{hp:-hpDmg,shield:absorbed>0?-absorbed:0});
       if(inst_.hp<=0){addLog(`💀 <b>${esc(inst_.label)} est KO</b>.`);handleInstanceDeath(inst_);}
     }
-    delete se.fresh;remaining.push(se);return;
-    if(se.turnsLeft>0)remaining.push(se);
-    else addLog(`🌀 <b>${esc(se.name)}</b> se termine sur <b>${esc(inst_.label)}</b>.`);
+    delete se.fresh;remaining.push(se);
   });
   inst_.statusEffects=remaining;
 }
