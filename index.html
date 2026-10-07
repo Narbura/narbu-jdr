@@ -3663,7 +3663,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   const cl=[];
   const advRows=[],advSum=[];
   const lines=[`⚔ <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b>`];
-  if(a.desc)lines.push(descHtml(a.desc));
+  {const d0=descHtml(a.desc);if(d0)lines.push(d0);}
   lines.push(...degDesc(a,label));
   if(a.manaCost>0)lines.push(`💧 Coût en mana : ${a.manaCost} (reste ${casterInst.mana}/${casterInst.manaMax})`);
   lines.push(`🎲 ${esc(atkExpr)} : <b>${atk}</b> → ${label}`);
@@ -3794,7 +3794,7 @@ function resolveBuffAbility(a,casterInst,targetInstId){
   _deg=label;{const pl=applyFailPenalty(a,casterInst,label,[t],targetInstId);if(pl.length)addLog(pl.join('<br>'));}
   applyBuffExtras(a,t,mult,casterInst,label);applyBuffStatus(a,t,mult,casterInst,casterTpl);
   playAbilityFX(a,casterInst,[t],[t.x,t.y]);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:[t.id],start:[t.x,t.y]}});
-  addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${buffDur(a,mult)??'∞'} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(a.desc?[descHtml(a.desc)]:[]),...degDesc(a,label)].join('<br>'));
+  addLog([`🌀 <b>${esc(casterInst.label)}</b> applique <b>${esc(a.name)}</b> sur <b>${esc(t.label)}</b> (${buffDur(a,mult)??'∞'} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(descHtml(a.desc)?[descHtml(a.desc)]:[]),...degDesc(a,label)].join('<br>'));
   activeAbility=null; hoverCell=null;
   afterCast(a,casterInst);
   saveState(); render();
@@ -3821,7 +3821,7 @@ function resolveBuffZone(a,casterInst,start){
   const targets=affected(a,start).filter(t=>targetHasReq(a,t));_deg=label;{const pl=applyFailPenalty(a,casterInst,label,targets);if(pl.length)addLog(pl.join('<br>'));}
   playAbilityFX(a,casterInst,targets,start);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:targets.map(x=>x.id),start}});
   const lines=[`🌀 <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b> en zone (🎲 ${esc(atkExpr)} : ${atk} → ${label})`];
-  if(a.desc)lines.push(descHtml(a.desc));
+  {const d0=descHtml(a.desc);if(d0)lines.push(d0);}
   lines.push(...degDesc(a,label));
   if(!targets.length){
     lines.push('<span class="muted">Aucune cible valide dans la zone.</span>');
@@ -3877,7 +3877,7 @@ function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride
     zone.y=Math.max(0,Math.min(S.map.rows-size,start[1]));
   }
   S.persistentZones.push(zone);
-  addLog([`🌫️ <b>${esc(casterInst.label)}</b> invoque <b>${esc(a.name)}</b> (zone persistante, ${zone.turnsLeft} tour(s)).`,...(a.desc?[descHtml(a.desc)]:[])].join('<br>'));
+  addLog([`🌫️ <b>${esc(casterInst.label)}</b> invoque <b>${esc(a.name)}</b> (zone persistante, ${zone.turnsLeft} tour(s)).`,...(descHtml(a.desc)?[descHtml(a.desc)]:[])].join('<br>'));
   activeAbility=null; hoverCell=null;
   afterCast(a,casterInst);
   saveState(); render();
