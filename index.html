@@ -6612,7 +6612,8 @@ document.addEventListener('keydown',e=>{
   if(!ARROW_DELTAS[e.key])return;
   if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)||e.target.isContentEditable)return;
   if(document.getElementById('modalBg')?.classList.contains('open'))return;
-  if(currentPage!=='table'||activeAbility||!selectedToken)return;
+  if(currentPage!=='table'||activeAbility)return;
+  if(!selectedToken){if(isMJ()&&!S.combat.active&&multiSel.length>1){e.preventDefault();moveGroupBy(...ARROW_DELTAS[e.key]);}return;}
   e.preventDefault();
   const [dx,dy]=ARROW_DELTAS[e.key];
   moveSelectedTokenBy(dx,dy);
@@ -7314,6 +7315,20 @@ function charPageFolders(){
     const nc=S.characters.filter(ch=>ch.categoryId===c.id).length, ns=(S.characterCategories||[]).filter(cc=>cc.parent_id===c.id).length;
     return `<div class="ability" style="cursor:pointer" onclick="openCharCategory('${c.id}')"><div class="icon">📁</div><div class="ability-info"><b>${esc(c.name)}</b><small>${ns} sous-dossier(s) · ${nc} fiche(s)</small></div><button class="btn ghost" onclick="event.stopPropagation();openRenameCharCategoryModal('${c.id}')" title="Renommer">✏️</button><button class="btn ghost" onclick="event.stopPropagation();confirmDeleteCharCategory('${c.id}')" title="Supprimer le dossier">🗑️</button></div>`;
   }).join('');
+}
+document.addEventListener('dragstart',e=>{if(e.target&&e.target.closest&&e.target.closest('.token-wrap'))e.preventDefault();});
+function moveGroupBy(dx,dy){
+  const g=multiSel.map(inst).filter(Boolean); if(g.length<2)return;
+  const ids=g.map(t=>t.id);
+  const others=S.instances.filter(i=>!ids.includes(i.id));
+  for(const t of g){
+    const sw=t.sizeW||1, sh=t.sizeH||1, nx=t.x+dx, ny=t.y+dy;
+    if(nx<0||ny<0||nx+sw>S.map.cols||ny+sh>S.map.rows)return;
+    if(others.some(o=>nx<o.x+(o.sizeW||1)&&nx+sw>o.x&&ny<o.y+(o.sizeH||1)&&ny+sh>o.y)){toast('🚫 Case(s) déjà occupée(s) — déplacement du groupe annulé.');return;}
+  }
+  g.forEach(t=>{t.x+=dx;t.y+=dy;t.px=null;t.py=null;if(lastSaved)delete lastSaved.insts[t.id];});
+  addLog(`↦ Le MJ déplace ${g.length} tokens.`);
+  saveState(); flushSave(); render();
 }
 /* ============================= NAVIGATION / INIT ============================= */
 document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>{currentPage=n.dataset.page;activeAbility=null;hoverCell=null;render();});
