@@ -7139,20 +7139,24 @@ function toggleMultiToken(){
   saveState(); render();
 }
 function dropChars(charId,pt,n){
-  const tpl=char(charId); if(!tpl)return;
-  let last=null;
-  for(let k=0;k<n;k++){
-    const free=findFreeCell(pt[0],pt[1]);
-    if(!free){toast('🚫 Plus aucune case libre sur la carte.');break;}
-    const created=spawnInstance(charId,free[0],free[1]);
-    if(!created)continue;
-    last=created;
-    addLog(`➕ ${esc(created.label)} apparaît sur la carte.`);
-    if(S.combat.active){
-      const initVal=roll('1d20').total+(tpl.stats?.Vitesse||0);
-      S.combat.order.push(created.id);
-      S.combat.initiatives[created.id]=initVal;
-      addLog(`⚔ ${esc(created.label)} rejoint le combat en dernière position (initiative ${initVal}).`);
+  if(!char(charId))return;
+  const list=(S.multiToken&&charSel.length>1&&charSel.includes(charId))?charSel.filter(id=>char(id)):[charId];
+  let last=null, full=false;
+  for(let k=0;k<n&&!full;k++){
+    for(const cid of list){
+      const tpl=char(cid);
+      const free=findFreeCell(pt[0],pt[1]);
+      if(!free){toast('🚫 Plus aucune case libre sur la carte.');full=true;break;}
+      const created=spawnInstance(cid,free[0],free[1]);
+      if(!created)continue;
+      last=created;
+      addLog(`➕ ${esc(created.label)} apparaît sur la carte.`);
+      if(S.combat.active){
+        const initVal=roll('1d20').total+(tpl.stats?.Vitesse||0);
+        S.combat.order.push(created.id);
+        S.combat.initiatives[created.id]=initVal;
+        addLog(`⚔ ${esc(created.label)} rejoint le combat en dernière position (initiative ${initVal}).`);
+      }
     }
   }
   if(last)selectedToken=last.id;
