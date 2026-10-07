@@ -4198,18 +4198,18 @@ function charactersPage(){
   const mj=isMJ();
   const charList=mj?S.characters:S.characters.filter(c=>c.type==='player');
   return `<div class="grid2">
-  <div class="card"><div class="row between"><h2>Personnages &amp; créatures</h2>${mj?`<button class="btn primary" onclick="openCharacter()">＋ Nouveau</button>`:''}</div>
+  <div class="card"><div class="row between"><h2>Personnages &amp; créatures</h2>${mj?`<div class="row" style="gap:6px"><button class="btn ghost" onclick="openNewCharCategoryModal()" title="Nouveau dossier">📁＋</button><button class="btn primary" onclick="openCharacter()">＋ Nouveau</button></div>`:''}</div>
   <input id="char_page_search" placeholder="🔎 Rechercher un personnage…" value="${esc(charPageQuery)}" oninput="onCharPageSearch(this.value)" style="margin-bottom:10px"><div id="charSelBar">${charSelBarHtml()}</div><div id="charPageResults">${charPageRows()}</div>
   </div>
   <div class="card"><h2>Principe de la fiche</h2><p class="muted">Une fiche définit les valeurs de base (statistiques, ressources maximales, défenses, résistances), le joueur propriétaire et sa visibilité. Chaque token posé sur la carte est une instance indépendante avec ses propres PV / mana / bouclier actuels et sa propre position.</p>
   <div class="statgrid"><div class="stat"><label>Attributs personnalisables</label><strong>✓</strong></div><div class="stat"><label>Ressources max configurables</label><strong>✓</strong></div><div class="stat"><label>Instances multiples</label><strong>✓</strong></div><div class="stat"><label>Visibilité MJ/joueurs</label><strong>✓</strong></div></div></div></div>`;
 }
-function charPageRows(){const mj=isMJ();const q=charPageQuery.trim().toLowerCase();const charList=(mj?S.characters:S.characters.filter(c=>c.type==='player')).filter(c=>!q||c.name.toLowerCase().includes(q));return charList.map(c=>{
+function charPageRows(){const mj=isMJ();const q=charPageQuery.trim().toLowerCase();const charList=(mj?S.characters:S.characters.filter(c=>c.type==='player')).filter(c=>q?c.name.toLowerCase().includes(q):(!mj||(c.categoryId||null)===(currentCharCategory||null)));const pre=(mj&&!q)?charPageFolders():'';return pre+charList.map(c=>{
     const count=S.instances.filter(i=>i.charId===c.id).length;
     const nbAb=characterAbilities(c.id).length;
     const ownerLabel=c.ownerId?(displayNameOf(profiles.find(p=>p.id===c.ownerId))||'Joueur inconnu'):(c.type==='player'?'Non assigné':'MJ / PNJ');
-    return `<div class="ability">${mj?`<input type="checkbox" title="Sélection multiple" ${charSel.includes(c.id)?'checked':''} onchange="toggleCharSel('${c.id}',this.checked)">`:''}<div class="icon">${iconBoxHtml(c,'9px')}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button><button class="btn ghost" onclick="duplicateCharacter('${c.id}')" title="Dupliquer">📋</button><button class="btn ghost" onclick="confirmDeleteCharacter('${c.id}')" title="Supprimer définitivement">🗑️</button>`:''}</div>`;
-  }).join('')||'<p class="tiny muted">Aucun résultat.</p>';}
+    return `<div class="ability" ${mj?`oncontextmenu="event.preventDefault();showMoveMenu(event.clientX,event.clientY,'char','${c.id}')"`:''}>${mj?`<input type="checkbox" title="Sélection multiple" ${charSel.includes(c.id)?'checked':''} onchange="toggleCharSel('${c.id}',this.checked)">`:''}<div class="icon">${iconBoxHtml(c,'9px')}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button><button class="btn ghost" onclick="duplicateCharacter('${c.id}')" title="Dupliquer">📋</button><button class="btn ghost" onclick="confirmDeleteCharacter('${c.id}')" title="Supprimer définitivement">🗑️</button>`:''}</div>`;
+  }).join('')||(pre?'':'<p class="tiny muted">Aucun résultat.</p>');}
 function onCharPageSearch(v){charPageQuery=v;const c=document.getElementById('charPageResults');if(c)c.innerHTML=charPageRows();}
 let charPageQuery='';
 function toggleHidden(id){
@@ -5886,7 +5886,7 @@ async function deleteCategory(id,descendantIds,affectedMaps){
 }
 function mapItemHtml(m){
   const mj=isMJ();
-  return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="mapDragStart(event,'${esc(m.url)}','${m.id||''}')"`:''} title="${mj?'Glisser sur la carte pour réutiliser ce terrain, ou sur un dossier pour la ranger':'Lecture seule'}">
+  return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="mapDragStart(event,'${esc(m.url)}','${m.id||''}')"`:''} ${mj&&m.id?`oncontextmenu="event.preventDefault();showMoveMenu(event.clientX,event.clientY,'map','${m.id}')"`:''} title="${mj?'Glisser sur la carte pour réutiliser ce terrain, ou sur un dossier pour la ranger':'Lecture seule'}">${mj&&m.id?`<input type="checkbox" title="Sélection multiple" ${selOf('map').includes(m.id)?'checked':''} onclick="event.stopPropagation()" onchange="toggleSel('map','${m.id}',this.checked)">`:''}
     <img src="${esc(m.url)}" style="width:30px;height:30px;object-fit:cover;border-radius:6px;flex-shrink:0" alt="">
     <div class="asset-info"><b>${esc(m.displayName)}</b></div>
     ${mj&&m.id?`<button class="btn ghost" style="padding:4px 8px" onclick="openRenameMapModal('${m.id}')" title="Renommer">✏️</button>`:''}
@@ -5897,7 +5897,7 @@ function mapsPanel(){
   if(!isMJ())return '';
   const header=`<div class="row between" style="margin-bottom:8px"><h2>🗺️ Cartes</h2><div class="row" style="gap:6px"><button class="btn ghost" onclick="openNewCategoryModal()" title="Nouvelle catégorie">📁＋</button><button class="btn ghost" onclick="refreshMapLibrary()" title="Rafraîchir">⟳</button></div></div>`;
   const searchBar=`<input id="map_search_input" placeholder="🔎 Rechercher une carte par nom…" value="${esc(mapSearchQuery)}" oninput="onMapSearchInput(this.value)" style="margin-bottom:10px">`;
-  return `${header}${searchBar}<div id="mapsResultsContainer">${mapsResultsHtml()}</div>`;
+  return `${header}${searchBar}<div id="selBar_map">${selBarHtml('map')}</div><div id="mapsResultsContainer">${mapsResultsHtml()}</div>`;
 }
 function onMapSearchInput(value){
   mapSearchQuery=value;
@@ -6120,7 +6120,7 @@ async function deleteImage(id){
   toast('🗑️ Image supprimée.');
 }
 function imageItemHtml(m){
-  return `<div class="asset-item" draggable="true" ondragstart="imageDragStart(event,'${m.id||''}')" oncontextmenu="event.preventDefault();showMoveMenu(event.clientX,event.clientY,'image','${m.id||''}')" title="Glisser vers un dossier pour la ranger">
+  return `<div class="asset-item" draggable="true" ondragstart="imageDragStart(event,'${m.id||''}')" oncontextmenu="event.preventDefault();showMoveMenu(event.clientX,event.clientY,'image','${m.id||''}')" title="Glisser vers un dossier pour la ranger">${m.id?`<input type="checkbox" title="Sélection multiple" ${selOf('image').includes(m.id)?'checked':''} onclick="event.stopPropagation()" onchange="toggleSel('image','${m.id}',this.checked)">`:''}
     <img src="${esc(m.url)}" style="width:30px;height:30px;object-fit:cover;border-radius:6px;flex-shrink:0" alt="">
     <div class="asset-info"><b>${esc(m.displayName)}</b></div>
     <button class="btn ghost" style="padding:4px 8px" onclick="openRenameImageModal('${m.id}')" title="Renommer">✏️</button>
@@ -6131,7 +6131,7 @@ function imagesPanel(){
   if(!isMJ())return '';
   const header=`<div class="row between" style="margin-bottom:8px"><h2>🖼️ Images</h2><div class="row" style="gap:6px"><button class="btn ghost" onclick="openNewImageCategoryModal()" title="Nouvelle catégorie">📁＋</button><button class="btn ghost" onclick="refreshImageLibrary()" title="Rafraîchir">⟳</button></div></div>`;
   const searchBar=`<input id="image_search_input" placeholder="🔎 Rechercher une image par nom…" value="${esc(imageSearchQuery)}" oninput="onImageSearchInput(this.value)" style="margin-bottom:10px">`;
-  return `${header}${searchBar}<div id="imagesResultsContainer">${imagesResultsHtml()}</div>`;
+  return `${header}${searchBar}<div id="selBar_image">${selBarHtml('image')}</div><div id="imagesResultsContainer">${imagesResultsHtml()}</div>`;
 }
 function onImageSearchInput(v){
   imageSearchQuery=v;
@@ -6166,7 +6166,7 @@ function notesPanel(){
   if(!isMJ())return '';
   const header=`<div class="row between" style="margin-bottom:8px"><h2>📝 Notes du MJ</h2><div class="row" style="gap:6px"><button class="btn ghost" onclick="openNewNoteCategoryModal()" title="Nouveau dossier">📁＋</button><button class="btn" onclick="openNoteEditModal()">＋</button></div></div>`;
   const searchBar=`<input id="note_search_input" placeholder="🔎 Rechercher une note par titre…" value="${esc(noteSearchQuery)}" oninput="onNoteSearchInput(this.value)" style="margin-bottom:10px">`;
-  return `${header}${searchBar}<div id="noteResultsContainer">${notesResultsHtml()}</div>`;
+  return `${header}${searchBar}<div id="selBar_note">${selBarHtml('note')}</div><div id="noteResultsContainer">${notesResultsHtml()}</div>`;
 }
 function onNoteSearchInput(v){
   noteSearchQuery=v;
@@ -6174,7 +6174,7 @@ function onNoteSearchInput(v){
   if(c)c.innerHTML=notesResultsHtml();
 }
 function noteItemHtml(n){
-  return `<div class="asset-item" draggable="true" ondragstart="noteDragStart(event,'${n.id}')" oncontextmenu="event.preventDefault();showMoveMenu(event.clientX,event.clientY,'note','${n.id}')" onclick="openNoteEditModal('${n.id}')" title="Glisser vers un dossier — cliquer pour modifier">
+  return `<div class="asset-item" draggable="true" ondragstart="noteDragStart(event,'${n.id}')" oncontextmenu="event.preventDefault();showMoveMenu(event.clientX,event.clientY,'note','${n.id}')" onclick="openNoteEditModal('${n.id}')" title="Glisser vers un dossier — cliquer pour modifier"><input type="checkbox" title="Sélection multiple" ${selOf('note').includes(n.id)?'checked':''} onclick="event.stopPropagation()" onchange="toggleSel('note','${n.id}',this.checked)">
     <div class="asset-icon">${n.image?`<img src="${esc(n.image)}" style="width:100%;height:100%;object-fit:cover;border-radius:7px">`:'📝'}</div>
     <div class="asset-info"><b>${esc(n.title)}</b></div>
     <button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();showNoteToPlayers('${n.id}')" title="Montrer aux joueurs">👁</button>
@@ -6182,12 +6182,12 @@ function noteItemHtml(n){
   </div>`;
 }
 function showMoveMenu(x,y,kind,itemId){
-  if(!itemId)return;
+  if(!itemId||!isMJ())return;
   closeTokenMenu();
-  const cats=kind==='note'?(S.noteCategories||[]):kind==='char'?(S.characterCategories||[]):imageCategories;
-  const fn=kind==='note'?'moveNoteToCategory':kind==='char'?'moveCharToCategory':'moveImageToCategory';
+  const cats=kind==='note'?(S.noteCategories||[]):kind==='char'?(S.characterCategories||[]):kind==='map'?mapCategories:imageCategories;
+  const n=selOf(kind).includes(itemId)?selOf(kind).length:1;
   const path=id=>{const p=[];let cur=id;while(cur){const c=cats.find(k=>k.id===cur);if(!c)break;p.unshift(c.name);cur=c.parent_id;}return p.join(' › ');};
-  const items=`<div class="tiny muted" style="padding:4px 8px">Déplacer vers…</div><button class="btn ghost" onclick="${fn}('${itemId}',null)">🏠 Racine</button>`+cats.map(c=>`<button class="btn ghost" onclick="${fn}('${itemId}','${c.id}')">📁 ${esc(path(c.id))}</button>`).join('');
+  const items=`<div class="tiny muted" style="padding:4px 8px">Déplacer ${n>1?n+' éléments':'1 élément'} vers…</div><button class="btn ghost" onclick="moveSelTo('${kind}','${itemId}',null)">🏠 Racine</button>`+cats.map(c=>`<button class="btn ghost" onclick="moveSelTo('${kind}','${itemId}','${c.id}')">📁 ${esc(path(c.id))}</button>`).join('');
   const m=document.createElement('div'); m.id='tokenMenu'; m.className='token-menu';
   m.style.left=Math.min(x,innerWidth-260)+'px'; m.style.top=Math.min(y,innerHeight*0.4)+'px'; m.style.maxHeight='60vh'; m.style.overflow='auto'; m.innerHTML=items; document.body.appendChild(m);
 }
@@ -7215,7 +7215,7 @@ function charSelBarHtml(){
   if(!isMJ())return '';
   charSel=charSel.filter(id=>char(id));
   if(!charSel.length)return `<div style="margin-bottom:8px"><button class="btn ghost" onclick="selectAllChars()">☑ Tout sélectionner</button></div>`;
-  return `<div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap"><span class="pill">☑ ${charSel.length} sélectionné(s)</span><button class="btn" onclick="openCharacter('${charSel[0]}')">✏️ Modifier la sélection</button><button class="btn ghost" onclick="clearCharSel()">Désélectionner</button></div>`;
+  return `<div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap"><span class="pill">☑ ${charSel.length} sélectionné(s)</span><button class="btn" onclick="openCharacter('${charSel[0]}')">✏️ Modifier la sélection</button><button class="btn ghost" onclick="clearCharSel()">Désélectionner</button><span class="tiny muted">Clic droit sur un personnage coché pour le déplacer</span></div>`;
 }
 function toggleCharSel(id,on){
   const i=charSel.indexOf(id);
@@ -7225,7 +7225,7 @@ function toggleCharSel(id,on){
 function clearCharSel(){charSel=[];render();}
 function selectAllChars(){
   const q=(currentPage==='characters'?charPageQuery:charSearchQuery).trim().toLowerCase();
-  charSel=S.characters.filter(c=>!q||c.name.toLowerCase().includes(q)).map(c=>c.id);
+  charSel=S.characters.filter(c=>q?c.name.toLowerCase().includes(q):(c.categoryId||null)===(currentCharCategory||null)).map(c=>c.id);
   render();
 }
 function snapForm(){
@@ -7266,6 +7266,50 @@ function saveBulk(){
   }finally{_bulkApplying=false;bulkIds=null;bulkSnap=null;}
   closeModal(); render();
   toast(`✅ ${Object.keys(diff).length} champ(s) appliqué(s) à ${ids.length} personnages.`);
+}
+var mapSel=[],imgSel=[],noteSel=[];
+function selOf(k){return k==='char'?charSel:k==='map'?mapSel:k==='image'?imgSel:noteSel;}
+function selSet(k,a){if(k==='char')charSel=a;else if(k==='map')mapSel=a;else if(k==='image')imgSel=a;else noteSel=a;}
+function toggleSel(kind,id,on){
+  const a=selOf(kind), i=a.indexOf(id);
+  if(on&&i<0)a.push(id); if(!on&&i>=0)a.splice(i,1);
+  const b=document.getElementById('selBar_'+kind); if(b)b.innerHTML=selBarHtml(kind);
+}
+function clearSel(kind){selSet(kind,[]);render();}
+function selBarHtml(kind){
+  if(!isMJ())return '';
+  const n=selOf(kind).length;
+  return n?`<div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap"><span class="pill">☑ ${n} sélectionné(s)</span><button class="btn ghost" onclick="clearSel('${kind}')">Désélectionner</button><span class="tiny muted">Clic droit sur un élément coché pour le déplacer</span></div>`:`<div style="margin-bottom:8px"><button class="btn ghost" onclick="selectAllKind('${kind}')">☑ Tout sélectionner</button></div>`;
+}
+function selectAllKind(kind){
+  const cfg={map:[mapLibrary,currentMapCategory,mapSearchQuery,m=>m.displayName],image:[imageLibrary,currentImageCategory,imageSearchQuery,m=>m.displayName],note:[S.notes||[],currentNoteCategory,noteSearchQuery,n=>n.title]}[kind];
+  const q=cfg[2].trim().toLowerCase();
+  selSet(kind,cfg[0].filter(m=>q?String(cfg[3](m)).toLowerCase().includes(q):(m.categoryId||null)===(cfg[1]||null)).map(m=>m.id).filter(Boolean));
+  render();
+}
+async function moveSelTo(kind,itemId,catId){
+  closeTokenMenu();
+  if(!isMJ())return;
+  const sel=selOf(kind), ids=sel.includes(itemId)?sel.slice():[itemId];
+  if(kind==='char'){ids.forEach(id=>{const c=char(id);if(c)c.categoryId=catId;});saveState();}
+  else if(kind==='note'){ids.forEach(id=>{const n=(S.notes||[]).find(x=>x.id===id);if(n)n.categoryId=catId;});saveState();}
+  else{
+    const tbl=kind==='map'?'map_library':'image_library', lib=kind==='map'?mapLibrary:imageLibrary;
+    try{
+      const {error}=await supabaseClient.from(tbl).update({category_id:catId}).in('id',ids);
+      if(error){toast('❌ '+error.message);return;}
+    }catch(e){console.error('moveSelTo',e);toast('❌ Erreur réseau.');return;}
+    lib.forEach(m=>{if(ids.includes(m.id))m.categoryId=catId;});
+  }
+  selSet(kind,[]);
+  render(); toast(`✅ ${ids.length} élément(s) déplacé(s).`);
+}
+function charPageFolders(){
+  const subs=(S.characterCategories||[]).filter(c=>(c.parent_id||null)===(currentCharCategory||null));
+  return charBreadcrumb(currentCharCategory)+subs.map(c=>{
+    const nc=S.characters.filter(ch=>ch.categoryId===c.id).length, ns=(S.characterCategories||[]).filter(cc=>cc.parent_id===c.id).length;
+    return `<div class="ability" style="cursor:pointer" onclick="openCharCategory('${c.id}')"><div class="icon">📁</div><div class="ability-info"><b>${esc(c.name)}</b><small>${ns} sous-dossier(s) · ${nc} fiche(s)</small></div><button class="btn ghost" onclick="event.stopPropagation();openRenameCharCategoryModal('${c.id}')" title="Renommer">✏️</button><button class="btn ghost" onclick="event.stopPropagation();confirmDeleteCharCategory('${c.id}')" title="Supprimer le dossier">🗑️</button></div>`;
+  }).join('');
 }
 /* ============================= NAVIGATION / INIT ============================= */
 document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>{currentPage=n.dataset.page;activeAbility=null;hoverCell=null;render();});
