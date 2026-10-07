@@ -1694,11 +1694,11 @@ function chatMode(){const m=localStorage.getItem('narbudr-chat-mode');if(m)retur
 function chatCompact(){return chatMode()==='simple';}
 function toggleChatCompact(){const m=chatMode();localStorage.setItem('narbudr-chat-mode',m==='detail'?'simple':m==='simple'?'advanced':'detail');render();}
 function chatModeLabel(){const m=chatMode();return m==='simple'?'Simple':m==='advanced'?'Avancé':'Détaillé';}
-function tokOf(t){const c=instTemplate(t);return `<span title="${esc(t.label)}">${c?iconInlineHtml(c,18):esc(t.label)}</span>`;}
+function tokOf(t,sz){sz=sz||36;const c=instTemplate(t);return `<span title="${esc(t.label)}" style="font-size:${sz*0.8}px;line-height:1;vertical-align:middle">${c?iconInlineHtml(c,sz):esc(t.label)}</span>`;}
 function advCardHtml(ci,a,label,rows,sums){
   const ic=a.iconImage?`<img src="${esc(a.iconImage)}" style="width:16px;height:16px;vertical-align:middle;border-radius:3px">`:esc(a.icon||'');
   const r=rows.map(x=>`<div class="adv-row ${x.foe?'foe':''}"><span>${esc(x.txt)}</span><span class="adv-pill ${x.k}">${x.v}</span></div>`).join('');
-  return `<div class="adv-title">${ic} ${esc(ci.label)} lance ${esc(a.name)}</div><div class="adv-card"><div class="adv-head"><b>${esc(a.name)}</b><small>${esc(label)} ♦ ${esc(a.type)}</small></div>${r}</div>`+sums.map(x=>`<div class="adv-sum ${x.ok?'ok':''}">${x.txt}</div>`).join('');
+  return `<div class="adv-title">${tokOf(ci,32)} lance ${esc(a.name)}</div><div class="adv-card"><div class="adv-head"><b>${esc(a.name)}</b><small>${esc(label)} ♦ ${esc(a.type)}</small></div>${r}</div>`+sums.map(x=>`<div class="adv-sum ${x.ok?'ok':''}">${x.txt}</div>`).join('');
 }
 function chatEntriesHtml(){const md=chatMode();const out=[];S.chat.slice().reverse().forEach(e=>{let s=String(e),adv=null;const ai=s.indexOf('<!--A-->');if(ai>=0){adv=s.slice(ai+8);s=s.slice(0,ai);}let v;if(md==='advanced'&&adv)v=adv;else if(s.includes('<!--CC-->'))v=s.replace('<!--CC-->','');else if(s.includes('<!--C-->')){const q=s.split('<!--C-->');v=md==='simple'?q[1]:q[0];}else v=md==='simple'?null:s;if(v)out.push((md==='advanced'&&adv)?'<div class="adv-entry">'+v+'</div>':'<div>'+v+'</div>');});return out.join('')||'<p class="muted tiny">Aucun événement pour l’instant.</p>';}
 const TB_ITEMS=[['fullscreen','⛶ Plein écran',false],['grid','▦ Grille',false],['hud','🎯 HUD',true],['ff','⚔ Tir allié',true],['free','🎯 Placement libre',true],['combat','⚔ Boutons de combat',false],['chat','💬 Chat',false]];
