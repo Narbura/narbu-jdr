@@ -425,7 +425,7 @@ function normalizeState(){
     mergeBag(c);
     if(c.type==='merchant'){if(!c.merchant||typeof c.merchant!=='object')c.merchant={buy:[],sell:[]};if(!Array.isArray(c.merchant.buy))c.merchant.buy=[];if(!Array.isArray(c.merchant.sell))c.merchant.sell=[];}
     if(!(c.money>=0))c.money=0;
-    if(c.type==='player'){
+    if(c.type==='player'||c.type==='enemy'){
       if(!c.equipmentSlots)c.equipmentSlots={};
       EQUIP_SLOTS.forEach(([k])=>{if(c.equipmentSlots[k]===undefined)c.equipmentSlots[k]=null;});
       if(!Array.isArray(c.equipmentSlots.diversIds))c.equipmentSlots.diversIds=[];
@@ -1506,9 +1506,9 @@ function rollWithWeapon(formula,weaponUsed,casterInst){
 function effectiveDef(c,t){const r=effectiveDefBase(c,t);const m=(t&&t.defMods)||[];if(m.length){r.CA=Math.max(0,r.CA-m.reduce((n,x)=>n+(x.ca||0),0));r.DM=Math.max(0,r.DM-m.reduce((n,x)=>n+(x.dm||0),0));}return r;}
 function effectiveDefBase(c,t){
   if(!c)return {CA:0,DM:0,'CA naturelle':0};
-  if(c.type!=='player')return {CA:c.def?.CA||0,DM:c.def?.DM||0,'CA naturelle':c.def?.['CA naturelle']||0};
+  if(c.type!=='player'&&c.type!=='enemy')return {CA:c.def?.CA||0,DM:c.def?.DM||0,'CA naturelle':c.def?.['CA naturelle']||0};
   const nat=naturalRes(c);
-  let ca=(c.def?.CA||0)+nat.ca, dm=(c.def?.DM||0)+nat.dm;
+  const nat0=c.type==='player'?nat:{ca:0,dm:0};let ca=(c.def?.CA||0)+nat0.ca, dm=(c.def?.DM||0)+nat0.dm;
   if(c.equipmentSlots){EQUIP_SLOTS.forEach(([k])=>{const e=equip(c.equipmentSlots[k]);if(e){const f=t?equipStatFactor(t,k):1;ca+=Math.ceil((e.ca||0)*f);dm+=Math.ceil((e.dm||0)*f);}});}
   return {CA:ca,DM:dm,'CA naturelle':c.def?.['CA naturelle']||0};
 }
@@ -1516,7 +1516,7 @@ function effectiveRes(c,t){
   if(!c)return {};
   const out={...(c.res||{})};
   ELEMENT_RES_KEYS.forEach(k=>{if(out[k]===undefined)out[k]=0;});
-  if(c.type==='player'&&c.equipmentSlots){
+  if((c.type==='player'||c.type==='enemy')&&c.equipmentSlots){
     EQUIP_SLOTS.forEach(([k])=>{const e=equip(c.equipmentSlots[k]);if(e&&e.res){const f=t?equipStatFactor(t,k):1;ELEMENT_RES_KEYS.forEach(rk=>{if(e.res[rk])out[rk]=(out[rk]||0)+Math.ceil(e.res[rk]*f);});}});
   }
   return out;
@@ -2691,7 +2691,7 @@ function assetPanel(){
   const mj=isMJ();
   const header=`<div class="row between" style="margin-bottom:8px"><h2>📚 Bibliothèque</h2>${mj?`<div class="row" style="gap:6px"><button class="btn ghost" onclick="openNewCharCategoryModal()" title="Nouvelle catégorie">📁＋</button><button class="btn" onclick="openCharacter()">＋</button></div>`:''}</div>`;
   const searchBar=`<input id="char_search_input" placeholder="🔎 Rechercher un personnage par nom…" value="${esc(charSearchQuery)}" oninput="onCharSearchInput(this.value)" style="margin-bottom:10px">`;
-  return `${header}${searchBar}<div id="charResultsContainer">${charResultsHtml()}</div>`;
+  return `${header}${searchBar}<div id="charSelBar">${charSelBarHtml()}</div><div id="charResultsContainer">${charResultsHtml()}</div>`;
 }
 function toggleAssetSection(key){collapsedAssets[key]=!collapsedAssets[key];render();}
 function onCharSearchInput(v){
@@ -2703,7 +2703,7 @@ function charItemHtml(c){
   const mj=isMJ();
   const count=S.instances.filter(i=>i.charId===c.id).length;
   return `<div class="asset-item" draggable="${mj}" ${mj?`ondragstart="assetDragStart(event,'${c.id}')"`:''} ${mj?`oncontextmenu="event.preventDefault();showMoveMenu(event.clientX,event.clientY,'char','${c.id}')"`:''} onclick="openCharacter('${c.id}')" title="${mj?'Glisser sur la carte pour créer un token, cliquer pour modifier la fiche':'Fiche (lecture seule)'}">
-    <div class="asset-icon">${iconBoxHtml(c,'7px')}</div>
+    ${mj?`<input type="checkbox" title="Sélection multiple" ${charSel.includes(c.id)?'checked':''} onclick="event.stopPropagation()" onchange="toggleCharSel('${c.id}',this.checked)">`:''}<div class="asset-icon">${iconBoxHtml(c,'7px')}</div>
     <div class="asset-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)}${count?` · ${count} sur la carte`:''}</small></div>
     ${mj?`<button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();duplicateCharacter('${c.id}')" title="Dupliquer">📋</button><button class="btn ghost" style="padding:4px 8px" onclick="event.stopPropagation();confirmDeleteCharacter('${c.id}')" title="Supprimer définitivement">🗑️</button>`:''}
   </div>`;
@@ -3502,7 +3502,7 @@ function resolveOpportunityAttack(attackerInst,targetInst){
   const isPhys=oa.type!=='Magique';
   const statKey=isPhys?'Force':'Magie';
   let weaponFormula=null, weaponUsed=null;
-  if(attackerTpl.type==='player'&&attackerTpl.equipmentSlots){
+  if((attackerTpl.type==='player'||attackerTpl.type==='enemy')&&attackerTpl.equipmentSlots){
     const w=equip(attackerTpl.equipmentSlots['arme']);
     if(w&&w.itemType==='weapon'&&(w.damageFormula||weaponHasElem(w))&&(w.weaponStat||'Force')===statKey){weaponUsed=w;weaponFormula=w.damageFormula;}
   }
@@ -3650,7 +3650,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   if(a.type==='Objet'||a._objet)consumeObjet(casterInst,a);
   if(_grp)_grp.casters.push({id:casterInst.id,charId:casterInst.charId,ref:casterInst});
   let weaponFormula=null, weaponUsed=null;
-  if(casterTpl?.type==='player'&&casterTpl.equipmentSlots){
+  if((casterTpl?.type==='player'||casterTpl?.type==='enemy')&&casterTpl.equipmentSlots){
     const w=equip(casterTpl.equipmentSlots['arme']);
     if(w&&w.itemType==='weapon'&&(w.damageFormula||weaponHasElem(w))&&(w.weaponStat||'Force')===a.stat){weaponUsed=w;weaponFormula=w.damageFormula;}
   }
@@ -4199,7 +4199,7 @@ function charactersPage(){
   const charList=mj?S.characters:S.characters.filter(c=>c.type==='player');
   return `<div class="grid2">
   <div class="card"><div class="row between"><h2>Personnages &amp; créatures</h2>${mj?`<button class="btn primary" onclick="openCharacter()">＋ Nouveau</button>`:''}</div>
-  <input id="char_page_search" placeholder="🔎 Rechercher un personnage…" value="${esc(charPageQuery)}" oninput="onCharPageSearch(this.value)" style="margin-bottom:10px"><div id="charPageResults">${charPageRows()}</div>
+  <input id="char_page_search" placeholder="🔎 Rechercher un personnage…" value="${esc(charPageQuery)}" oninput="onCharPageSearch(this.value)" style="margin-bottom:10px"><div id="charSelBar">${charSelBarHtml()}</div><div id="charPageResults">${charPageRows()}</div>
   </div>
   <div class="card"><h2>Principe de la fiche</h2><p class="muted">Une fiche définit les valeurs de base (statistiques, ressources maximales, défenses, résistances), le joueur propriétaire et sa visibilité. Chaque token posé sur la carte est une instance indépendante avec ses propres PV / mana / bouclier actuels et sa propre position.</p>
   <div class="statgrid"><div class="stat"><label>Attributs personnalisables</label><strong>✓</strong></div><div class="stat"><label>Ressources max configurables</label><strong>✓</strong></div><div class="stat"><label>Instances multiples</label><strong>✓</strong></div><div class="stat"><label>Visibilité MJ/joueurs</label><strong>✓</strong></div></div></div></div>`;
@@ -4208,7 +4208,7 @@ function charPageRows(){const mj=isMJ();const q=charPageQuery.trim().toLowerCase
     const count=S.instances.filter(i=>i.charId===c.id).length;
     const nbAb=characterAbilities(c.id).length;
     const ownerLabel=c.ownerId?(displayNameOf(profiles.find(p=>p.id===c.ownerId))||'Joueur inconnu'):(c.type==='player'?'Non assigné':'MJ / PNJ');
-    return `<div class="ability"><div class="icon">${iconBoxHtml(c,'9px')}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button><button class="btn ghost" onclick="duplicateCharacter('${c.id}')" title="Dupliquer">📋</button><button class="btn ghost" onclick="confirmDeleteCharacter('${c.id}')" title="Supprimer définitivement">🗑️</button>`:''}</div>`;
+    return `<div class="ability">${mj?`<input type="checkbox" title="Sélection multiple" ${charSel.includes(c.id)?'checked':''} onchange="toggleCharSel('${c.id}',this.checked)">`:''}<div class="icon">${iconBoxHtml(c,'9px')}</div><div class="ability-info"><b>${esc(c.name)}</b><small>${charTypeLabel(c)} · PV max ${c.resourcesMax.Vie} · ${nbAb} capacité(s)${count?` · ${count} sur la carte`:''}</small><br><small class="muted">👤 ${esc(ownerLabel)}${c.hidden?' · 🙈 caché aux joueurs':''}</small></div>${mj?`<button class="btn ghost" onclick="toggleHidden('${c.id}')" title="Basculer la visibilité aux joueurs">${c.hidden?'🙈':'👁'}</button><button class="btn" onclick="openCharacter('${c.id}')">Modifier</button><button class="btn ghost" onclick="duplicateCharacter('${c.id}')" title="Dupliquer">📋</button><button class="btn ghost" onclick="confirmDeleteCharacter('${c.id}')" title="Supprimer définitivement">🗑️</button>`:''}</div>`;
   }).join('')||'<p class="tiny muted">Aucun résultat.</p>';}
 function onCharPageSearch(v){charPageQuery=v;const c=document.getElementById('charPageResults');if(c)c.innerHTML=charPageRows();}
 let charPageQuery='';
@@ -4219,7 +4219,7 @@ function toggleHidden(id){
   saveState(); render();
 }
 function equipmentDurabilityHtml(charId){
-  const c=char(charId); if(!c||c.type!=='player')return '';
+  const c=char(charId); if(!c||(c.type!=='player'&&c.type!=='enemy'))return '';
   const rows=EQUIP_SLOTS.map(([k,label])=>{
     const item=equip(c.equipmentSlots?.[k]);
     if(!item||!item.durabilityMax)return '';
@@ -4255,7 +4255,7 @@ function repairEqDurabilitySlot(charId,slotKey){
   toast('🔧 Équipement réparé.');
 }
 function equipmentSlotsHtml(base,charId){
-  if(base.type!=='player')return '';
+  
   const slots=base.equipmentSlots||{};
   const eqOpts=(cur,slotKey)=>{
     const cat=equipSlotCategory(slotKey);
@@ -4306,7 +4306,7 @@ function toggleCharMonsterFields(){
   show('char_player_only_fields',t==='player');
   show('char_bio_fields',t!=='merchant');
   show('charTabMerchantBtn',t==='merchant');
-  show('charTabEquipBtn',t==='player');
+  show('charTabEquipBtn',t==='player'||t==='enemy');
   document.querySelectorAll('#charTabStats .pl-only').forEach(el=>{el.style.display=t==='player'?'':'none';});
 }
 function switchCharModalTab(tab){
@@ -4348,6 +4348,7 @@ function oppAttackHtml(base){
 function openCharacter(id){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les fiches.');return;}
   const c=id?char(id):null;
+  if(!_bulkApplying)bulkIds=(id&&charSel.length>1&&charSel.includes(id))?charSel.slice():null;
   const base=c||{name:'Nouveau personnage',icon:'🧙',iconImage:null,type:'player',move:6,ownerId:null,hidden:false,categoryId:currentCharCategory,resourcesMax:{Vie:10,Mana:0,Bouclier:0},stats:{Force:10,Magie:10,Agilité:10,Vitesse:10,Constitution:4,Endurance:0,Social:0,Artisanat:0},def:{CA:10,DM:0},res:{Feu:0,Eau:0,Terre:0,Air:0,Glace:0,Foudre:0,Lumière:0,Ténèbres:0,Poison:0},oppAttack:{formula:'',type:'Physique',element:'Neutre',impactImage:null,impactFrames:1,impactRows:1,animFps:60}};
   const catOpts=`<option value="">— Racine —</option>`+(S.characterCategories||[]).map(cc=>`<option value="${esc(cc.id)}" ${base.categoryId===cc.id?'selected':''}>${esc(cc.name)}</option>`).join('');
   const typeOpts=[['player','Joueur'],['enemy','Monstre / PNJ'],['merchant','Commerçant'],['blacksmith','Forgeron']].map(([v,l])=>opt(v,l,base.type)).join('');
@@ -4374,11 +4375,11 @@ function openCharacter(id){
     ${imagePickerHtml('c_profileimage','c_profile_preview')}
   </div>
   <div class="field full"><label>Description</label>${richEditorHtml('c_bio',base.bio||'','280px')}</div>`;
-  document.getElementById('modal').innerHTML=`<div class="modal-header"><div class="row" style="gap:8px"><h2>${id?'Modifier':'Créer'} une fiche</h2>${id?`<button class="btn ghost" style="padding:2px 8px" onclick="showCharToPlayers('${id}')" title="Montrer l'image de profil et la description aux joueurs">👁</button>`:''}</div><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><div class="row" style="gap:8px"><h2>${id?'Modifier':'Créer'} une fiche</h2>${(bulkIds&&!_bulkApplying)?`<span class="pill" title="Seuls les champs modifiés sont appliqués à toute la sélection">👥 Sélection ×${bulkIds.length}</span>`:''}${id?`<button class="btn ghost" style="padding:2px 8px" onclick="showCharToPlayers('${id}')" title="Montrer l'image de profil et la description aux joueurs">👁</button>`:''}</div><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
   <div class="tabs" id="charModalTabs">
     <button type="button" class="tab active" data-tab="general" onclick="switchCharModalTab('general')">🪪 Description</button>
     <button type="button" class="tab" data-tab="stats" onclick="switchCharModalTab('stats')">📊 Statistiques</button>
-    <button type="button" class="tab" id="charTabEquipBtn" data-tab="equip" onclick="switchCharModalTab('equip')" style="display:${base.type==='player'?'':'none'}">🎒 Équipement</button>
+    <button type="button" class="tab" id="charTabEquipBtn" data-tab="equip" onclick="switchCharModalTab('equip')" style="display:${(base.type==='player'||base.type==='enemy')?'':'none'}">🎒 Équipement</button>
     <button type="button" class="tab" data-tab="abil" onclick="switchCharModalTab('abil')">✨ Capacités</button>
     <button type="button" class="tab" data-tab="opp" onclick="switchCharModalTab('opp')">⚔ Attaque d'opportunité</button>
     <button type="button" class="tab" id="charTabMerchantBtn" data-tab="merchant" onclick="switchCharModalTab('merchant')" style="display:${base.type==='merchant'?'':'none'}">🛒 Commerce</button>
@@ -4455,9 +4456,11 @@ ${abilLinkHtml}</div></div>
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveCharacter('${id||''}')">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
   updateShieldAvailability();
+  if(bulkIds&&!_bulkApplying)bulkSnap=snapForm();
 }
 function saveCharacter(id){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les fiches.');return;}
+  if(bulkIds&&!_bulkApplying)return saveBulk();
   const c=id?char(id):{id:'c'+Date.now()};
   c.name=document.getElementById('c_name').value||'Sans nom';
   c.icon=document.getElementById('c_icon').value||'🧙';
@@ -4502,7 +4505,7 @@ function saveCharacter(id){
   c.oppAttack={formula:document.getElementById('oa_formula').value.trim(),type:document.getElementById('oa_type').value,element:document.getElementById('oa_element').value,impactImage:document.getElementById('oa_impact').value.trim()||null,impactFrames:Math.max(1,parseNum(document.getElementById('oa_impact_frames').value)||1),impactRows:Math.max(1,parseNum(document.getElementById('oa_impact_rows').value)||1),animFps:Math.max(1,Math.min(60,parseNum(document.getElementById('oa_animfps').value)||60)),spriteAuto:document.getElementById('oa_spriteauto').value||false};
   const skChecks=[...document.querySelectorAll('.skill-active-check')];
   if(skChecks.length)c.inactiveSkills=skChecks.filter(el=>!el.checked).map(el=>el.value);
-  if(c.type==='player'){
+  if(c.type==='player'||c.type==='enemy'){
     c.equipmentSlots=c.equipmentSlots||{};
     const oldSlots={...c.equipmentSlots};
     EQUIP_SLOTS.forEach(([k])=>{const el=document.getElementById('eqslot_'+k);if(el)c.equipmentSlots[k]=el.value||null;});
@@ -7206,6 +7209,63 @@ function resolveGroupAbility(a0,start,tid){
   if(!ids.length)lines.push('<span class="muted">Aucune cible touchée.</span>');
   addLog(lines.join('<br>'),cl.join('<br>'),advCardHtml(rep,a0,'Attaque groupée',rows,sums).replace(' lance ',' attaque en groupe avec '));
   saveState(); render();
+}
+var charSel=[],bulkIds=null,bulkSnap=null,_bulkApplying=false;
+function charSelBarHtml(){
+  if(!isMJ())return '';
+  charSel=charSel.filter(id=>char(id));
+  if(!charSel.length)return `<div style="margin-bottom:8px"><button class="btn ghost" onclick="selectAllChars()">☑ Tout sélectionner</button></div>`;
+  return `<div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap"><span class="pill">☑ ${charSel.length} sélectionné(s)</span><button class="btn" onclick="openCharacter('${charSel[0]}')">✏️ Modifier la sélection</button><button class="btn ghost" onclick="clearCharSel()">Désélectionner</button></div>`;
+}
+function toggleCharSel(id,on){
+  const i=charSel.indexOf(id);
+  if(on&&i<0)charSel.push(id); if(!on&&i>=0)charSel.splice(i,1);
+  const b=document.getElementById('charSelBar'); if(b)b.innerHTML=charSelBarHtml();
+}
+function clearCharSel(){charSel=[];render();}
+function selectAllChars(){
+  const q=(currentPage==='characters'?charPageQuery:charSearchQuery).trim().toLowerCase();
+  charSel=S.characters.filter(c=>!q||c.name.toLowerCase().includes(q)).map(c=>c.id);
+  render();
+}
+function snapForm(){
+  const o={};
+  document.querySelectorAll('#modal input[id],#modal select[id],#modal textarea[id]').forEach(el=>{
+    if(el.type==='file'||/search|_orig|c_addbag|merch|weight|hpmax|manamax|^c_move$|bagweight/.test(el.id))return;
+    o[el.id]=el.type==='checkbox'?(el.checked?'1':'0'):el.value;
+  });
+  document.querySelectorAll('#modal .cab-check').forEach(el=>{o['cab:'+el.value]=el.checked?'1':'0';});
+  document.querySelectorAll('#modal .skill-active-check').forEach(el=>{o['sk:'+el.value]=el.checked?'1':'0';});
+  const bio=document.getElementById('c_bio'); if(bio)o.c_bio=bio.innerHTML;
+  return o;
+}
+function saveBulk(){
+  if(!isMJ())return;
+  const cur=snapForm(), diff={};
+  Object.keys(cur).forEach(k=>{if(cur[k]!==(bulkSnap||{})[k])diff[k]=cur[k];});
+  const ids=bulkIds.slice();
+  _bulkApplying=true;
+  try{
+    ids.forEach(cid=>{
+      if(!char(cid))return;
+      openCharacter(cid);
+      Object.entries(diff).forEach(([k,v])=>{
+        if(k.startsWith('cab:')||k.startsWith('sk:')){
+          const cls=k.startsWith('cab:')?'.cab-check':'.skill-active-check', val=k.slice(k.indexOf(':')+1);
+          const el=[...document.querySelectorAll('#modal '+cls)].find(e=>e.value===val); if(el)el.checked=(v==='1');
+          return;
+        }
+        const el=document.getElementById(k); if(!el)return;
+        if(k==='c_bio')el.innerHTML=v;
+        else if(el.type==='checkbox')el.checked=(v==='1');
+        else el.value=v;
+      });
+      updateShieldAvailability();
+      saveCharacter(cid);
+    });
+  }finally{_bulkApplying=false;bulkIds=null;bulkSnap=null;}
+  closeModal(); render();
+  toast(`✅ ${Object.keys(diff).length} champ(s) appliqué(s) à ${ids.length} personnages.`);
 }
 /* ============================= NAVIGATION / INIT ============================= */
 document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>{currentPage=n.dataset.page;activeAbility=null;hoverCell=null;render();});
