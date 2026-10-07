@@ -1323,6 +1323,7 @@ function defVals(a,key,mult){
 function affApplies(a,key,mult){return Array.isArray(a.buffAffDeg)?a.buffAffDeg.includes(key):mult>0;}
 function applyBuffExtras(a,t,mult,ci,label){
   const key=degKey(label), out=[];
+  if(mult>0)applyCritAff(a,t,label,ci,out);
   if(a.buffAfflictionId&&affApplies(a,key,mult)){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=t.afflictions||[];{const nd=buffDur(a,mult),ex=t.afflictions.find(x=>x.defId===def.id);if(ex){ex.left=maxDur(ex.left,nd);ex.src=ci?ci.id:ex.src;if(selfNow(ci,t))ex.skipDec=true;}else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t),skipDec:selfNow(ci,t)||undefined});}out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${buffDur(a,mult)??'∞'} tour(s))`);}}
   const dv=defVals(a,key,mult);
   if(dv.ca||dv.dm){t.defMods=t.defMods||[];{const nd=buffDur(a,mult),ex=t.defMods.find(m=>m.abilityId===a.id);if(ex){ex.turnsLeft=maxDur(ex.turnsLeft,nd);ex.ca=dv.ca;ex.dm=dv.dm;if(selfNow(ci,t))ex.skipDec=true;}else t.defMods.push({abilityId:a.id,ca:dv.ca,dm:dv.dm,turnsLeft:nd,skipDec:selfNow(ci,t)||undefined});}
@@ -1355,7 +1356,7 @@ function applyFailPenalty(a,ci,label,targets,explicitId){
     const en=(explicitId&&inst(explicitId))||(targets||[])[0];
     if(en&&inst(ci.id)){
       const ty=instTemplate(ci)?.type; let best=null,bd=1e9;
-      S.instances.forEach(i=>{if(i.id===ci.id||i.id===en.id||i.isKO||instTemplate(i)?.type!==ty)return;const d=footprintDistance(i.x,i.y,i.sizeW||1,i.sizeH||1,en.x,en.y,en.sizeW||1,en.sizeH||1);if(d<bd){bd=d;best=i;}});
+      S.instances.forEach(i=>{if(i.id===ci.id||i.id===en.id||i.isKO||instTemplate(i)?.type!==ty)return;if(a.area==='single'){if(!onPathBetween(ci,en,i))return;}else if(!(targets||[]).some(x=>x.id===i.id))return;const d=footprintDistance(i.x,i.y,i.sizeW||1,i.sizeH||1,en.x,en.y,en.sizeW||1,en.sizeH||1);if(d<bd){bd=d;best=i;}});
       if(best){const h=hurt(best,afterDef(amt(p.ally,best.hpMax),best));L.push(`💥 ${esc(label)} : <b>${esc(best.label)}</b> (allié proche de la cible) subit ${h} dégâts.`);if(best.hp<=0){L.push(`💀 <b>${esc(best.label)} est KO</b>.`);handleInstanceDeath(best,ci);}}
     }
   }
@@ -1755,7 +1756,7 @@ function autoBars(charId){
   const abs=characterAbilities(charId);
   AUTO_TYPE_ORDER.forEach(t=>abs.filter(a=>a.type===t).forEach(a=>ids.push(a.id)));
   consumableStacks(c).forEach(b=>{if(!ids.includes(b.eqId))ids.push(b.eqId);});
-  ['Transformation','Compétence'].forEach(t=>abs.filter(a=>a.type===t).forEach(a=>ids.push(a.id)));
+  ['Transformation'].forEach(t=>abs.filter(a=>a.type===t).forEach(a=>ids.push(a.id)));
   if(c.type==='player')STAT_TESTS.forEach(st=>ids.push('stat_'+st));
   const list=ids.slice(0,81);
   return Array.from({length:9},(_,i)=>Array.from({length:9},(_,j)=>list[i*9+j]||null));
@@ -3656,6 +3657,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
   degradeWeaponOnOutcome(casterInst,label);
+  [a,start]=enlargeZone(a,start,label);
   const targets=affected(a,start,explicitTargetInstId).filter(t=>targetHasReq(a,t));
   playAbilityFX(a,casterInst,targets,start);
   gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:targets.map(t=>t.id),start}});
@@ -3693,6 +3695,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   for(const t of targets){
     const tTpl=instTemplate(t);
     if(a.type==='Objet'||a._objet)applyObjetAffliction(a,t,mult,casterInst,lines);
+    if(mult>0)applyCritAff(a,t,label,casterInst,lines);
     if(a.type==='Soin'){
       const r=isAoE?sharedRoll:roll(a.formula);
       if(!isAoE)broadcastDiceRoll(formulaSides(a.formula),r.rolls);
@@ -3818,6 +3821,7 @@ function resolveBuffZone(a,casterInst,start){
   const atkExpr=a.atkDice||'1d100'; const atkRoll=roll(atkExpr); const atk=atkRoll.total; const [label,mult]=outcome(atk);
   broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
   broadcastCritical(casterInst.id,label);
+  [a,start]=enlargeZone(a,start,label);
   const targets=affected(a,start).filter(t=>targetHasReq(a,t));_deg=label;{const pl=applyFailPenalty(a,casterInst,label,targets);if(pl.length)addLog(pl.join('<br>'));}
   playAbilityFX(a,casterInst,targets,start);gameChannel?.send({type:'broadcast',event:'fx',payload:{abilityId:a.id,ab:a,casterId:casterInst.id,targetIds:targets.map(x=>x.id),start}});
   const lines=[`🌀 <b>${esc(casterInst.label)}</b> lance <b>${esc(a.name)}</b> en zone (🎲 ${esc(atkExpr)} : ${atk} → ${label})`];
@@ -4614,7 +4618,7 @@ function abilityResultsHtml(){
 }
 let _descDraft={},_descCur='none';
 function commitDesc(){if(document.getElementById('a_desc'))_descDraft[_descCur]=rteHtml('a_desc');}
-function switchDescDegree(k){commitDesc();_descCur=k;const e=document.getElementById('a_desc');if(e)e.innerHTML=_descDraft[k]||'';}
+function switchDescDegree(k){commitDesc();_descCur=k;const e=document.getElementById('a_desc');if(e)e.innerHTML=_descDraft[k]||'';['cri','ult'].forEach(x=>{const b=document.getElementById('a_critaff_'+x);if(b)b.style.display=(k===x)?'':'none';});}
 function descHtml(h){
   h=String(h||'');
   if(!/<table/i.test(h))h=h.replace(/<\/(div|p)>/gi,'<br>').replace(/<(div|p)(\s[^>]*)?>/gi,'');
@@ -4625,6 +4629,28 @@ function descHtml(h){
   return h?'<span class="rte-desc">'+h+'</span>':'';
 }
 function degDesc(a,label){const d=descHtml((a.descBy||{})[degKey(label)]);return d?[d]:[];}
+function applyCritAff(a,t,label,ci,lines){
+  const k=label==='Réussite critique'?'cri':label==='Réussite ultime'?'ult':null; const c=k&&a.critAff&&a.critAff[k]; if(!c||!c.id)return;
+  const def=(S.afflictionDefs||[]).find(d=>d.id===c.id); if(!def)return;
+  t.afflictions=t.afflictions||[];
+  const nd=c.turns>0?c.turns:null, ex=t.afflictions.find(x=>x.defId===def.id);
+  if(ex){ex.left=maxDur(ex.left,nd);ex.src=ci?ci.id:ex.src;if(selfNow(ci,t))ex.skipDec=true;}
+  else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t),skipDec:selfNow(ci,t)||undefined});
+  lines.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${nd?nd+' tour(s)':"jusqu'au retrait"})`);
+}
+function enlargeZone(a,start,label){
+  const k=label==='Réussite critique'?'cri':label==='Réussite ultime'?'ult':null;
+  const ns=k&&a.sizeBy&&+a.sizeBy[k];
+  if(!(ns>0)||!['square','circle','self'].includes(a.area))return [a,start];
+  if(a.area!=='self'){const d=ns-(a.areaSize||3);start=clampZone({areaSize:ns},[start[0]-Math.floor(d/2),start[1]-Math.floor(d/2)]);}
+  return [{...a,areaSize:ns},start];
+}
+function onPathBetween(ci,en,i){
+  const c=S.map.cell,[x1,y1]=instCenterPx(ci),[x2,y2]=instCenterPx(en);
+  const n=Math.max(2,Math.ceil(Math.hypot(x2-x1,y2-y1)/(c/4)));
+  for(let k=1;k<n;k++){const gx=(x1+(x2-x1)*k/n)/c,gy=(y1+(y2-y1)*k/n)/c;if(gx>=i.x&&gx<i.x+(i.sizeW||1)&&gy>=i.y&&gy<i.y+(i.sizeH||1))return true;}
+  return false;
+}
 function openAbility(id,charId){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les capacités.');return;}
   const a=id?(charId?abOf(id,charId):S.abilities.find(x=>x.id===id)):{id:'a'+Date.now(),name:'Nouvelle capacité',icon:'✨',iconImage:null,type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'single',areaSize:1,range:6,manaCost:0,desc:'',effect:'✨',transformCharId:null,triggerOnDeath:false,hotkey:null};
@@ -4689,6 +4715,7 @@ function openAbility(id,charId){
   <div class="field"><label>Élément</label><select id="a_element">${elementOpts}</select></div>
   <div class="field"><label>Zone</label><select id="a_area" onchange="toggleAreaFields()">${areaOpts}</select></div>
   <div class="field" id="a_size_field" style="display:${(a.area==='line'||a.area==='cone'||a.area==='me')?'none':''}"><label>Taille de zone (cases)</label><input id="a_size" type="number" min="1" value="${a.areaSize||1}"></div>
+  <div class="field" id="a_sizeby_field" style="display:${(a.area==='square'||a.area==='circle'||a.area==='self')?'':'none'}"><label>Taille de zone : réussite critique / ultime (vide = taille normale)</label><div class="row" style="gap:6px"><input id="a_size_cri" type="number" min="1" placeholder="critique" value="${(a.sizeBy||{}).cri||''}"><input id="a_size_ult" type="number" min="1" placeholder="ultime" value="${(a.sizeBy||{}).ult||''}"></div></div>
   <div class="field" id="a_conestart_field" style="display:${a.area==='cone'?'':'none'}"><label>Largeur au départ (cases)</label><input id="a_conestart" type="number" min="1" value="${a.coneStart||1}"></div>
   <div class="field" id="a_coneend_field" style="display:${a.area==='cone'?'':'none'}"><label>Largeur à l'arrivée (cases)</label><input id="a_coneend" type="number" min="1" value="${a.coneEnd||3}"></div>
   <div class="field" id="a_range_field" style="display:${a.area==='me'?'none':''}"><label>Portée maximale (cases, 0 = illimitée)</label><input id="a_range" type="number" min="0" value="${a.range??0}"></div>
@@ -4697,7 +4724,8 @@ function openAbility(id,charId){
   <p class="tiny muted full" style="grid-column:1/-1">Ligne droite et Cône suivent librement la souris (pixel par pixel), dans la direction du clic. Cône : s'évase du lanceur (largeur « départ ») jusqu'à la longueur de zone (largeur « arrivée »). Multiplicateur : appliqué au résultat (capacité + arme) avant déduction de la défense et de la résistance élémentaire. Pour un sort « Persistant » ligne/cône : « Portée maximale » = distance max à laquelle poser l'origine de la zone (1er clic). « Longueur maximale de la zone » = longueur max de la ligne/cône lui-même. Au 2e clic (direction), la zone s'étend jusqu'au point cliqué, sans dépasser cette longueur max — tu peux donc la faire plus courte.</p>
   <div class="field full"><label>⛓ Condition de lancement</label><label class="ability-char-item"><input type="checkbox" id="a_reqon" ${a.reqOn?'checked':''}> <span>Ne peut être lancée que si l'affliction ou la capacité choisie est active sur la cible</span></label><input type="hidden" id="a_reqid" value="${esc(a.reqId||'')}"><button type="button" class="btn" id="a_reqid_btn" style="text-align:left;margin-top:6px" onclick="toggleReqPanel()">${esc(reqLabel(a.reqId))} ▾</button><div id="a_req_panel" style="display:none;border:1px solid #3a3e48;border-radius:8px;padding:6px;margin-top:4px"><input id="a_req_search" placeholder="🔎 Rechercher une affliction / capacité…" oninput="filterReqPick()"><div id="a_req_list" style="max-height:180px;overflow:auto;margin-top:6px">${reqListHtml()}</div></div></div>
   <div class="field full"><label>💥 Malus en cas d'échec critique / ultime (vide = aucun ; ex : 20%, 250, 2d20+10)</label>${[['fc','Échec critique'],['fu','Échec ultime']].map(([k,l])=>{const pp=(a.failPen||{})[k]||{};return `<div class="row" style="gap:6px;margin-top:4px;flex-wrap:wrap"><b style="width:110px">${l}</b><input id="a_fp_${k}_mana" placeholder="Perte de mana" value="${esc(pp.mana||'')}" style="width:130px"><input id="a_fp_${k}_hp" placeholder="Perte de PV" value="${esc(pp.hp||'')}" style="width:130px"><input id="a_fp_${k}_ally" placeholder="Dégâts allié proche" value="${esc(pp.ally||'')}" style="width:150px"></div>`;}).join('')}<p class="tiny muted">Les PV perdus et les dégâts à l'allié le plus proche de l'ennemi visé tiennent compte de la défense ciblée par le sort (CA ou DM). % = pourcentage du maximum.</p></div>
-  <div class="field full"><label>Description affichée selon le résultat du dé</label><select id="a_desc_sel" onchange="switchDescDegree(this.value)" style="margin-bottom:6px"><option value="none">Aucun (toujours affichée)</option>${DEGREES.map(([k,l])=>`<option value="${k}">${l}</option>`).join('')}</select>${richEditorHtml('a_desc',a.desc||'')}<p class="tiny muted">« Aucun » s'affiche quel que soit le résultat ; les autres s'affichent en plus, seulement pour le degré correspondant.</p></div>
+  <div class="field full"><label>Description affichée selon le résultat du dé</label><select id="a_desc_sel" onchange="switchDescDegree(this.value)" style="margin-bottom:6px"><option value="none">Aucun (toujours affichée)</option>${DEGREES.map(([k,l])=>`<option value="${k}">${l}</option>`).join('')}</select>${richEditorHtml('a_desc',a.desc||'')}<p class="tiny muted">« Aucun » s'affiche quel que soit le résultat ; les autres s'affichent en plus, seulement pour le degré correspondant.</p>
+  ${['cri','ult'].map(k=>{const o=(a.critAff||{})[k]||{};return `<div id="a_critaff_${k}" style="display:none;margin-top:8px;border:1px solid #3a3e48;border-radius:8px;padding:8px"><label>🩸 Affliction appliquée à toutes les cibles touchées (${k==='cri'?'réussite critique':'réussite ultime'})</label><select id="a_cafl_${k}">${opt('','— Aucune —',o.id||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,o.id||'')).join('')}</select><label style="margin-top:6px">Durée (tours — vide = jusqu'au retrait par le MJ)</label><input id="a_cadur_${k}" type="number" min="1" value="${o.turns||''}"></div>`;}).join('')}</div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
   <div class="field full"><label><input type="checkbox" id="a_impactpertoken" ${a.impactPerToken?'checked':''}> 💥 Animation d'impact séparée par cible touchée (sinon un seul impact sur toute la zone)</label></div>
   <div class="field full" id="a_zoneimage_field" style="display:${(a.area==='single'||a.area==='me'||(a.area==='self'&&a.type!=='Persistant'))?'none':''}">
@@ -4790,6 +4818,7 @@ function toggleAreaFields(){
   const type=document.getElementById('a_type')?document.getElementById('a_type').value:'';
   document.getElementById('a_size_field').style.display=(v==='line'||v==='cone'||v==='me')?'none':'';
   document.getElementById('a_conestart_field').style.display=v==='cone'?'':'none';
+  {const sb=document.getElementById('a_sizeby_field');if(sb)sb.style.display=(v==='square'||v==='circle'||v==='self')?'':'none';}
   document.getElementById('a_coneend_field').style.display=v==='cone'?'':'none';
   const zf=document.getElementById('a_zonerange_field');
   if(zf)zf.style.display=((v==='line'||v==='cone')&&type==='Persistant')?'':'none';
@@ -4881,6 +4910,8 @@ function saveAbility(id,charId){
     target.animFps=Math.max(1,Math.min(60,+document.getElementById('a_animfps').value||60));
     target.impactSize=Math.max(0.1,parseFloat(document.getElementById('a_impact_size')?.value)||1);
     target.spriteAuto=document.getElementById('a_spriteauto')?.value||false;
+    target.sizeBy={cri:Math.floor(+document.getElementById('a_size_cri')?.value)||null,ult:Math.floor(+document.getElementById('a_size_ult')?.value)||null};
+    target.critAff={};['cri','ult'].forEach(k=>{const id=document.getElementById('a_cafl_'+k)?.value;if(id){const n=Math.floor(+document.getElementById('a_cadur_'+k)?.value)||0;target.critAff[k]={id,turns:n>0?n:null};}});
     target.spinImage=(target.area==='self'?document.getElementById('a_spin')?.value.trim():'')||null;
     target.spinSpeed=Math.max(0.1,parseFloat(document.getElementById('a_spinspeed')?.value)||2);
     target.spinDuration=Math.max(0.2,parseFloat(document.getElementById('a_spindur')?.value)||1);
@@ -5512,13 +5543,13 @@ function hotbarPage(){
   const typeOpts=`<option value="">Tous types</option><option value="Test" ${hotbarPoolTypeFilter==='Test'?'selected':''}>Test de caractéristique</option>${ABILITY_TYPES.map(t=>opt(t,t,hotbarPoolTypeFilter)).join('')}<option value="Consommable" ${hotbarPoolTypeFilter==='Consommable'?'selected':''}>Consommable</option>`;
   const barsHtml=cfg.bars.map((bar,bi)=>`<div class="row" style="gap:4px;margin-bottom:6px;flex-wrap:wrap"><span class="tiny muted" style="width:60px">Barre ${bi+1}</span>${bar.map((itemId,ci)=>{
     const it=itemId?hotbarItemLookup(hotbarEditChar,itemId):null;
-    return `<div class="btn ghost" style="width:34px;height:34px;padding:0" ondragover="event.preventDefault()" ondrop="hotbarDrop(event,${bi},${ci})" oncontextmenu="event.preventDefault();hotbarClear(${bi},${ci})" title="${it?esc(it.label):'Vide (clic droit pour vider)'}">${it?iconInlineHtml(it.icon,26):''}</div>`;
+    return `<div class="btn ghost" style="width:34px;height:34px;padding:0" draggable="${it?'true':'false'}" ondragstart="hotbarCellDragStart(event,${bi},${ci})" ondragover="event.preventDefault()" ondrop="hotbarDrop(event,${bi},${ci})" oncontextmenu="event.preventDefault();hotbarClear(${bi},${ci})" title="${it?esc(it.label):'Vide (clic droit pour vider)'}">${it?iconInlineHtml(it.icon,26):''}</div>`;
   }).join('')}</div>`).join('');
   return `<div class="grid2">
   <div class="card"><h2>🎯 Mes Compétences</h2>
   <div class="field"><label>Personnage</label>${isMJ()?`<input placeholder="🔎 Rechercher un personnage / monstre…" value="${esc(hotbarCharSearch)}" oninput="onHotbarCharSearch(this.value)" style="margin-bottom:6px">`:''}<div id="hotbarCharContainer">${hotbarCharSelectHtml()}</div></div>
   <label class="row" style="gap:8px;margin:10px 0"><input type="checkbox" ${hotbarIconOnly()?'checked':''} onchange="setHotbarIconOnly(this.checked);render()"> Afficher uniquement les icônes sur la table de jeu (grille de raccourcis)</label>
-  <p class="tiny muted">Rangement automatique par type (81 max). Glisse une capacité vers une case pour personnaliser, clic droit pour vider.</p><button class="btn" onclick="hotbarResetAuto()">↺ Rangement automatique</button>
+  <p class="tiny muted">Rangement automatique par type (81 max). Glisse une capacité vers une case pour personnaliser, clic droit pour vider.</p><button class="btn" onclick="hotbarResetAuto()">↺ Rangement automatique</button><div style="height:12px"></div>
   ${barsHtml}
   </div>
   <div class="card"><h2>Capacités disponibles</h2>
@@ -5539,9 +5570,12 @@ function hotbarCharSelectHtml(){
 }
 function onHotbarCharSearch(v){hotbarCharSearch=v;const c=document.getElementById('hotbarCharContainer');if(c)c.innerHTML=hotbarCharSelectHtml();}
 let hotbarDragItem=null;
-function hotbarDragStart(ev,itemId){hotbarDragItem=itemId;ev.dataTransfer.setData('text/plain',itemId);}
+let hotbarDragSrc=null;
+function hotbarCellDragStart(ev,bi,ci){hotbarDragSrc=[bi,ci];hotbarDragItem=null;ev.dataTransfer.setData('text/plain','cell');}
+function hotbarDragStart(ev,itemId){hotbarDragSrc=null;hotbarDragItem=itemId;ev.dataTransfer.setData('text/plain',itemId);}
 function hotbarDrop(ev,bi,ci){
   ev.preventDefault();
+  if(hotbarDragSrc){const [sb,sc]=hotbarDragSrc;hotbarDragSrc=null;const cf=charHotbar(hotbarEditChar);const tmp=cf.bars[bi][ci];cf.bars[bi][ci]=cf.bars[sb][sc];cf.bars[sb][sc]=tmp;cf.custom=true;saveCharHotbar(hotbarEditChar,cf);render();return;}
   const itemId=hotbarDragItem||ev.dataTransfer.getData('text/plain'); if(!itemId)return;
   const cfg=charHotbar(hotbarEditChar);
   cfg.bars[bi][ci]=itemId;cfg.custom=true;
