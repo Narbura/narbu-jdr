@@ -2928,7 +2928,7 @@ function finishGroupDrag(){
       changed=false;
     }
   }
-  if(changed){addLog(`↦ Le MJ déplace ${g.length} tokens.`);saveState();}
+  if(changed){if(!S.freeMovement)g.forEach(o=>{const t=inst(o.id);if(t){t.px=null;t.py=null;}});addLog(`↦ Le MJ déplace ${g.length} tokens.`);saveState();flushSave();}
   render();
 }
 function finishSelBox(){
