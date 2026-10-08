@@ -1233,7 +1233,7 @@ function syncConstitution(c){
   c.resourcesMax=c.resourcesMax||{};
   c.resourcesMax.Vie=maxHpFromCon(c.stats.Constitution);
   c.resourcesMax.Mana=Math.round((c.stats.Magie||0)*5); c.manaAuto=true;
-  S.instances.filter(i=>i.charId===c.id).forEach(i=>{i.hpMax=c.resourcesMax.Vie;i.hp=Math.min(i.hp,i.hpMax);i.manaMax=c.resourcesMax.Mana;i.mana=Math.min(i.mana,i.manaMax);});
+  S.instances.filter(i=>i.charId===c.id).forEach(i=>{i.hpMax=c.resourcesMax.Vie;i.bonusHp=0;refreshBonusHp(i,true);i.hp=Math.min(i.hp,i.hpMax);i.manaMax=c.resourcesMax.Mana;i.mana=Math.min(i.mana,i.manaMax);});
 }
 /* Si le niveau baisse : annule les gains de stats (les plus récents d'abord) tant que les points dépensés dépassent ceux du niveau */
 function reconcileLevelPoints(c){
@@ -1378,6 +1378,7 @@ function endTurnTick(t){
   t.statusEffects=(t.statusEffects||[]).filter(se=>{if(se.turnsLeft==null)return true;if(se.skipDec){delete se.skipDec;return true;}se.turnsLeft--;if(se.turnsLeft>0)return true;addLog(`🌀 <b>${esc(se.name)}</b> se termine sur <b>${esc(t.label)}</b>.`);return false;});
   tickDefModsEnd(t);
   t.bonuses=(t.bonuses||[]).filter(b=>{if(b.left==null)return true;if(b.skipDec){delete b.skipDec;return true;}b.left--;if(b.left>0)return true;const d=(S.bonusDefs||[]).find(x=>x.id===b.defId);addLog(`✨ Le bonus <b>${esc(d?d.name:'')}</b> se termine sur <b>${esc(t.label)}</b>.`);return false;});
+  refreshBonusHp(t);
   t.statBuffs=(t.statBuffs||[]).filter(b=>{if(b.turnsLeft==null)return true;b.turnsLeft--;if(b.turnsLeft>0)return true;addLog(`🧪 Le bonus de <b>${esc(b.name)}</b> (${esc(b.stat)}) se termine sur <b>${esc(t.label)}</b>.`);return false;});
 }
 function tickDefModsEnd(t){if(!t.defMods||!t.defMods.length)return;t.defMods.forEach(m=>{if(m.skipDec){delete m.skipDec;return;}if(m.turnsLeft!=null)m.turnsLeft--;});const end=t.defMods.filter(m=>m.turnsLeft!=null&&m.turnsLeft<=0);t.defMods=t.defMods.filter(m=>m.turnsLeft==null||m.turnsLeft>0);end.forEach(m=>{const a=S.abilities.find(x=>x.id===m.abilityId);addLog(`🛡 La réduction de défense « ${esc(a?a.name:'')} » se termine sur <b>${esc(t.label)}</b>.`);});}
@@ -1398,12 +1399,24 @@ function breakUntargetable(t,lines){
   t.afflictions=t.afflictions.filter(af=>!ids.includes(af));
   lines.push(`💥 ${esc(t.label)} : ${esc(ids.map(af=>((S.afflictionDefs||[]).find(x=>x.id===af.defId)||{}).name).join(', '))} annulée (touché·e par une zone).`);
 }
+function refreshBonusHp(t,keepHp){
+  const c=instTemplate(t); if(!c)return;
+  const bc=bonusList(t).reduce((n,d)=>n+((d.stats||{}).Constitution||0),0);
+  const con=c.stats?.Constitution||0;
+  const extra=bc?maxHpFromCon(con+bc)-maxHpFromCon(con):0, prev=t.bonusHp||0;
+  if(extra===prev)return;
+  t.hpMax+=extra-prev;
+  if(extra>prev&&!keepHp&&t.hp>0)t.hp+=extra-prev;
+  t.hp=Math.max(t.hp>0?1:0,Math.min(t.hp,t.hpMax));
+  t.bonusHp=extra;
+}
 function giveBonus(t,defId,nd,ci){
   const def=(S.bonusDefs||[]).find(d=>d.id===defId); if(!def)return null;
   t.bonuses=t.bonuses||[];
   const ex=t.bonuses.find(x=>x.defId===defId);
   if(ex){ex.left=maxDur(ex.left,nd);if(selfNow(ci,t))ex.skipDec=true;}
   else t.bonuses.push({defId,left:nd,skipDec:selfNow(ci,t)||undefined});
+  refreshBonusHp(t);
   return def;
 }
 function applyConsumableTo(t,def,ci,lines){
@@ -4126,6 +4139,7 @@ function saveBonusDef(id){
   t.ca=parseNum(document.getElementById('bn_ca').value); t.dm=parseNum(document.getElementById('bn_dm').value);
   t.extraTurn=document.getElementById('bn_extra').checked;
   if(!id)S.bonusDefs.push(t);
+  S.instances.forEach(i=>refreshBonusHp(i));
   saveState(); closeModal(); render();
 }
 function deleteBonusDef(id){
@@ -4133,6 +4147,7 @@ function deleteBonusDef(id){
   if(!askOk('Supprimer ce bonus ? Il sera retiré de tous les jetons.',()=>deleteBonusDef(id)))return;
   S.instances.forEach(t=>{t.bonuses=(t.bonuses||[]).filter(b=>b.defId!==id);});
   S.bonusDefs=(S.bonusDefs||[]).filter(x=>x.id!==id);
+  S.instances.forEach(t=>refreshBonusHp(t));
   saveState(); render();
 }
 function manageBonusesHtml(instId){
@@ -4151,6 +4166,7 @@ function addBonusMJ(instId){
 function removeBonusMJ(instId,defId){
   const t=inst(instId); if(!t)return;
   t.bonuses=(t.bonuses||[]).filter(b=>b.defId!==defId);
+  refreshBonusHp(t);
   saveState(); openManageAfflictions(instId);
 }
 function openManageAfflictions(instId){
@@ -4273,6 +4289,7 @@ function transformInstance(instId,targetCharId,allowRevert){
     t.shieldMax=newChar.resourcesMax?.Bouclier||0; t.shield=t.shieldMax;
   }
   t.isKO=false; t.movementBlocked=false; t.transformedByKO=false;
+  t.bonusHp=0; refreshBonusHp(t,true);
   return true;
 }
 function revertButtonHtml(selInst){
@@ -4660,7 +4677,7 @@ function saveCharacter(id){
   document.querySelectorAll('.cab-check').forEach(el=>{const ab=S.abilities.find(x=>x.id===el.value);if(!ab)return;ab.characterIds=ab.characterIds||[];const has=ab.characterIds.includes(c.id);if(el.checked&&!has)ab.characterIds.push(c.id);else if(!el.checked&&has)ab.characterIds=ab.characterIds.filter(x=>x!==c.id);});
   if(!id)S.characters.push(c);
   S.instances.filter(i=>i.charId===c.id).forEach(i=>{
-    i.hpMax=c.resourcesMax.Vie; i.manaMax=c.resourcesMax.Mana; i.shieldMax=c.resourcesMax.Bouclier;
+    i.hpMax=c.resourcesMax.Vie; i.bonusHp=0; refreshBonusHp(i,true); i.manaMax=c.resourcesMax.Mana; i.shieldMax=c.resourcesMax.Bouclier;
     i.hp=Math.min(i.hp,i.hpMax); i.mana=Math.min(i.mana,i.manaMax); i.shield=Math.min(i.shield,i.shieldMax);
     let newW=i.sizeW||1, newH=i.sizeH||1, sizeDirty=false;
     document.querySelectorAll(`#modal input[data-inst="${i.id}"][data-dirty="1"]`).forEach(el=>{
@@ -5034,7 +5051,7 @@ function toggleAbilityTypeFields(){
 }
 function filterAbilityCharList(){
   const q=(document.getElementById('a_char_search')?.value||'').trim().toLowerCase();
-  document.querySelectorAll('.ability-char-item').forEach(el=>{
+  document.querySelectorAll('#a_char_list .ability-char-item[data-name]').forEach(el=>{
     el.style.display=el.dataset.name.includes(q)?'grid':'none';
   });
 }
@@ -5615,9 +5632,9 @@ function myCharacterCard(c){
   const sim=pendingSim(c), availPts=statPointsAvailable(c), leftPts=availPts-sim.cost, pendSteps=pendingStats[c.id]||[];
   const showArrows=canAlloc&&(availPts>0||pendSteps.length>0);
   const statsHtml=Object.entries(c.stats||{}).filter(([k])=>c.type==='player'||!['Agilité','Social','Endurance','Artisanat'].includes(k)).map(([k,v])=>{
-    const nv=sim.vals[k]??v;
+    const nv=sim.vals[k]??v;const bn=effStat(c,S.instances.find(i=>i.charId===c.id),k)-(c.stats[k]||0);
     const arrows=showArrows?`<span style="display:inline-flex;gap:2px"><button class="btn ghost" style="padding:0 6px" onclick="statPointUp('${c.id}','${esc(k)}')">▲</button><button class="btn ghost" style="padding:0 6px" onclick="statPointDown('${c.id}','${esc(k)}')">▼</button></span>`:'';
-    return `<div class="stat"><label>${esc(k)}</label><div class="row between"><strong>${nv}${nv!==v?` <small style="color:var(--success)">(+${nv-v})</small>`:''}</strong>${arrows}</div></div>`;
+    return `<div class="stat"><label>${esc(k)}</label><div class="row between"><strong>${nv}${nv!==v?` <small style="color:var(--success)">(+${nv-v})</small>`:''}${bn?` <small style="color:var(--success)">(${bn>0?'+':''}${bn})</small>`:''}</strong>${arrows}</div></div>`;
   }).join('');
   const pointsBanner=showArrows?`<div class="stat" style="margin-bottom:8px"><label>✨ Points de caractéristique à répartir</label><div class="row between"><strong>${leftPts} / ${availPts}</strong>${pendSteps.length?`<span class="row" style="gap:6px"><button class="btn" onclick="cancelStatPoints('${c.id}')">Annuler</button><button class="btn primary" onclick="confirmStatPoints('${c.id}')">✔ Confirmer</button></span>`:''}</div></div>`:'';
   const myInst=S.instances.find(i=>i.charId===c.id);
