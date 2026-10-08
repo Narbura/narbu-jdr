@@ -1279,6 +1279,7 @@ function applyObjetAffliction(a,t,mult,ci,lines){
   if(a.objBonusId){const bd=giveBonus(t,a.objBonusId,a.objAffTurns>0?a.objAffTurns:null,ci);if(bd)lines.push(`✨ <b>${esc(t.label)}</b> reçoit le bonus <b>${esc(bd.name)}</b>`);}
   if(!a.objAffId)return;
   const def=(S.afflictionDefs||[]).find(d=>d.id===a.objAffId); if(!def)return;
+  if(affImmune(t)){lines.push(`🛡 <b>${esc(t.label)}</b> est immunisé·e aux afflictions.`);return;}
   t.afflictions=t.afflictions||[];
   const nd=a.objAffTurns>0?a.objAffTurns:null, ex=t.afflictions.find(x=>x.defId===def.id);
   if(ex){ex.left=maxDur(ex.left,nd);ex.src=ci?ci.id:ex.src;if(selfNow(ci,t))ex.skipDec=true;}
@@ -1332,7 +1333,7 @@ function affApplies(a,key,mult){return Array.isArray(a.buffAffDeg)?a.buffAffDeg.
 function applyBuffExtras(a,t,mult,ci,label){
   const key=degKey(label), out=[];
   if(mult>0)applyCritAff(a,t,label,ci,out);
-  if(a.buffAfflictionId&&affApplies(a,key,mult)){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=t.afflictions||[];{const nd=buffDur(a,mult),ex=t.afflictions.find(x=>x.defId===def.id);if(ex){ex.left=maxDur(ex.left,nd);ex.src=ci?ci.id:ex.src;if(selfNow(ci,t))ex.skipDec=true;}else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t),skipDec:selfNow(ci,t)||undefined});}out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${buffDur(a,mult)??'∞'} tour(s))`);}}
+  if(a.buffAfflictionId&&affApplies(a,key,mult)){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def&&affImmune(t))out.push(`🛡 <b>${esc(t.label)}</b> est immunisé·e aux afflictions.`);else if(def){t.afflictions=t.afflictions||[];{const nd=buffDur(a,mult),ex=t.afflictions.find(x=>x.defId===def.id);if(ex){ex.left=maxDur(ex.left,nd);ex.src=ci?ci.id:ex.src;if(selfNow(ci,t))ex.skipDec=true;}else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t),skipDec:selfNow(ci,t)||undefined});}out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${buffDur(a,mult)??'∞'} tour(s))`);}}
   if(a.buffBonusId&&(Array.isArray(a.buffBonusDeg)?a.buffBonusDeg.includes(key):mult>0)){const nd=buffDur(a,mult),bd=giveBonus(t,a.buffBonusId,nd,ci);if(bd)out.push(`✨ <b>${esc(t.label)}</b> reçoit le bonus <b>${esc(bd.name)}</b> (${nd??'∞'} tour(s))`);}
   const dv=defVals(a,key,mult);
   if(dv.ca||dv.dm){t.defMods=t.defMods||[];{const nd=buffDur(a,mult),ex=t.defMods.find(m=>m.abilityId===a.id);if(ex){ex.turnsLeft=maxDur(ex.turnsLeft,nd);ex.ca=dv.ca;ex.dm=dv.dm;if(selfNow(ci,t))ex.skipDec=true;}else t.defMods.push({abilityId:a.id,ca:dv.ca,dm:dv.dm,turnsLeft:nd,skipDec:selfNow(ci,t)||undefined});}
@@ -1392,6 +1393,7 @@ function scheduleGapClose(a,cid,tid,lines){
 }
 function bonusList(t){return ((t&&t.bonuses)||[]).map(b=>(S.bonusDefs||[]).find(d=>d.id===b.defId)).filter(Boolean);}
 function hasExtraTurn(t){return bonusList(t).some(d=>d.extraTurn);}
+function affImmune(t){const c=tplOf(t);return !!(c&&c.afflictionImmune);}
 function isUntargetable(t){return ((t&&t.afflictions)||[]).some(af=>{const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);return d&&d.untargetable;});}
 function breakUntargetable(t,lines,only){
   const ids=(t.afflictions||[]).filter(af=>{if(only&&!only.has(af))return false;const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);return d&&d.untargetable;});
@@ -4196,6 +4198,7 @@ function addAffliction(instId){
   t.afflictions=t.afflictions||[];
   if(t.afflictions.some(a=>a.defId===defId)){toast('⚠️ Déjà active sur ce jeton.');return;}
   const def=(S.afflictionDefs||[]).find(d=>d.id===defId);
+  if(affImmune(t)){toast('🛡 Ce personnage est immunisé aux afflictions.');return;}
   t.afflictions.push({defId,turns:0});
   addLog(`🩸 <b>${esc(t.label)}</b> est affecté par <b>${esc(def?.name||'')}</b>.`);
   saveState(); openManageAfflictions(instId);
@@ -4568,6 +4571,7 @@ function openCharacter(id){
     <option value="false" ${!base.hidden?'selected':''}>👁 Visible des joueurs</option>
     <option value="true" ${base.hidden?'selected':''}>🙈 Caché des joueurs (MJ uniquement)</option>
   </select></div>
+  <div class="field full"><label><input type="checkbox" id="c_affimmune" ${base.afflictionImmune?'checked':''}> 🛡 Immunité aux afflictions (les bonus restent applicables)</label></div>
   <div id="char_bio_fields" style="grid-column:1/-1;display:${base.type==='merchant'?'none':''}">${bioHtml}</div>
 </div></div>
   <div id="charTabStats" style="display:none"><div class="form">
@@ -4637,6 +4641,8 @@ function saveCharacter(id){
   c.ownerId=document.getElementById('c_owner').value||null;
   c.categoryId=document.getElementById('c_category').value||null;
   c.hidden=document.getElementById('c_hidden').value==='true';
+  c.afflictionImmune=!!document.getElementById('c_affimmune')?.checked;
+  if(c.afflictionImmune)S.instances.filter(i=>i.charId===c.id).forEach(i=>{i.afflictions=[];});
   if(c.type==='merchant')c.merchant=merchDraft;
   c.critDurabilityDmg=Math.max(0,parseNum(document.getElementById('c_critdur').value)||0);
   c.ultimateDurabilityDmg=Math.max(0,parseNum(document.getElementById('c_ultdur').value)||0);
@@ -4840,6 +4846,7 @@ function applyCritAff(a,t,label,ci,lines){
   const k=label==='Réussite critique'?'cri':label==='Réussite ultime'?'ult':null; const c=k&&a.critAff&&a.critAff[k]; if(!c||(!c.id&&!c.bonusId))return;
   if(c.bonusId){const bd=giveBonus(t,c.bonusId,c.turns>0?c.turns:null,ci);if(bd)lines.push(`✨ <b>${esc(t.label)}</b> reçoit le bonus <b>${esc(bd.name)}</b> (${c.turns>0?c.turns+' tour(s)':"jusqu'au retrait"})`);}
   const def=(S.afflictionDefs||[]).find(d=>d.id===c.id); if(!def)return;
+  if(affImmune(t)){lines.push(`🛡 <b>${esc(t.label)}</b> est immunisé·e aux afflictions.`);return;}
   t.afflictions=t.afflictions||[];
   const nd=c.turns>0?c.turns:null, ex=t.afflictions.find(x=>x.defId===def.id);
   if(ex){ex.left=maxDur(ex.left,nd);ex.src=ci?ci.id:ex.src;if(selfNow(ci,t))ex.skipDec=true;}
