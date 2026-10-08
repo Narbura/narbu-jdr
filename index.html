@@ -3951,7 +3951,16 @@ function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride
   if(a.manaCost>0)casterInst.mana=Math.max(0,casterInst.mana-a.manaCost);
   applyCooldown(a,casterInst);
   const casterTpl=instTemplate(casterInst);
-  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:effStat(casterTpl,casterInst,a.stat),casterLabel:casterInst.label,casterInstId:casterInst.id,turnsLeft:a.duration||3,effect:a.effect,zoneImage:a.zoneImage||null};
+  const atkExpr=a.atkDice||'1d100', atkRoll=roll(atkExpr), atk=atkRoll.total;
+  const oc=outcome(atk), label=oc[0], mult=oc[1];
+  broadcastDiceRoll(formulaSides(atkExpr),atkRoll.rolls);
+  broadcastCritical(casterInst.id,label);
+  if(mult===0){
+    addLog([`🌫️ <b>${esc(casterInst.label)}</b> tente d'invoquer <b>${esc(a.name)}</b> mais échoue (🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...degDesc(a,label)].join('<br>'));
+    activeAbility=null; hoverCell=null; afterCast(a,casterInst); saveState(); render(); return;
+  }
+  const zTurns=((a.persDur||{})[degKey(label)])||a.duration||3;
+  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:effStat(casterTpl,casterInst,a.stat),casterLabel:casterInst.label,casterInstId:casterInst.id,turnsLeft:zTurns,effect:a.effect,zoneImage:a.zoneImage||null,affId:a.pzAffId||null,bonusId:a.pzBonusId||null,affThr:a.pzThr||50,affTurns:a.pzTurns||null};
   if(a.area==='line'||a.area==='cone'){
     const axis=axisOverride||zoneAxis(a,start,originOverride,a.zoneRange||a.range||1);
     if(!axis){toast('Sélectionne d’abord un personnage.');return;}
@@ -3965,7 +3974,7 @@ function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride
     zone.y=Math.max(0,Math.min(S.map.rows-size,start[1]));
   }
   S.persistentZones.push(zone);
-  addLog([`🌫️ <b>${esc(casterInst.label)}</b> invoque <b>${esc(a.name)}</b> (zone persistante, ${zone.turnsLeft} tour(s)).`,...(descHtml(a.desc)?[descHtml(a.desc)]:[])].join('<br>'));
+  addLog([`🌫️ <b>${esc(casterInst.label)}</b> invoque <b>${esc(a.name)}</b> (zone persistante, ${zone.turnsLeft} tour(s), 🎲 ${esc(atkExpr)} : ${atk} → ${label}).`,...(descHtml(a.desc)?[descHtml(a.desc)]:[]),...degDesc(a,label)].join('<br>'));
   activeAbility=null; hoverCell=null;
   afterCast(a,casterInst);
   saveState(); render();
@@ -4017,7 +4026,29 @@ function applyPersistentZones(nt,onlyDamage){
       {const l=[];breakUntargetable(nt,l);if(l.length)addLog(l.join('<br>'));}
       if(nt.hp<=0){addLog(`💀 <b>${esc(nt.label)} est KO</b>.`);handleInstanceDeath(nt,killer);}
     }
+    zoneStatus(z,nt);
   });
+}
+function zoneStatus(z,nt){
+  if(!z.affId&&!z.bonusId)return;
+  if(!inst(nt.id)||nt.isKO)return;
+  const r=roll('1d100').total, thr=z.affThr||50;
+  if(r<=thr){addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : 🎲 d100 = ${r} (seuil ${thr}) — pas d'effet supplémentaire.`);return;}
+  const lines=[`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : 🎲 d100 = ${r} (> ${thr})`];
+  const nd=z.affTurns>0?z.affTurns:null;
+  if(z.bonusId){const bd=giveBonus(nt,z.bonusId,nd,nt);if(bd)lines.push(`✨ reçoit le bonus <b>${esc(bd.name)}</b>`);}
+  const def=z.affId&&(S.afflictionDefs||[]).find(d=>d.id===z.affId);
+  if(def){
+    if(affImmune(nt,def.id))lines.push(`🛡 immunisé·e à ${esc(def.name)}`);
+    else{
+      nt.afflictions=nt.afflictions||[];
+      const ex=nt.afflictions.find(x=>x.defId===def.id), own=selfNow(nt,nt);
+      if(ex){ex.left=maxDur(ex.left,nd);if(own)ex.skipDec=true;}
+      else nt.afflictions.push({defId:def.id,turns:0,left:nd,src:z.casterInstId||null,fresh:own,skipDec:own||undefined});
+      lines.push(`🩸 subit <b>${esc(def.name)}</b> (${nd?nd+' tour(s)':"jusqu'au retrait"})`);
+    }
+  }
+  addLog(lines.join('<br>'));
 }
 function decayPersistentZones(cid,wrap){
   if(!S.persistentZones||!S.persistentZones.length)return;
@@ -4914,6 +4945,7 @@ function openAbility(id,charId){
   <div class="field" id="ability_passif_extra" style="display:${a.type==='Passif'?'':'none'}"><label>Effet de l'aura</label><select id="a_auraeffect">${opt('damage','Dégâts',a.auraEffect)}${opt('heal','Soin',a.auraEffect)}${opt('shield','Bouclier',a.auraEffect)}</select><p class="tiny muted">Aura auto-centrée sur le lanceur (zone = Carré ou Cercle uniquement), se déclenche à chaque début de son tour.</p></div>
   <div class="field" id="ability_buff_extra" style="display:${(a.type==='Buff'||a.type==='Persistant')?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.type==='Buff'?(a.duration||''):(a.duration||3)}" placeholder="${a.type==='Buff'?'vide = permanent':''}"><p class="tiny muted">${a.type==='Persistant'?"Nombre de tours avant que la zone persistante ne s'estompe. Chaque token qui commence son tour dans la zone subit l'effet (calculé comme si le lanceur agissait à chaque fois).":"Cible unique ou zone (voir champ Zone ci-dessous). Effet auto à chaque début de tour de la/les cible(s) pendant N tours. Choisis toi-même la défense ciblée (dont « Aucune »)."}</p></div>
   <div class="field full" id="ability_buff_extra2" style="display:${a.type==='Buff'?'':'none'}"><label>🩸 Affliction appliquée</label><select id="a_buffaff">${opt('','— Aucune —',a.buffAfflictionId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.buffAfflictionId||'')).join('')}</select><label style="margin-top:8px">✨ Bonus appliqué</label><select id="a_buffbonus">${opt('','— Aucun —',a.buffBonusId||'')}${(S.bonusDefs||[]).map(d=>opt(d.id,d.name,a.buffBonusId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px;flex-wrap:wrap"><div class="field" style="max-width:110px"><label>CA − (défaut)</label><input id="a_buffca" type="number" min="0" value="${a.buffCaRed||0}"></div><div class="field" style="max-width:110px"><label>DM − (défaut)</label><input id="a_buffdm" type="number" min="0" value="${a.buffDmRed||0}"></div><div class="field" style="max-width:110px"><label>CA + (défaut)</label><input id="a_buffcaup" type="number" min="0" value="${a.buffCaUp||0}"></div><div class="field" style="max-width:110px"><label>DM + (défaut)</label><input id="a_buffdmup" type="number" min="0" value="${a.buffDmUp||0}"></div></div><label style="margin-top:8px">Réglage par degré de réussite / d'échec</label><div style="overflow:auto"><table class="tiny" style="border-collapse:collapse;width:100%"><tr><th style="text-align:left">Degré</th><th>Affliction</th><th>Bonus</th><th>Durée</th><th>CA −</th><th>DM −</th><th>CA +</th><th>DM +</th></tr>${DEGREES.map(([k,l])=>{const o=(a.defBy||{})[k]||{};const on=Array.isArray(a.buffAffDeg)?a.buffAffDeg.includes(k):['leg','rea','gra','cri','ult'].includes(k);const ip=f=>`<td><input id="a_db_${k}_${f}" type="number" min="0" value="${o[f]||''}" style="width:56px"></td>`;return `<tr><td>${l}</td><td style="text-align:center"><input type="checkbox" id="a_da_${k}" ${on?'checked':''}></td><td style="text-align:center"><input type="checkbox" id="a_ba_${k}" ${(Array.isArray(a.buffBonusDeg)?a.buffBonusDeg.includes(k):['leg','rea','gra','cri','ult'].includes(k))?'checked':''}></td><td><input id="a_dur${k}" type="number" min="1" value="${(a.durBy||{})[k]||''}" style="width:56px"></td>${ip('caRed')}${ip('dmRed')}${ip('caUp')}${ip('dmUp')}</tr>`;}).join('')}</table></div><p class="tiny muted">Case Affliction cochée = l'affliction s'applique à ce degré. Durée vide = champ Durée général (vide aussi = permanent jusqu'à dissipation). Si une ligne contient des valeurs de CA/DM, elles remplacent les valeurs par défaut pour ce degré ; ligne vide = valeurs par défaut (réussites seulement). Mets la formule à 0 si tu ne veux aucun dégât/soin par tour.</p></div>
+  <div class="field full" id="ability_pers_extra" style="display:${a.type==='Persistant'?'':'none'}"><label>⏱ Durée de la zone selon le jet (tours — vide = durée générale ; en cas d'échec la zone ne s'active pas)</label><div class="row" style="gap:6px;flex-wrap:wrap">${DEGREES.filter(([k])=>['leg','rea','gra','cri','ult'].includes(k)).map(([k,l])=>`<div class="field" style="max-width:120px"><label>${l}</label><input id="a_pd_${k}" type="number" min="1" value="${(a.persDur||{})[k]||''}"></div>`).join('')}</div><label style="margin-top:8px">🩸 Affliction appliquée aux personnages touchés</label><select id="a_pz_aff">${opt('','— Aucune —',a.pzAffId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.pzAffId||'')).join('')}</select><label style="margin-top:8px">✨ Bonus appliqué aux personnages touchés</label><select id="a_pz_bonus">${opt('','— Aucun —',a.pzBonusId||'')}${(S.bonusDefs||[]).map(d=>opt(d.id,d.name,a.pzBonusId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px;flex-wrap:wrap"><div class="field" style="max-width:200px"><label>Seuil (1-100) : s'applique si le d100 est au-dessus</label><input id="a_pz_thr" type="number" min="1" max="100" value="${a.pzThr||50}"></div><div class="field" style="max-width:200px"><label>Durée affliction/bonus (tours, vide = jusqu'au retrait)</label><input id="a_pz_turns" type="number" min="1" value="${a.pzTurns||''}"></div></div><p class="tiny muted">À chaque fois qu'un personnage subit dégâts/soin/bouclier de la zone, il lance 1d100 ; si le résultat dépasse le seuil, l'affliction/bonus s'applique.</p></div>
   <div class="field full" id="ability_objet_extra" style="display:${a.type==='Objet'?'':'none'}"><label>🎒 Objet divers consommé à chaque utilisation</label><select id="a_objeteffect" style="margin-bottom:6px">${opt('damage','Effet : dégâts',a.objetEffect||'damage')}${opt('heal','Effet : soin',a.objetEffect||'damage')}${opt('shield','Effet : bouclier',a.objetEffect||'damage')}${opt('mana','Effet : mana',a.objetEffect||'damage')}</select><select id="a_itemeq" onchange="toggleConsThresh()">${opt('','— Choisir —',a.itemEqId||'')}${(S.equipment||[]).filter(e=>e.itemType==='divers').map(e=>opt(e.id,e.name,a.itemEqId||'')).join('')}</select><div id="a_consthresh_field" style="display:${isConsDef(a.itemEqId)?'':'none'};margin-top:8px"><label>🎯 Le consommable fait effet si le jet est inférieur à (ex : 96 = effet pour 95 ou moins ; vide = toujours)</label><input id="a_consthresh" type="number" min="1" value="${a.consThreshold||''}"></div><label style="margin-top:8px">🩸 Affliction appliquée si réussite</label><select id="a_objaff">${opt('','— Aucune —',a.objAffId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.objAffId||'')).join('')}</select><label style="margin-top:8px">✨ Bonus appliqué si réussite</label><select id="a_objbonus">${opt('','— Aucun —',a.objBonusId||'')}${(S.bonusDefs||[]).map(d=>opt(d.id,d.name,a.objBonusId||'')).join('')}</select><label style="margin-top:8px">Durée de l'affliction / du bonus (tours — vide = jusqu'au retrait par le MJ)</label><input id="a_objaffturns" type="number" min="1" value="${a.objAffTurns||''}"></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
     <div class="field full"><label>Se transforme en</label>
@@ -5072,6 +5104,7 @@ function toggleAbilityTypeFields(){
   document.getElementById('ability_buff_extra').style.display=(val==='Buff'||val==='Persistant')?'':'none';
   document.getElementById('ability_buff_extra2').style.display=val==='Buff'?'':'none';
   document.getElementById('ability_objet_extra').style.display=val==='Objet'?'':'none';
+  document.getElementById('ability_pers_extra').style.display=val==='Persistant'?'':'none';
   toggleAreaFields();
 }
 function filterAbilityCharList(){
@@ -5165,6 +5198,11 @@ function saveAbility(id,charId){
     target.defBy={};DEGREES.forEach(([k])=>{const o={};['caRed','dmRed','caUp','dmUp'].forEach(f=>{const v=Math.max(0,parseNum(document.getElementById(`a_db_${k}_${f}`)?.value));if(v>0)o[f]=v;});if(Object.keys(o).length)target.defBy[k]=o;});
     target.buffAffDeg=DEGREES.filter(([k])=>document.getElementById('a_da_'+k)?.checked).map(([k])=>k);
     target.buffBonusId=document.getElementById('a_buffbonus')?.value||null;
+    target.persDur={};['leg','rea','gra','cri','ult'].forEach(k=>{const v=Math.floor(+(document.getElementById('a_pd_'+k)?.value)||0);if(v>0)target.persDur[k]=v;});
+    target.pzAffId=target.type==='Persistant'?(document.getElementById('a_pz_aff')?.value||null):null;
+    target.pzBonusId=target.type==='Persistant'?(document.getElementById('a_pz_bonus')?.value||null):null;
+    target.pzThr=Math.max(1,Math.min(100,Math.floor(+document.getElementById('a_pz_thr')?.value||50)));
+    target.pzTurns=Math.floor(+document.getElementById('a_pz_turns')?.value||0)||null;
     target.buffBonusDeg=DEGREES.filter(([k])=>document.getElementById('a_ba_'+k)?.checked).map(([k])=>k);
     if(target.area==='me'){target.range=0;target.areaSize=1;target.gapClose=false;}
     if(target.type==='Passif'){
