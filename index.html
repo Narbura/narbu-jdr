@@ -1393,8 +1393,8 @@ function scheduleGapClose(a,cid,tid,lines){
 function bonusList(t){return ((t&&t.bonuses)||[]).map(b=>(S.bonusDefs||[]).find(d=>d.id===b.defId)).filter(Boolean);}
 function hasExtraTurn(t){return bonusList(t).some(d=>d.extraTurn);}
 function isUntargetable(t){return ((t&&t.afflictions)||[]).some(af=>{const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);return d&&d.untargetable;});}
-function breakUntargetable(t,lines){
-  const ids=(t.afflictions||[]).filter(af=>{const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);return d&&d.untargetable;});
+function breakUntargetable(t,lines,only){
+  const ids=(t.afflictions||[]).filter(af=>{if(only&&!only.has(af))return false;const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);return d&&d.untargetable;});
   if(!ids.length)return;
   t.afflictions=t.afflictions.filter(af=>!ids.includes(af));
   lines.push(`💥 ${esc(t.label)} : ${esc(ids.map(af=>((S.afflictionDefs||[]).find(x=>x.id===af.defId)||{}).name).join(', '))} annulée (touché·e par une zone).`);
@@ -3737,6 +3737,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     activeAbility=null; hoverCell=null; saveState(); render(); return;
   }
 
+  const preAff=new Set(); targets.forEach(t=>(t.afflictions||[]).forEach(af=>preAff.add(af)));
   // Pour les sorts de zone (AoE) : un seul jet de dés partagé, appliqué à toutes les cibles.
   const isAoE=a.area!=='single'&&a.area!=='me';
   let sharedRoll=null, sharedElems=null;
@@ -3825,7 +3826,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     }
   }
 
-  if(isAoE&&a.type!=='Soin'&&a.type!=='Bouclier'&&mult>0)targets.forEach(t=>{if(inst(t.id))breakUntargetable(t,lines);});
+  if(isAoE&&a.type!=='Soin'&&a.type!=='Bouclier'&&mult>0)targets.forEach(t=>{if(inst(t.id))breakUntargetable(t,lines,preAff);});
   if(a.gapClose&&a.area==='single'&&explicitTargetInstId&&inst(explicitTargetInstId)&&inst(casterInst.id))scheduleGapClose(a,casterInst.id,explicitTargetInstId,lines);
   {const ar=advRows.sort((x,y)=>(x.k==='sh'?0:1)-(y.k==='sh'?0:1));addLog(lines.join('<br>'),cl.join('<br>'),advCardHtml(casterInst,a,label,ar,advSum));}
   activeAbility=null; hoverCell=null;
