@@ -356,6 +356,7 @@ function normalizeState(){
   if(S.notesReveal===undefined)S.notesReveal=null;
   if(!S.shopOffer)S.shopOffer={ts:0,itemIds:[]};
   if(!S.afflictionDefs)S.afflictionDefs=[];
+  if(!S.bonusDefs)S.bonusDefs=[];
   if(!S.statTestIcons)S.statTestIcons={};
   STAT_TESTS.forEach(k=>{ if(!S.statTestIcons[k])S.statTestIcons[k]={icon:'🎲',iconImage:null}; });
   if(!S.diceSettings)S.diceSettings={image:null,frames:20,rows:4,fps:24};
@@ -382,6 +383,7 @@ function normalizeState(){
     if(t.sizeW===undefined)t.sizeW=1;
     if(t.sizeH===undefined)t.sizeH=1;
     if(!Array.isArray(t.afflictions))t.afflictions=[];
+    if(!Array.isArray(t.bonuses))t.bonuses=[];
     if(!Array.isArray(t.activeAuras))t.activeAuras=[];
     if(!Array.isArray(t.statusEffects))t.statusEffects=[];
     if(!Array.isArray(t.statBuffs))t.statBuffs=[];
@@ -552,7 +554,7 @@ async function loadProfiles(){
 }
 /* ============================= SYNCHRONISATION SUPABASE (6 tables, écritures ciblées) ============================= */
 const SID='main';
-const SETTINGS_KEYS=['freeMovement','friendlyFire','hudEnabled','hudSettings','diceSettings','levelUpSettings','statTestIcons','characterCategories','noteCategories','notesReveal','shopOffer','charReveal','rowsMigrated','multiToken'];
+const SETTINGS_KEYS=['freeMovement','friendlyFire','hudEnabled','hudSettings','diceSettings','levelUpSettings','statTestIcons','characterCategories','noteCategories','notesReveal','shopOffer','charReveal','rowsMigrated','multiToken','bonusDefs'];
 const COL_SPECS=[
   {k:'combat',t:'game_sessions',pk:'id',c:'combat_state',get:()=>S.combat,set:v=>{S.combat=v;}},
   {k:'settings',t:'game_sessions',pk:'id',c:'settings',get:()=>{const o={};SETTINGS_KEYS.forEach(k=>{o[k]=S[k]===undefined?null:S[k];});return o;},set:v=>{SETTINGS_KEYS.forEach(k=>{if(v[k]!==null&&v[k]!==undefined)S[k]=v[k];});}},
@@ -1261,7 +1263,8 @@ function instTemplate(instance){return instance?char(instance.charId):null;}
 function abOf(id,charId){const a=S.abilities.find(x=>x.id===id);if(!a)return a;const c=charId?char(charId):null;const o=c&&c.abilityOverrides&&c.abilityOverrides[id];return o?{...a,...o}:a;}
 function curAb(id){const t=selectedToken?inst(selectedToken):null;return abOf(id,t&&t.charId);}
 function characterAbilities(charId){if(!charId)return [];const c=char(charId);return S.abilities.filter(a=>(a.characterIds||[]).includes(charId)&&(a.type!=='Objet'||objetCount(c,a)>0)).map(a=>abOf(a.id,charId));}
-function effAb(a){if(a&&a.type==='Objet'&&(a.objetEffect==='heal'||a.objetEffect==='shield'||a.objetEffect==='mana'))return {...a,type:a.objetEffect==='shield'?'Bouclier':'Soin',_objet:true,_mana:a.objetEffect==='mana'};return a;}
+function isConsDef(id){return ((equip(id)||{}).diversCat)==='consommable';}
+function effAb(a){if(a&&a.type==='Objet'&&isConsDef(a.itemEqId))return {...a,type:'Soin',_objet:true,_cons:true};if(a&&a.type==='Objet'&&(a.objetEffect==='heal'||a.objetEffect==='shield'||a.objetEffect==='mana'))return {...a,type:a.objetEffect==='shield'?'Bouclier':'Soin',_objet:true,_mana:a.objetEffect==='mana'};return a;}
 function forcedTarget(ci){for(const af of (ci.afflictions||[])){const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);if(d&&d.forceAttack&&af.src){const t=inst(af.src);if(t&&!t.isKO&&t.id!==ci.id)return t;}}return null;}
 function objetCount(c,a){if(!a||!a.itemEqId)return 0;return ((c&&c.bag)||[]).filter(b=>b.eqId===a.itemEqId).reduce((n,b)=>n+(b.qty||1),0);}
 function consumeObjet(ci,a){const c=instTemplate(ci);if(!c)return;const st=(c.bag||[]).find(b=>b.eqId===a.itemEqId&&(b.qty||1)>0);if(!st)return;st.qty=(st.qty||1)-1;if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);const e=equip(a.itemEqId);addLog(`🎒 <b>${esc(ci.label)}</b> utilise <b>${esc(e?e.name:'un objet')}</b> (reste ${objetCount(c,a)}).`);}
@@ -1272,7 +1275,9 @@ function addDur(o,n){return (o==null||n==null)?null:o+n;}
 let _deg=null;
 function buffDur(a,mult){const k=_deg?degKey(_deg):(mult>=4?'ult':mult>=2?'cri':mult>=1.5?'gra':mult>=1?'rea':'leg');const v=a.durBy&&a.durBy[k];if(v>0)return v;return a.duration>0?a.duration:null;}
 function applyObjetAffliction(a,t,mult,ci,lines){
-  if(!(mult>0)||!a.objAffId)return;
+  if(!(mult>0))return;
+  if(a.objBonusId){const bd=giveBonus(t,a.objBonusId,a.objAffTurns>0?a.objAffTurns:null,ci);if(bd)lines.push(`✨ <b>${esc(t.label)}</b> reçoit le bonus <b>${esc(bd.name)}</b>`);}
+  if(!a.objAffId)return;
   const def=(S.afflictionDefs||[]).find(d=>d.id===a.objAffId); if(!def)return;
   t.afflictions=t.afflictions||[];
   const nd=a.objAffTurns>0?a.objAffTurns:null, ex=t.afflictions.find(x=>x.defId===def.id);
@@ -1290,12 +1295,14 @@ const REQ_MSG="La cible n'a pas les conditions requise pour être la cible de ce
 function targetHasReq(a,t){
   if(!a||!a.reqOn||!a.reqId)return true;
   const id=a.reqId.slice(3);
+  if(a.reqId.startsWith('bo:'))return (t.bonuses||[]).some(x=>x.defId===id);
   if(a.reqId.startsWith('af:'))return (t.afflictions||[]).some(x=>x.defId===id);
   return (t.statusEffects||[]).some(x=>x.abilityId===id)||(t.defMods||[]).some(m=>m.abilityId===id)||(S.persistentZones||[]).some(z=>z.abilityId===id&&tokenInPersistentZone(t,z));
 }
 function reqLabel(v){
   if(!v)return '— Choisir —';
   const id=v.slice(3);
+  if(v.startsWith('bo:')){const d=(S.bonusDefs||[]).find(x=>x.id===id);return d?'✨ '+d.name:'— Choisir —';}
   if(v.startsWith('af:')){const d=(S.afflictionDefs||[]).find(x=>x.id===id);return d?'🩸 '+d.name:'— Choisir —';}
   const x=S.abilities.find(y=>y.id===id);return x?'✨ '+x.name:'— Choisir —';
 }
@@ -1305,7 +1312,8 @@ function reqListHtml(){
   const it=(v,l)=>`<div class="asset-item" style="cursor:pointer" onclick="selectReq('${esc(v)}')">${l}</div>`;
   const af=(S.afflictionDefs||[]).filter(d=>ok(d.name)).map(d=>it('af:'+d.id,'🩸 '+esc(d.name))).join('');
   const ab=S.abilities.filter(x=>(x.type==='Buff'||x.type==='Persistant')&&ok(x.name)).map(x=>it('ab:'+x.id,'✨ '+esc(x.name))).join('');
-  return it('','— Aucune —')+af+ab;
+  const bo=(S.bonusDefs||[]).filter(d=>ok(d.name)).map(d=>it('bo:'+d.id,'✨ '+esc(d.name))).join('');
+  return it('','— Aucune —')+af+bo+ab;
 }
 function filterReqPick(){const l=document.getElementById('a_req_list');if(l)l.innerHTML=reqListHtml();}
 function toggleReqPanel(){const p=document.getElementById('a_req_panel');if(p)p.style.display=p.style.display==='none'?'block':'none';}
@@ -1325,6 +1333,7 @@ function applyBuffExtras(a,t,mult,ci,label){
   const key=degKey(label), out=[];
   if(mult>0)applyCritAff(a,t,label,ci,out);
   if(a.buffAfflictionId&&affApplies(a,key,mult)){const def=(S.afflictionDefs||[]).find(d=>d.id===a.buffAfflictionId);if(def){t.afflictions=t.afflictions||[];{const nd=buffDur(a,mult),ex=t.afflictions.find(x=>x.defId===def.id);if(ex){ex.left=maxDur(ex.left,nd);ex.src=ci?ci.id:ex.src;if(selfNow(ci,t))ex.skipDec=true;}else t.afflictions.push({defId:def.id,turns:0,left:nd,src:ci?ci.id:null,fresh:selfNow(ci,t),skipDec:selfNow(ci,t)||undefined});}out.push(`🩸 <b>${esc(t.label)}</b> subit <b>${esc(def.name)}</b> (${buffDur(a,mult)??'∞'} tour(s))`);}}
+  if(a.buffBonusId&&(Array.isArray(a.buffBonusDeg)?a.buffBonusDeg.includes(key):mult>0)){const nd=buffDur(a,mult),bd=giveBonus(t,a.buffBonusId,nd,ci);if(bd)out.push(`✨ <b>${esc(t.label)}</b> reçoit le bonus <b>${esc(bd.name)}</b> (${nd??'∞'} tour(s))`);}
   const dv=defVals(a,key,mult);
   if(dv.ca||dv.dm){t.defMods=t.defMods||[];{const nd=buffDur(a,mult),ex=t.defMods.find(m=>m.abilityId===a.id);if(ex){ex.turnsLeft=maxDur(ex.turnsLeft,nd);ex.ca=dv.ca;ex.dm=dv.dm;if(selfNow(ci,t))ex.skipDec=true;}else t.defMods.push({abilityId:a.id,ca:dv.ca,dm:dv.dm,turnsLeft:nd,skipDec:selfNow(ci,t)||undefined});}
     const f=(n,l)=>n?`${l} ${n>0?'−':'+'}${Math.abs(n)} `:'';
@@ -1368,6 +1377,7 @@ function endTurnTick(t){
   t.afflictions=(t.afflictions||[]).filter(af=>{if(af.left==null)return true;if(af.skipDec){delete af.skipDec;return true;}af.left--;if(af.left>0)return true;const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);addLog(`🩸 <b>${esc(d?d.name:'')}</b> se termine sur <b>${esc(t.label)}</b>.`);return false;});
   t.statusEffects=(t.statusEffects||[]).filter(se=>{if(se.turnsLeft==null)return true;if(se.skipDec){delete se.skipDec;return true;}se.turnsLeft--;if(se.turnsLeft>0)return true;addLog(`🌀 <b>${esc(se.name)}</b> se termine sur <b>${esc(t.label)}</b>.`);return false;});
   tickDefModsEnd(t);
+  t.bonuses=(t.bonuses||[]).filter(b=>{if(b.left==null)return true;if(b.skipDec){delete b.skipDec;return true;}b.left--;if(b.left>0)return true;const d=(S.bonusDefs||[]).find(x=>x.id===b.defId);addLog(`✨ Le bonus <b>${esc(d?d.name:'')}</b> se termine sur <b>${esc(t.label)}</b>.`);return false;});
   t.statBuffs=(t.statBuffs||[]).filter(b=>{if(b.turnsLeft==null)return true;b.turnsLeft--;if(b.turnsLeft>0)return true;addLog(`🧪 Le bonus de <b>${esc(b.name)}</b> (${esc(b.stat)}) se termine sur <b>${esc(t.label)}</b>.`);return false;});
 }
 function tickDefModsEnd(t){if(!t.defMods||!t.defMods.length)return;t.defMods.forEach(m=>{if(m.skipDec){delete m.skipDec;return;}if(m.turnsLeft!=null)m.turnsLeft--;});const end=t.defMods.filter(m=>m.turnsLeft!=null&&m.turnsLeft<=0);t.defMods=t.defMods.filter(m=>m.turnsLeft==null||m.turnsLeft>0);end.forEach(m=>{const a=S.abilities.find(x=>x.id===m.abilityId);addLog(`🛡 La réduction de défense « ${esc(a?a.name:'')} » se termine sur <b>${esc(t.label)}</b>.`);});}
@@ -1379,7 +1389,34 @@ function scheduleGapClose(a,cid,tid,lines){
     setTimeout(()=>{const c2=inst(cid),t2=inst(tid);if(!c2||!t2||c2.isKO)return;const l=[];gapCloseToTarget(c2,t2,a.range,l);if(l.length)addLog(l.join('<br>'));saveState();render();},delay);
   }else gapCloseToTarget(ci,ti,a.range,lines);
 }
-function effStat(tpl,t,stat){let v=(tpl&&tpl.stats&&tpl.stats[stat])||0;((t&&t.statBuffs)||[]).forEach(b=>{if(b.stat===stat)v+=b.amount;});return v;}
+function bonusList(t){return ((t&&t.bonuses)||[]).map(b=>(S.bonusDefs||[]).find(d=>d.id===b.defId)).filter(Boolean);}
+function hasExtraTurn(t){return bonusList(t).some(d=>d.extraTurn);}
+function isUntargetable(t){return ((t&&t.afflictions)||[]).some(af=>{const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);return d&&d.untargetable;});}
+function breakUntargetable(t,lines){
+  const ids=(t.afflictions||[]).filter(af=>{const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);return d&&d.untargetable;});
+  if(!ids.length)return;
+  t.afflictions=t.afflictions.filter(af=>!ids.includes(af));
+  lines.push(`💥 ${esc(t.label)} : ${esc(ids.map(af=>((S.afflictionDefs||[]).find(x=>x.id===af.defId)||{}).name).join(', '))} annulée (touché·e par une zone).`);
+}
+function giveBonus(t,defId,nd,ci){
+  const def=(S.bonusDefs||[]).find(d=>d.id===defId); if(!def)return null;
+  t.bonuses=t.bonuses||[];
+  const ex=t.bonuses.find(x=>x.defId===defId);
+  if(ex){ex.left=maxDur(ex.left,nd);if(selfNow(ci,t))ex.skipDec=true;}
+  else t.bonuses.push({defId,left:nd,skipDec:selfNow(ci,t)||undefined});
+  return def;
+}
+function applyConsumableTo(t,def,ci,lines){
+  const amt=def.useAmount||0,isMana=def.useResource==='Mana',bD=Math.max(1,def.useDuration||1);
+  if(amt>0){
+    if(isMana){t.mana=Math.min(t.manaMax,t.mana+amt);lines.push(`💧 ${esc(t.label)} : +${amt} mana (${t.mana}/${t.manaMax})`);broadcastHud(t.id,{mana:amt});}
+    else if(t.isKO&&!S.combat.active){t.isKO=false;t.movementBlocked=false;t.hp=1;lines.push(`✨ ${esc(t.label)} est relevé·e à 1 PV.`);broadcastHud(t.id,{hp:1});}
+    else{t.hp=Math.min(t.hpMax,t.hp+amt);lines.push(`💚 ${esc(t.label)} : +${amt} PV (${t.hp}/${t.hpMax})`);broadcastHud(t.id,{hp:amt});}
+  }
+  t.statBuffs=(t.statBuffs||[]).filter(b=>b.eqId!==def.id);
+  [['Force',def.useForce||0],['Magie',def.useMagie||0]].forEach(([k,v])=>{if(v>0){t.statBuffs.push({stat:k,amount:v,name:def.name,eqId:def.id,turnsLeft:bD+(selfNow(ci,t)?1:0)});lines.push(`🧪 ${esc(t.label)} : +${v} ${k} (${bD} tour(s))`);}});
+}
+function effStat(tpl,t,stat){let v=(tpl&&tpl.stats&&tpl.stats[stat])||0;((t&&t.statBuffs)||[]).forEach(b=>{if(b.stat===stat)v+=b.amount;});bonusList(t).forEach(d=>{v+=((d.stats||{})[stat]||0);});return v;}
 function equip(id){return (S.equipment||[]).find(e=>e.id===id);}
 function naturalRes(c){return {ca:Math.ceil((c.stats?.Constitution||0)/10),dm:Math.ceil((c.stats?.Magie||0)/10)};}
 /* ---- Durabilité (armures hors anneaux/amulette, et armes) — suivie par jeton ---- */
@@ -1504,7 +1541,7 @@ function rollWithWeapon(formula,weaponUsed,casterInst){
   }
   return {total,logLine,abTotal:r.total,wpTotal};
 }
-function effectiveDef(c,t){const r=effectiveDefBase(c,t);const m=(t&&t.defMods)||[];if(m.length){r.CA=Math.max(0,r.CA-m.reduce((n,x)=>n+(x.ca||0),0));r.DM=Math.max(0,r.DM-m.reduce((n,x)=>n+(x.dm||0),0));}return r;}
+function effectiveDef(c,t){const r=effectiveDefBase(c,t);const m=(t&&t.defMods)||[];if(m.length){r.CA=Math.max(0,r.CA-m.reduce((n,x)=>n+(x.ca||0),0));r.DM=Math.max(0,r.DM-m.reduce((n,x)=>n+(x.dm||0),0));}const bl=bonusList(t);if(bl.length){r.CA+=bl.reduce((n,d)=>n+(+d.ca||0),0);r.DM+=bl.reduce((n,d)=>n+(+d.dm||0),0);}return r;}
 function effectiveDefBase(c,t){
   if(!c)return {CA:0,DM:0,'CA naturelle':0};
   if(c.type!=='player'&&c.type!=='enemy')return {CA:c.def?.CA||0,DM:c.def?.DM||0,'CA naturelle':c.def?.['CA naturelle']||0};
@@ -2170,9 +2207,9 @@ function tokensHtml(){
          <div class="mini-bar mini-hp"><i style="width:${pct(t.hp,t.hpMax)}%"></i></div>
          ${t.manaMax>0?`<div class="hud-row">💧 ${t.mana}/${t.manaMax}</div><div class="mini-bar mini-mana"><i style="width:${pct(t.mana,t.manaMax)}%"></i></div>`:''}
          ${t.shieldMax>0?`<div class="hud-row">🛡 ${t.shield}/${t.shieldMax}</div><div class="mini-bar mini-shield"><i style="width:${pct(t.shield,t.shieldMax)}%"></i></div>`:''}`;
-    const afflictionIconsHtml=(t.afflictions&&t.afflictions.length)?`<div class="affliction-icons">${t.afflictions.map(af=>{const def=(S.afflictionDefs||[]).find(d=>d.id===af.defId);if(!def)return '';return `<span class="affliction-icon" title="${esc(def.name)}">${def.iconImage?`<img src="${esc(def.iconImage)}">`:esc(def.icon||'❓')}</span>`;}).join('')}</div>`:'';
+    const afflictionIconsHtml=((t.afflictions&&t.afflictions.length)||(t.bonuses&&t.bonuses.length))?`<div class="affliction-icons">${(t.afflictions||[]).map(af=>{const def=(S.afflictionDefs||[]).find(d=>d.id===af.defId);if(!def)return '';return `<span class="affliction-icon" title="${esc(def.name)}">${def.iconImage?`<img src="${esc(def.iconImage)}">`:esc(def.icon||'❓')}</span>`;}).join('')}${(t.bonuses||[]).map(b=>{const d=(S.bonusDefs||[]).find(x=>x.id===b.defId);if(!d)return '';return `<span class="affliction-icon" title="${esc(d.name)}" style="border-color:#62d394">${d.iconImage?`<img src="${esc(d.iconImage)}">`:esc(d.icon||'✨')}</span>`;}).join('')}</div>`:'';
     const hasAura=t.activeAuras&&t.activeAuras.length;
-    const xpTop=(t.afflictions&&t.afflictions.length)?21:2;
+    const xpTop=((t.afflictions&&t.afflictions.length)||(t.bonuses&&t.bonuses.length))?21:2;
     const showXp=tpl.type==='player'&&getShowXpSet().includes(tpl.id);
     const xpHtml=showXp?`<div class="xp-display" style="top:calc(var(--tok-h,32px)/2 + ${xpTop}px)">Niv. ${tpl.level||1}<div class="mini-bar" style="width:40px"><i style="width:${pct(tpl.xp||0,xpNeeded(tpl.level||1))}%;background:#e7b85c"></i></div></div>`:'';
     return `<div class="token-wrap ${selectedToken===t.id?'selected':''} ${isTurn?'current-turn':''} ${multiSel.includes(t.id)?'multi':''} ${hasAura?'has-aura':''}" data-token="${t.id}" style="left:${px}px;top:${py}px;--cell-size:${S.map.cell}px;--tok-w:${tokW}px;--tok-h:${tokH}px;--tok-min:${Math.min(tokW,tokH)}px">
@@ -3102,7 +3139,17 @@ function advanceTurn(){
   if(!S.combat.active||!S.combat.order.length)return;
   let safety=0;
   while(true){
-    if(S.combat.turn>=0)endTurnTick(inst(S.combat.order[S.combat.turn]));
+    if(S.combat.turn>=0){
+      const cur=inst(S.combat.order[S.combat.turn]);
+      if(cur&&!cur.isKO&&hasExtraTurn(cur)&&!cur.extraDone){
+        cur.extraDone=true; cur.remainingMove=effectiveMove(instTemplate(cur)); cur.bonusUsed=false;
+        addLog(`⚡ <b>${esc(cur.label)}</b> rejoue un second tour (bonus).`);
+        lastTurnCombatant=cur.id; if(canControlInstance(cur.id))selectedToken=cur.id;
+        return;
+      }
+      if(cur)delete cur.extraDone;
+      endTurnTick(cur);
+    }
     S.combat.turn=(S.combat.turn+1)%S.combat.order.length;
     if(S.combat.turn===0)decayPersistentZones(null,true); // zones orphelines (lanceur disparu)
     const nt=inst(S.combat.order[S.combat.turn]);
@@ -3432,9 +3479,10 @@ function affected(a,start,explicitTargetInstId){
       if(!t)return [];
       // Les sorts de soutien peuvent cibler le lanceur lui-même ; les sorts offensifs non.
       if(!isSupport&&t.id===selectedToken)return [];
+      if(!isSupport&&isUntargetable(t))return [];
       return ((!isSupport&&S.friendlyFire)||instTemplate(t)?.type===targetType)?[t]:[];
     }
-    const pool=S.instances.filter(i=>(isSupport||i.id!==selectedToken)&&instTemplate(i)?.type===targetType);
+    const pool=S.instances.filter(i=>(isSupport||(i.id!==selectedToken&&!isUntargetable(i)))&&instTemplate(i)?.type===targetType);
     let best=null,bestd=999;
     for(const t of pool){const d=Math.abs(t.x-start[0])+Math.abs(t.y-start[1]);if(d<bestd){best=t;bestd=d;}}
     return best?[best]:[];
@@ -3482,7 +3530,7 @@ function checkOpportunityAttacks(moverId,oldBox){
     const oa=otTpl.oppAttack; if(!oa||!oa.formula)return;
     const wasAdj=isAdjacentFootprint(oldBox,ot);
     const nowAdj=isAdjacentFootprint(mover,ot);
-    if(wasAdj&&!nowAdj)resolveOpportunityAttack(ot,mover);
+    if(wasAdj&&!nowAdj&&!isUntargetable(mover))resolveOpportunityAttack(ot,mover);
   });
 }
 function playOppImpactAt(targetId,image,frames,rows,fps,auto){
@@ -3625,7 +3673,7 @@ function resolveAbility(a,start,explicitTargetInstId){
   if(a.area==='single'){
     const isSup=(a.type==='Soin'||a.type==='Bouclier');
     if(!explicitTargetInstId||!affected(a,start,explicitTargetInstId).length){
-      toast(isSup?"🚫 Il n'y a aucun allié là où vous visez actuellement.":"🚫 Il n'y a aucun ennemi là où vous visez actuellement.");
+      toast(isSup?"🚫 Il n'y a aucun allié là où vous visez actuellement.":(explicitTargetInstId&&inst(explicitTargetInstId)&&isUntargetable(inst(explicitTargetInstId))?"🚫 Cette cible ne peut pas être attaquée directement (affliction).":"🚫 Il n'y a aucun ennemi là où vous visez actuellement."));
       return;
     }
   }
@@ -3694,13 +3742,26 @@ function resolveAbility(a,start,explicitTargetInstId){
 
   for(const t of targets){
     const tTpl=instTemplate(t);
-    if(a.type==='Objet'||a._objet)applyObjetAffliction(a,t,mult,casterInst,lines);
+    if((a.type==='Objet'||a._objet)&&!a._cons)applyObjetAffliction(a,t,mult,casterInst,lines);
     if(mult>0)applyCritAff(a,t,label,casterInst,lines);
+    if(a._cons){
+      const ce=equip(a.itemEqId), thr=a.consThreshold>0?a.consThreshold:101;
+      if(!ce){lines.push('⚠️ Objet introuvable.');continue;}
+      if(atk<thr){
+        applyConsumableTo(t,ce,casterInst,lines);
+        applyObjetAffliction(a,t,1,casterInst,lines);
+        advRows.push({k:'hl',txt:ce.name+' sur '+t.label,v:'✔'});advSum.push({ok:1,txt:`${tokOf(t)} bénéficie de ${esc(ce.name)}.`});
+      }else{
+        lines.push(`❌ ${esc(ce.name)} n'a aucun effet sur ${esc(t.label)} (jet ${atk}, seuil < ${thr}).`);
+        advRows.push({k:'ms',txt:t.label+' (raté)',v:'—'});
+      }
+      continue;
+    }
     if(a.type==='Soin'){
       const r=isAoE?sharedRoll:roll(a.formula);
       if(!isAoE)broadcastDiceRoll(formulaSides(a.formula),r.rolls);
       const amount=applyMult(Math.ceil(r.total*mult*(effStat(casterTpl,casterInst,a.stat))/100),a.dmgMult);
-      if(a._mana)t.mana=Math.min(t.manaMax,t.mana+amount);else t.hp=Math.min(t.hpMax,t.hp+amount);
+      if(a._mana)t.mana=Math.min(t.manaMax,t.mana+amount);else if(t.isKO&&!S.combat.active&&amount>0){t.isKO=false;t.movementBlocked=false;t.hp=1;lines.push(`✨ ${esc(t.label)} est relevé·e à 1 PV.`);}else t.hp=Math.min(t.hpMax,t.hp+amount);
       advRows.push({k:'hl',txt:(a._mana?'Mana de ':'Soin sur ')+t.label,v:amount});advSum.push({ok:1,txt:`${tokOf(t)} récupère ${amount} ${a._mana?'de mana':'PV'}.`});
       if(!isAoE)lines.push(`🎲 ${esc(a.formula)} : ${r.rolls.join(' + ')}${r.bonus?` + ${r.bonus}`:''} = ${r.total}`);
       if(a._mana){lines.push(`💧 Mana : ${amount}`);lines.push(`💧 ${esc(t.label)} : +${amount} mana (${t.mana}/${t.manaMax})`);broadcastHud(t.id,{mana:amount});}
@@ -3751,6 +3812,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     }
   }
 
+  if(isAoE&&a.type!=='Soin'&&a.type!=='Bouclier'&&mult>0)targets.forEach(t=>{if(inst(t.id))breakUntargetable(t,lines);});
   if(a.gapClose&&a.area==='single'&&explicitTargetInstId&&inst(explicitTargetInstId)&&inst(casterInst.id))scheduleGapClose(a,casterInst.id,explicitTargetInstId,lines);
   {const ar=advRows.sort((x,y)=>(x.k==='sh'?0:1)-(y.k==='sh'?0:1));addLog(lines.join('<br>'),cl.join('<br>'),advCardHtml(casterInst,a,label,ar,advSum));}
   activeAbility=null; hoverCell=null;
@@ -3930,6 +3992,7 @@ function applyPersistentZones(nt,onlyDamage){
       nt.hp=Math.max(0,nt.hp-hpDmg);
       addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : -${hpDmg} PV${det}${def?` − défense ${def}`:''}${resist?` − résistance ${Math.round(resist*100)}%`:''}`);
       broadcastHud(nt.id,{hp:-hpDmg,shield:absorbed>0?-absorbed:0});
+      {const l=[];breakUntargetable(nt,l);if(l.length)addLog(l.join('<br>'));}
       if(nt.hp<=0){addLog(`💀 <b>${esc(nt.label)} est KO</b>.`);handleInstanceDeath(nt,killer);}
     }
   });
@@ -4011,6 +4074,85 @@ function applyDissipation(targetInstId){
   saveState(); render();
 }
 /* ============================= GESTION DES AFFLICTIONS SUR UN JETON (MJ) ============================= */
+function bonusDefInfo(d){
+  const a=Object.entries(d.stats||{}).filter(([k,v])=>v).map(([k,v])=>`${k} ${v>0?'+':''}${v}`);
+  if(d.ca)a.push(`CA ${d.ca>0?'+':''}${d.ca}`); if(d.dm)a.push(`DM ${d.dm>0?'+':''}${d.dm}`); if(d.extraTurn)a.push('2 tours par tour');
+  return a.join(' · ')||'Aucun effet';
+}
+function bonusCardHtml(){
+  return `<div class="card" style="margin-top:16px"><div class="row between"><h2>✨ Bonus</h2><button class="btn primary" onclick="openBonusDef()">＋ Nouveau bonus</button></div>
+  <p class="tiny muted">Statuts positifs : bonus de statistiques, CA / DM, 2 tours par tour. Applicables comme les afflictions (bouton 🩸 Afflictions du jeton, Buffs, Objets, critiques).</p>
+  <div id="bonusResultsContainer">${bonusDefResultsHtml()}</div></div>`;
+}
+function bonusDefResultsHtml(){
+  const items=S.bonusDefs||[];
+  if(!items.length)return '<p class="tiny muted">Aucun bonus défini.</p>';
+  return items.map(d=>`<div class="ability"><div class="icon">${iconBoxHtml(d,'9px')}</div><div class="ability-info"><b>${esc(d.name)}</b><small>${esc(bonusDefInfo(d))}</small></div><button class="btn" onclick="openBonusDef('${d.id}')">Modifier</button><button class="btn ghost" onclick="deleteBonusDef('${d.id}')" title="Supprimer">🗑️</button></div>`).join('');
+}
+function openBonusDef(id){
+  if(!isMJ())return;
+  const d=id?(S.bonusDefs||[]).find(x=>x.id===id):{id:'bn'+Date.now(),name:'Nouveau bonus',icon:'✨',iconImage:null,stats:{},ca:0,dm:0,extraTurn:false};
+  if(!d)return;
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} un bonus</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  <div class="form">
+  <div class="field"><label>Nom</label><input id="bn_name" value="${esc(d.name)}"></div>
+  <div class="field"><label>Icône (emoji)</label><input id="bn_icon" value="${esc(d.icon)}"></div>
+  <div class="field full">
+    <label>Icône personnalisée (affichée sous le jeton)</label>
+    <div class="icon-dropzone" onclick="document.getElementById('bn_icon_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'bn_iconimage','bn_icon_preview')">
+      <div id="bn_icon_preview" class="icon-preview">${d.iconImage?`<img src="${esc(d.iconImage)}">`:`<span>${esc(d.icon)}</span>`}</div>
+      <p class="tiny muted">Glisse une image ici (PNG/JPG/WebP), ou clique pour parcourir</p>
+      <input type="file" id="bn_icon_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'bn_iconimage','bn_icon_preview')">
+    </div>
+    <input type="hidden" id="bn_iconimage" value="${esc(d.iconImage||'')}">
+    ${imagePickerHtml('bn_iconimage','bn_icon_preview')}
+  </div>
+  ${STAT_TESTS.map(k=>`<div class="field"><label>Bonus ${esc(k)}</label><input id="bn_st_${k}" type="number" value="${(d.stats||{})[k]||0}"></div>`).join('')}
+  <div class="field"><label>Bonus Classe d'armure</label><input id="bn_ca" type="number" value="${d.ca||0}"></div>
+  <div class="field"><label>Bonus Défense magique</label><input id="bn_dm" type="number" value="${d.dm||0}"></div>
+  <div class="field full"><label><input type="checkbox" id="bn_extra" ${d.extraTurn?'checked':''}> Joue 2 tours au lieu d'un tant que le bonus est actif</label></div>
+  </div>
+  <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveBonusDef('${id||''}')">Enregistrer</button></div>`;
+  document.getElementById('modalBg').classList.add('open');
+}
+function saveBonusDef(id){
+  if(!isMJ())return;
+  if(!S.bonusDefs)S.bonusDefs=[];
+  const t=id?S.bonusDefs.find(x=>x.id===id):{id:'bn'+Date.now()};
+  t.name=document.getElementById('bn_name').value||'Bonus';
+  t.icon=document.getElementById('bn_icon').value||'✨';
+  t.iconImage=document.getElementById('bn_iconimage').value.trim()||null;
+  t.stats={}; STAT_TESTS.forEach(k=>{const v=parseNum(document.getElementById('bn_st_'+k).value);if(v)t.stats[k]=v;});
+  t.ca=parseNum(document.getElementById('bn_ca').value); t.dm=parseNum(document.getElementById('bn_dm').value);
+  t.extraTurn=document.getElementById('bn_extra').checked;
+  if(!id)S.bonusDefs.push(t);
+  saveState(); closeModal(); render();
+}
+function deleteBonusDef(id){
+  if(!isMJ())return;
+  if(!askOk('Supprimer ce bonus ? Il sera retiré de tous les jetons.',()=>deleteBonusDef(id)))return;
+  S.instances.forEach(t=>{t.bonuses=(t.bonuses||[]).filter(b=>b.defId!==id);});
+  S.bonusDefs=(S.bonusDefs||[]).filter(x=>x.id!==id);
+  saveState(); render();
+}
+function manageBonusesHtml(instId){
+  const t=inst(instId); if(!t)return '';
+  const cur=(t.bonuses||[]).map(b=>{const d=(S.bonusDefs||[]).find(x=>x.id===b.defId);if(!d)return '';return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px"><span>${iconInlineHtml(d)} ${esc(d.name)} <small class="muted">(${b.left??'∞'} tour(s))</small></span><button class="btn ghost" onclick="removeBonusMJ('${instId}','${d.id}')" title="Retirer">🗑️</button></div>`;}).join('')||'<p class="tiny muted">Aucun bonus actif.</p>';
+  return `<h3 style="font-size:13px;margin:14px 0 6px">✨ Bonus</h3>${cur}<div class="row" style="gap:6px;margin-top:6px"><select id="bn_add_select"><option value="">— Choisir —</option>${(S.bonusDefs||[]).map(d=>`<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}</select><input id="bn_add_turns" type="number" min="1" placeholder="tours (vide = ∞)" style="width:130px"><button class="btn" onclick="addBonusMJ('${instId}')">＋ Appliquer</button></div>`;
+}
+function addBonusMJ(instId){
+  const defId=document.getElementById('bn_add_select')?.value; if(!defId){toast('⚠️ Choisis un bonus.');return;}
+  const t=inst(instId); if(!t)return;
+  const n=Math.floor(+document.getElementById('bn_add_turns')?.value||0);
+  const d=giveBonus(t,defId,n>0?n:null,null);
+  addLog(`✨ <b>${esc(t.label)}</b> reçoit le bonus <b>${esc(d.name)}</b>.`);
+  saveState(); openManageAfflictions(instId);
+}
+function removeBonusMJ(instId,defId){
+  const t=inst(instId); if(!t)return;
+  t.bonuses=(t.bonuses||[]).filter(b=>b.defId!==defId);
+  saveState(); openManageAfflictions(instId);
+}
 function openManageAfflictions(instId){
   if(!isMJ())return;
   const t=inst(instId); if(!t)return;
@@ -4027,6 +4169,7 @@ function openManageAfflictions(instId){
     <button class="btn" onclick="addAffliction('${instId}')">＋ Appliquer</button>
   </div>
   ${!(S.afflictionDefs||[]).length?'<p class="tiny muted">Aucune affliction définie (page 🎒 Équipement).</p>':''}
+  ${manageBonusesHtml(instId)}
   <div class="modal-actions"><button class="btn primary" onclick="closeModal()">Fermer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
 }
@@ -4579,6 +4722,7 @@ function abilitiesPage(){
     <select id="ability_type_filter" onchange="onAbilityTypeFilter(this.value)">${typeOpts}</select>
     <select id="ability_char_filter" onchange="onAbilityCharFilter(this.value)">${charOpts}</select>
   </div>
+  <div id="abSelBar">${abSelBarHtml()}</div>
   <div id="abilityResultsContainer">${abilityResultsHtml()}</div>
   </div>
   <div class="card" style="margin-bottom:16px"><h2>🎲 Tests de caractéristiques (universels)</h2>
@@ -4587,16 +4731,54 @@ function abilitiesPage(){
   </div>
   <div class="card"><h2>Deux modes de création</h2><div class="statgrid"><div class="stat"><label>🟢 Mode simple</label><strong>Visuel</strong><p class="tiny muted">Type, formule, statistique, défense, élément, zone et effet — indépendants pour chaque capacité.</p></div><div class="stat"><label>🔴 Mode avancé</label><strong>Macro</strong><p class="tiny muted">Aperçu de la logique, en lecture seule pour l'instant.</p></div></div><p class="muted">Le moteur gère le jet d100, le multiplicateur de réussite, la formule de dégâts, la défense, la résistance élémentaire, le bouclier puis les PV. Aucune règle D&D n'est imposée : tout est configurable.</p></div></div>`;
 }
-function onAbilitySearchInput(v){abilitySearchQuery=v;const c=document.getElementById('abilityResultsContainer');if(c)c.innerHTML=abilityResultsHtml();}
-function onAbilityTypeFilter(v){abilityTypeFilter=v;const c=document.getElementById('abilityResultsContainer');if(c)c.innerHTML=abilityResultsHtml();}
-function onAbilityCharFilter(v){abilityCharFilter=v;const c=document.getElementById('abilityResultsContainer');if(c)c.innerHTML=abilityResultsHtml();}
-function abilityResultsHtml(){
-  const mj=isMJ();
+var abSel=[],bulkAbIds=null,bulkAbSnap=null,_abBulkApplying=false;
+function abFiltered(){
   const q=abilitySearchQuery.trim().toLowerCase();
   let list=S.abilities;
   if(q)list=list.filter(a=>a.name.toLowerCase().includes(q));
   if(abilityTypeFilter)list=list.filter(a=>a.type===abilityTypeFilter);
   if(abilityCharFilter)list=list.filter(a=>(a.characterIds||[]).includes(abilityCharFilter));
+  return list;
+}
+function abSelBarHtml(){
+  if(!isMJ())return '';
+  abSel=abSel.filter(id=>S.abilities.some(a=>a.id===id));
+  if(!abSel.length)return `<div style="margin-bottom:8px"><button class="btn ghost" onclick="selectAllAbilities()">☑ Tout sélectionner</button></div>`;
+  return `<div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap"><span class="pill">☑ ${abSel.length} sélectionnée(s)</span><button class="btn" onclick="openAbility('${abSel[0]}')">✏️ Modifier la sélection</button><button class="btn ghost" onclick="selectAllAbilities()">☑ Tout (filtre actuel)</button><button class="btn ghost" onclick="abSel=[];render()">Désélectionner</button></div>`;
+}
+function toggleAbSel(id,on){
+  const i=abSel.indexOf(id);
+  if(on&&i<0)abSel.push(id); if(!on&&i>=0)abSel.splice(i,1);
+  const b=document.getElementById('abSelBar'); if(b)b.innerHTML=abSelBarHtml();
+}
+function selectAllAbilities(){abSel=abFiltered().map(a=>a.id);render();}
+function saveAbBulk(){
+  if(!isMJ())return;
+  const cur=snapForm(), diff={};
+  Object.keys(cur).forEach(k=>{if(cur[k]!==(bulkAbSnap||{})[k])diff[k]=cur[k];});
+  const ids=bulkAbIds.slice();
+  _abBulkApplying=true;
+  try{
+    ids.forEach(aid=>{
+      if(!S.abilities.some(x=>x.id===aid))return;
+      openAbility(aid);
+      Object.entries(diff).forEach(([k,v])=>{
+        if(k.startsWith('ac:')){const el=[...document.querySelectorAll('#modal .ac-check')].find(e=>e.value===k.slice(3));if(el)el.checked=(v==='1');return;}
+        const el=document.getElementById(k); if(!el)return;
+        if(el.type==='checkbox')el.checked=(v==='1'); else el.value=v;
+      });
+      saveAbility(aid);
+    });
+  }finally{_abBulkApplying=false;bulkAbIds=null;bulkAbSnap=null;}
+  abSel=[]; closeModal(); render();
+  toast(`✅ ${Object.keys(diff).length} champ(s) appliqué(s) à ${ids.length} capacités.`);
+}
+function onAbilitySearchInput(v){abilitySearchQuery=v;const c=document.getElementById('abilityResultsContainer');if(c)c.innerHTML=abilityResultsHtml();}
+function onAbilityTypeFilter(v){abilityTypeFilter=v;const c=document.getElementById('abilityResultsContainer');if(c)c.innerHTML=abilityResultsHtml();}
+function onAbilityCharFilter(v){abilityCharFilter=v;const c=document.getElementById('abilityResultsContainer');if(c)c.innerHTML=abilityResultsHtml();}
+function abilityResultsHtml(){
+  const mj=isMJ();
+  let list=abFiltered();
   if(!list.length)return '<p class="tiny muted">Aucune capacité ne correspond.</p>';
   return list.map(a=>{
     const linked=(a.characterIds||[]).map(cid=>char(cid)).filter(Boolean);
@@ -4613,7 +4795,7 @@ function abilityResultsHtml(){
       : a.type==='Persistant'
       ? `Zone persistante · ${esc(a.formula)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?`Ligne (zone ${a.zoneRange||a.range} cases)`:a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3} (zone ${a.zoneRange||a.range} cases)`:a.area==='self'?'Autour de soi':a.area==='me'?'Soi-même':(a.area+' '+a.areaSize)} · ${a.duration} tour(s) · Portée origine ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`
       : `${esc(a.type)}${a.hotkey?` [${esc(a.hotkey)}]`:''} · ${esc(a.formula)} · ${esc(a.stat)} · ${esc(a.element)} · ${a.area==='single'?'Cible unique':a.area==='line'?'Ligne droite':a.area==='cone'?`Cône ${a.coneStart||1}→${a.coneEnd||3}`:a.area==='self'?'Autour de soi':a.area==='me'?'Soi-même':(a.area+' '+a.areaSize)} · Portée ${a.range?a.range+' cases':'illimitée'} · Mana ${a.manaCost||0}`;
-    return `<div class="ability"><div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine} · Niv. ${a.level||1}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button><button class="btn ghost" onclick="duplicateAbility('${a.id}')" title="Dupliquer">📋</button><button class="btn ghost" onclick="deleteAbility('${a.id}')" title="Supprimer">🗑️</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
+    return `<div class="ability">${mj?`<input type="checkbox" title="Sélection multiple" ${abSel.includes(a.id)?'checked':''} onchange="toggleAbSel('${a.id}',this.checked)">`:''}<div class="icon">${iconBoxHtml(a,'9px')}</div><div class="ability-info"><b>${esc(a.name)}</b><small>${infoLine} · Niv. ${a.level||1}</small><br><small class="muted">🔗 ${esc(linkedText)}</small></div>${mj?`<button class="btn" onclick="openAbility('${a.id}')">Modifier</button><button class="btn ghost" onclick="duplicateAbility('${a.id}')" title="Dupliquer">📋</button><button class="btn ghost" onclick="deleteAbility('${a.id}')" title="Supprimer">🗑️</button>${isTransfo?'':`<button class="btn ghost" onclick="openAdvancedAbility('${a.id}')" title="Aperçu macro">🔴</button>`}`:''}</div>`;
   }).join('');
 }
 let _descDraft={},_descCur='none';
@@ -4630,7 +4812,8 @@ function descHtml(h){
 }
 function degDesc(a,label){const d=descHtml((a.descBy||{})[degKey(label)]);return d?[d]:[];}
 function applyCritAff(a,t,label,ci,lines){
-  const k=label==='Réussite critique'?'cri':label==='Réussite ultime'?'ult':null; const c=k&&a.critAff&&a.critAff[k]; if(!c||!c.id)return;
+  const k=label==='Réussite critique'?'cri':label==='Réussite ultime'?'ult':null; const c=k&&a.critAff&&a.critAff[k]; if(!c||(!c.id&&!c.bonusId))return;
+  if(c.bonusId){const bd=giveBonus(t,c.bonusId,c.turns>0?c.turns:null,ci);if(bd)lines.push(`✨ <b>${esc(t.label)}</b> reçoit le bonus <b>${esc(bd.name)}</b> (${c.turns>0?c.turns+' tour(s)':"jusqu'au retrait"})`);}
   const def=(S.afflictionDefs||[]).find(d=>d.id===c.id); if(!def)return;
   t.afflictions=t.afflictions||[];
   const nd=c.turns>0?c.turns:null, ex=t.afflictions.find(x=>x.defId===def.id);
@@ -4652,6 +4835,7 @@ function onPathBetween(ci,en,i){
   return false;
 }
 function openAbility(id,charId){
+  if(!_abBulkApplying)bulkAbIds=(id&&!charId&&abSel.length>1&&abSel.includes(id))?abSel.slice():null;
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les capacités.');return;}
   const a=id?(charId?abOf(id,charId):S.abilities.find(x=>x.id===id)):{id:'a'+Date.now(),name:'Nouvelle capacité',icon:'✨',iconImage:null,type:'Sort',formula:'2d20 + 5',stat:'Magie',defense:'DM',element:'Feu',area:'single',areaSize:1,range:6,manaCost:0,desc:'',effect:'✨',transformCharId:null,triggerOnDeath:false,hotkey:null};
   const isTransfo=a.type==='Transformation';
@@ -4665,7 +4849,7 @@ function openAbility(id,charId){
   const areaOpts=[['single','Cible unique'],['square','Carré'],['circle','Cercle (aperçu)'],['line','Ligne droite'],['cone','Cône'],['self','Autour de soi'],['me','Soi (le lanceur)']].map(([v,l])=>opt(v,l,a.area)).join('');
   const linkedIds=a.characterIds||[];
   const charListHtml=S.characters.length?S.characters.map(c=>`<label class="ability-char-item" data-name="${esc(c.name.toLowerCase())}"><input type="checkbox" class="ac-check" value="${c.id}" ${linkedIds.includes(c.id)?'checked':''}> <span>${iconInlineHtml(c)} ${esc(c.name)} <small class="muted">(${charTypeLabel(c)})</small></span></label>`).join(''):'<p class="tiny muted">Aucun personnage créé pour l’instant (page 🧙 Personnages).</p>';
-  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une capacité${charId?` — pour ${esc(char(charId)?.name||'')} uniquement`:''}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
+  document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>${id?'Modifier':'Créer'} une capacité${(bulkAbIds&&!_abBulkApplying)?' (sélection ×'+bulkAbIds.length+' — seuls les champs modifiés sont appliqués)':''}${charId?` — pour ${esc(char(charId)?.name||'')} uniquement`:''}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>
   <div class="form">
   <div class="field"><label>Nom</label><input id="a_name" value="${esc(a.name)}"></div>
   <div class="field"><label>Icône</label><input id="a_icon" value="${esc(a.icon)}"></div>
@@ -4687,8 +4871,8 @@ function openAbility(id,charId){
   <div class="field" id="a_cooldown_field" style="display:${isSkill?'none':''}"><label>Cooldown (tours — vide = aucun)</label><input id="a_cooldown" type="number" min="0" value="${a.cooldown||''}" placeholder="aucun"></div>
   <div class="field" id="ability_passif_extra" style="display:${a.type==='Passif'?'':'none'}"><label>Effet de l'aura</label><select id="a_auraeffect">${opt('damage','Dégâts',a.auraEffect)}${opt('heal','Soin',a.auraEffect)}${opt('shield','Bouclier',a.auraEffect)}</select><p class="tiny muted">Aura auto-centrée sur le lanceur (zone = Carré ou Cercle uniquement), se déclenche à chaque début de son tour.</p></div>
   <div class="field" id="ability_buff_extra" style="display:${(a.type==='Buff'||a.type==='Persistant')?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.type==='Buff'?(a.duration||''):(a.duration||3)}" placeholder="${a.type==='Buff'?'vide = permanent':''}"><p class="tiny muted">${a.type==='Persistant'?"Nombre de tours avant que la zone persistante ne s'estompe. Chaque token qui commence son tour dans la zone subit l'effet (calculé comme si le lanceur agissait à chaque fois).":"Cible unique ou zone (voir champ Zone ci-dessous). Effet auto à chaque début de tour de la/les cible(s) pendant N tours. Choisis toi-même la défense ciblée (dont « Aucune »)."}</p></div>
-  <div class="field full" id="ability_buff_extra2" style="display:${a.type==='Buff'?'':'none'}"><label>🩸 Affliction appliquée</label><select id="a_buffaff">${opt('','— Aucune —',a.buffAfflictionId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.buffAfflictionId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px;flex-wrap:wrap"><div class="field" style="max-width:110px"><label>CA − (défaut)</label><input id="a_buffca" type="number" min="0" value="${a.buffCaRed||0}"></div><div class="field" style="max-width:110px"><label>DM − (défaut)</label><input id="a_buffdm" type="number" min="0" value="${a.buffDmRed||0}"></div><div class="field" style="max-width:110px"><label>CA + (défaut)</label><input id="a_buffcaup" type="number" min="0" value="${a.buffCaUp||0}"></div><div class="field" style="max-width:110px"><label>DM + (défaut)</label><input id="a_buffdmup" type="number" min="0" value="${a.buffDmUp||0}"></div></div><label style="margin-top:8px">Réglage par degré de réussite / d'échec</label><div style="overflow:auto"><table class="tiny" style="border-collapse:collapse;width:100%"><tr><th style="text-align:left">Degré</th><th>Affliction</th><th>Durée</th><th>CA −</th><th>DM −</th><th>CA +</th><th>DM +</th></tr>${DEGREES.map(([k,l])=>{const o=(a.defBy||{})[k]||{};const on=Array.isArray(a.buffAffDeg)?a.buffAffDeg.includes(k):['leg','rea','gra','cri','ult'].includes(k);const ip=f=>`<td><input id="a_db_${k}_${f}" type="number" min="0" value="${o[f]||''}" style="width:56px"></td>`;return `<tr><td>${l}</td><td style="text-align:center"><input type="checkbox" id="a_da_${k}" ${on?'checked':''}></td><td><input id="a_dur${k}" type="number" min="1" value="${(a.durBy||{})[k]||''}" style="width:56px"></td>${ip('caRed')}${ip('dmRed')}${ip('caUp')}${ip('dmUp')}</tr>`;}).join('')}</table></div><p class="tiny muted">Case Affliction cochée = l'affliction s'applique à ce degré. Durée vide = champ Durée général (vide aussi = permanent jusqu'à dissipation). Si une ligne contient des valeurs de CA/DM, elles remplacent les valeurs par défaut pour ce degré ; ligne vide = valeurs par défaut (réussites seulement). Mets la formule à 0 si tu ne veux aucun dégât/soin par tour.</p></div>
-  <div class="field full" id="ability_objet_extra" style="display:${a.type==='Objet'?'':'none'}"><label>🎒 Objet divers consommé à chaque utilisation</label><select id="a_objeteffect" style="margin-bottom:6px">${opt('damage','Effet : dégâts',a.objetEffect||'damage')}${opt('heal','Effet : soin',a.objetEffect||'damage')}${opt('shield','Effet : bouclier',a.objetEffect||'damage')}${opt('mana','Effet : mana',a.objetEffect||'damage')}</select><select id="a_itemeq">${opt('','— Choisir —',a.itemEqId||'')}${(S.equipment||[]).filter(e=>e.itemType==='divers').map(e=>opt(e.id,e.name,a.itemEqId||'')).join('')}</select><label style="margin-top:8px">🩸 Affliction appliquée si réussite</label><select id="a_objaff">${opt('','— Aucune —',a.objAffId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.objAffId||'')).join('')}</select><label style="margin-top:8px">Durée de l'affliction (tours — vide = jusqu'au retrait par le MJ)</label><input id="a_objaffturns" type="number" min="1" value="${a.objAffTurns||''}"></div>
+  <div class="field full" id="ability_buff_extra2" style="display:${a.type==='Buff'?'':'none'}"><label>🩸 Affliction appliquée</label><select id="a_buffaff">${opt('','— Aucune —',a.buffAfflictionId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.buffAfflictionId||'')).join('')}</select><label style="margin-top:8px">✨ Bonus appliqué</label><select id="a_buffbonus">${opt('','— Aucun —',a.buffBonusId||'')}${(S.bonusDefs||[]).map(d=>opt(d.id,d.name,a.buffBonusId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px;flex-wrap:wrap"><div class="field" style="max-width:110px"><label>CA − (défaut)</label><input id="a_buffca" type="number" min="0" value="${a.buffCaRed||0}"></div><div class="field" style="max-width:110px"><label>DM − (défaut)</label><input id="a_buffdm" type="number" min="0" value="${a.buffDmRed||0}"></div><div class="field" style="max-width:110px"><label>CA + (défaut)</label><input id="a_buffcaup" type="number" min="0" value="${a.buffCaUp||0}"></div><div class="field" style="max-width:110px"><label>DM + (défaut)</label><input id="a_buffdmup" type="number" min="0" value="${a.buffDmUp||0}"></div></div><label style="margin-top:8px">Réglage par degré de réussite / d'échec</label><div style="overflow:auto"><table class="tiny" style="border-collapse:collapse;width:100%"><tr><th style="text-align:left">Degré</th><th>Affliction</th><th>Bonus</th><th>Durée</th><th>CA −</th><th>DM −</th><th>CA +</th><th>DM +</th></tr>${DEGREES.map(([k,l])=>{const o=(a.defBy||{})[k]||{};const on=Array.isArray(a.buffAffDeg)?a.buffAffDeg.includes(k):['leg','rea','gra','cri','ult'].includes(k);const ip=f=>`<td><input id="a_db_${k}_${f}" type="number" min="0" value="${o[f]||''}" style="width:56px"></td>`;return `<tr><td>${l}</td><td style="text-align:center"><input type="checkbox" id="a_da_${k}" ${on?'checked':''}></td><td style="text-align:center"><input type="checkbox" id="a_ba_${k}" ${(Array.isArray(a.buffBonusDeg)?a.buffBonusDeg.includes(k):['leg','rea','gra','cri','ult'].includes(k))?'checked':''}></td><td><input id="a_dur${k}" type="number" min="1" value="${(a.durBy||{})[k]||''}" style="width:56px"></td>${ip('caRed')}${ip('dmRed')}${ip('caUp')}${ip('dmUp')}</tr>`;}).join('')}</table></div><p class="tiny muted">Case Affliction cochée = l'affliction s'applique à ce degré. Durée vide = champ Durée général (vide aussi = permanent jusqu'à dissipation). Si une ligne contient des valeurs de CA/DM, elles remplacent les valeurs par défaut pour ce degré ; ligne vide = valeurs par défaut (réussites seulement). Mets la formule à 0 si tu ne veux aucun dégât/soin par tour.</p></div>
+  <div class="field full" id="ability_objet_extra" style="display:${a.type==='Objet'?'':'none'}"><label>🎒 Objet divers consommé à chaque utilisation</label><select id="a_objeteffect" style="margin-bottom:6px">${opt('damage','Effet : dégâts',a.objetEffect||'damage')}${opt('heal','Effet : soin',a.objetEffect||'damage')}${opt('shield','Effet : bouclier',a.objetEffect||'damage')}${opt('mana','Effet : mana',a.objetEffect||'damage')}</select><select id="a_itemeq" onchange="toggleConsThresh()">${opt('','— Choisir —',a.itemEqId||'')}${(S.equipment||[]).filter(e=>e.itemType==='divers').map(e=>opt(e.id,e.name,a.itemEqId||'')).join('')}</select><div id="a_consthresh_field" style="display:${isConsDef(a.itemEqId)?'':'none'};margin-top:8px"><label>🎯 Le consommable fait effet si le jet est inférieur à (ex : 96 = effet pour 95 ou moins ; vide = toujours)</label><input id="a_consthresh" type="number" min="1" value="${a.consThreshold||''}"></div><label style="margin-top:8px">🩸 Affliction appliquée si réussite</label><select id="a_objaff">${opt('','— Aucune —',a.objAffId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.objAffId||'')).join('')}</select><label style="margin-top:8px">✨ Bonus appliqué si réussite</label><select id="a_objbonus">${opt('','— Aucun —',a.objBonusId||'')}${(S.bonusDefs||[]).map(d=>opt(d.id,d.name,a.objBonusId||'')).join('')}</select><label style="margin-top:8px">Durée de l'affliction / du bonus (tours — vide = jusqu'au retrait par le MJ)</label><input id="a_objaffturns" type="number" min="1" value="${a.objAffTurns||''}"></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
     <div class="field full"><label>Se transforme en</label>
     <input type="hidden" id="a_transformchar" value="${esc(a.transformCharId||'')}">
@@ -4725,7 +4909,7 @@ function openAbility(id,charId){
   <div class="field full"><label>⛓ Condition de lancement</label><label class="ability-char-item"><input type="checkbox" id="a_reqon" ${a.reqOn?'checked':''}> <span>Ne peut être lancée que si l'affliction ou la capacité choisie est active sur la cible</span></label><input type="hidden" id="a_reqid" value="${esc(a.reqId||'')}"><button type="button" class="btn" id="a_reqid_btn" style="text-align:left;margin-top:6px" onclick="toggleReqPanel()">${esc(reqLabel(a.reqId))} ▾</button><div id="a_req_panel" style="display:none;border:1px solid #3a3e48;border-radius:8px;padding:6px;margin-top:4px"><input id="a_req_search" placeholder="🔎 Rechercher une affliction / capacité…" oninput="filterReqPick()"><div id="a_req_list" style="max-height:180px;overflow:auto;margin-top:6px">${reqListHtml()}</div></div></div>
   <div class="field full"><label>💥 Malus en cas d'échec critique / ultime (vide = aucun ; ex : 20%, 250, 2d20+10)</label>${[['fc','Échec critique'],['fu','Échec ultime']].map(([k,l])=>{const pp=(a.failPen||{})[k]||{};return `<div class="row" style="gap:6px;margin-top:4px;flex-wrap:wrap"><b style="width:110px">${l}</b><input id="a_fp_${k}_mana" placeholder="Perte de mana" value="${esc(pp.mana||'')}" style="width:130px"><input id="a_fp_${k}_hp" placeholder="Perte de PV" value="${esc(pp.hp||'')}" style="width:130px"><input id="a_fp_${k}_ally" placeholder="Dégâts allié proche" value="${esc(pp.ally||'')}" style="width:150px"></div>`;}).join('')}<p class="tiny muted">Les PV perdus et les dégâts à l'allié le plus proche de l'ennemi visé tiennent compte de la défense ciblée par le sort (CA ou DM). % = pourcentage du maximum.</p></div>
   <div class="field full"><label>Description affichée selon le résultat du dé</label><select id="a_desc_sel" onchange="switchDescDegree(this.value)" style="margin-bottom:6px"><option value="none">Aucun (toujours affichée)</option>${DEGREES.map(([k,l])=>`<option value="${k}">${l}</option>`).join('')}</select>${richEditorHtml('a_desc',a.desc||'')}<p class="tiny muted">« Aucun » s'affiche quel que soit le résultat ; les autres s'affichent en plus, seulement pour le degré correspondant.</p>
-  ${['cri','ult'].map(k=>{const o=(a.critAff||{})[k]||{};return `<div id="a_critaff_${k}" style="display:none;margin-top:8px;border:1px solid #3a3e48;border-radius:8px;padding:8px"><label>🩸 Affliction appliquée à toutes les cibles touchées (${k==='cri'?'réussite critique':'réussite ultime'})</label><select id="a_cafl_${k}">${opt('','— Aucune —',o.id||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,o.id||'')).join('')}</select><label style="margin-top:6px">Durée (tours — vide = jusqu'au retrait par le MJ)</label><input id="a_cadur_${k}" type="number" min="1" value="${o.turns||''}"></div>`;}).join('')}</div>
+  ${['cri','ult'].map(k=>{const o=(a.critAff||{})[k]||{};return `<div id="a_critaff_${k}" style="display:none;margin-top:8px;border:1px solid #3a3e48;border-radius:8px;padding:8px"><label>🩸 Affliction appliquée à toutes les cibles touchées (${k==='cri'?'réussite critique':'réussite ultime'})</label><select id="a_cafl_${k}">${opt('','— Aucune —',o.id||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,o.id||'')).join('')}</select><label style="margin-top:6px">✨ Bonus appliqué à toutes les cibles touchées</label><select id="a_cbon_${k}">${opt('','— Aucun —',o.bonusId||'')}${(S.bonusDefs||[]).map(d=>opt(d.id,d.name,o.bonusId||'')).join('')}</select><label style="margin-top:6px">Durée (tours — vide = jusqu'au retrait par le MJ)</label><input id="a_cadur_${k}" type="number" min="1" value="${o.turns||''}"></div>`;}).join('')}</div>
   <div class="field full"><label>Effet visuel (emoji)</label><input id="a_effect" value="${esc(a.effect||'✨')}" placeholder="🔥, ✨, 💨…"></div>
   <div class="field full"><label><input type="checkbox" id="a_impactpertoken" ${a.impactPerToken?'checked':''}> 💥 Animation d'impact séparée par cible touchée (sinon un seul impact sur toute la zone)</label></div>
   <div class="field full" id="a_zoneimage_field" style="display:${(a.area==='single'||a.area==='me'||(a.area==='self'&&a.type!=='Persistant'))?'none':''}">
@@ -4801,7 +4985,9 @@ ${spriteAutoSelect('a_spriteauto',a.spriteAuto)}
   <p class="tiny muted">Le type et l'élément sont deux propriétés totalement indépendantes : un Soin peut être Neutre, Feu, etc. Une capacité de Transformation remplace le personnage et son jeton par la fiche choisie.</p>
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button>${charId&&char(charId)?.abilityOverrides?.[id]?`<button class="btn ghost" onclick="resetAbilityOverride('${id}','${charId}')">↺ Rétablir la capacité globale</button>`:''}<button class="btn primary" onclick="saveAbility('${id||''}'${charId?`,'${charId}'`:''})">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
+  if(bulkAbIds&&!_abBulkApplying)bulkAbSnap=snapForm();
 }
+function toggleConsThresh(){const f=document.getElementById('a_consthresh_field');if(f)f.style.display=isConsDef(document.getElementById('a_itemeq')?.value)?'':'none';}
 function toggleTransformDropdown(){const p=document.getElementById('a_transformchar_panel');if(p)p.style.display=p.style.display==='none'?'block':'none';}
 function selectTransformChar(id){
   document.getElementById('a_transformchar').value=id;
@@ -4858,6 +5044,7 @@ function resetAbilityOverride(id,charId){
 }
 function saveAbility(id,charId){
   if(!isMJ()){toast('⛔ Seul le MJ peut créer ou modifier les capacités.');return;}
+  if(bulkAbIds&&!_abBulkApplying&&!charId)return saveAbBulk();
   const base0=id?S.abilities.find(x=>x.id===id):null; const ovC=charId?char(charId):null;
   const target=ovC?structuredClone(abOf(id,charId)):(base0||{id:'a'+Date.now()});
   target.name=document.getElementById('a_name').value||'Capacité';
@@ -4911,7 +5098,7 @@ function saveAbility(id,charId){
     target.impactSize=Math.max(0.1,parseFloat(document.getElementById('a_impact_size')?.value)||1);
     target.spriteAuto=document.getElementById('a_spriteauto')?.value||false;
     target.sizeBy={cri:Math.floor(+document.getElementById('a_size_cri')?.value)||null,ult:Math.floor(+document.getElementById('a_size_ult')?.value)||null};
-    target.critAff={};['cri','ult'].forEach(k=>{const id=document.getElementById('a_cafl_'+k)?.value;if(id){const n=Math.floor(+document.getElementById('a_cadur_'+k)?.value)||0;target.critAff[k]={id,turns:n>0?n:null};}});
+    target.critAff={};['cri','ult'].forEach(k=>{const id=document.getElementById('a_cafl_'+k)?.value,bid=document.getElementById('a_cbon_'+k)?.value;if(id||bid){const n=Math.floor(+document.getElementById('a_cadur_'+k)?.value)||0;target.critAff[k]={id:id||null,bonusId:bid||null,turns:n>0?n:null};}});
     target.spinImage=(target.area==='self'?document.getElementById('a_spin')?.value.trim():'')||null;
     target.spinSpeed=Math.max(0.1,parseFloat(document.getElementById('a_spinspeed')?.value)||2);
     target.spinDuration=Math.max(0.2,parseFloat(document.getElementById('a_spindur')?.value)||1);
@@ -4925,6 +5112,8 @@ function saveAbility(id,charId){
     target.itemEqId=document.getElementById('a_itemeq')?.value||null;
     target.objetEffect=target.type==='Objet'?(document.getElementById('a_objeteffect')?.value||'damage'):'damage';
     target.objAffId=target.type==='Objet'?(document.getElementById('a_objaff')?.value||null):null;
+    target.objBonusId=target.type==='Objet'?(document.getElementById('a_objbonus')?.value||null):null;
+    target.consThreshold=target.type==='Objet'?(Math.max(0,Math.floor(+document.getElementById('a_consthresh')?.value||0))||null):null;
     target.objAffTurns=target.type==='Objet'?(Math.floor(+document.getElementById('a_objaffturns')?.value||0)||null):null;
     target.reqOn=!!document.getElementById('a_reqon')?.checked;
     target.reqId=document.getElementById('a_reqid')?.value||null;
@@ -4933,6 +5122,8 @@ function saveAbility(id,charId){
     target.buffDmUp=Math.max(0,parseNum(document.getElementById('a_buffdmup')?.value));
     target.defBy={};DEGREES.forEach(([k])=>{const o={};['caRed','dmRed','caUp','dmUp'].forEach(f=>{const v=Math.max(0,parseNum(document.getElementById(`a_db_${k}_${f}`)?.value));if(v>0)o[f]=v;});if(Object.keys(o).length)target.defBy[k]=o;});
     target.buffAffDeg=DEGREES.filter(([k])=>document.getElementById('a_da_'+k)?.checked).map(([k])=>k);
+    target.buffBonusId=document.getElementById('a_buffbonus')?.value||null;
+    target.buffBonusDeg=DEGREES.filter(([k])=>document.getElementById('a_ba_'+k)?.checked).map(([k])=>k);
     if(target.area==='me'){target.range=0;target.areaSize=1;target.gapClose=false;}
     if(target.type==='Passif'){
       if(target.area!=='circle'&&target.area!=='square')target.area='square';
@@ -4997,6 +5188,7 @@ function equipmentPage(){
   <p class="tiny muted">Fiche des afflictions (Brûlure, Gelé, Poison…) : % de dégâts/tour (fixe ou évolutif), tour annulé, immobilisation. Applique-les à un jeton depuis la table de jeu (bouton 🩸 Afflictions quand un jeton est sélectionné).</p>
   <div id="afflictionResultsContainer">${afflictionDefResultsHtml()}</div>
   </div>
+  ${bonusCardHtml()}
   ${shopCardHtml()}
   <div class="card" style="margin-top:16px"><div class="row between"><h2>🎯 HUD et critique</h2><button class="btn primary" onclick="openHudSettings()">⚙ Configurer</button></div>
   <p class="tiny muted">Configure les images/sons des pop-ups de critique (Échec Ultime, Échec Critique, Réussite Critique, Réussite Ultime) et les durées d'affichage. L'activation se fait via le bouton 🎯 HUD sur la table de jeu.</p>
@@ -5071,7 +5263,7 @@ function saveHudSettings(){
 function afflictionDefResultsHtml(){
   const items=S.afflictionDefs||[];
   if(!items.length)return '<p class="tiny muted">Aucune affliction définie.</p>';
-  return items.map(d=>`<div class="ability"><div class="icon">${iconBoxHtml(d,'9px')}</div><div class="ability-info"><b>${esc(d.name)}</b><small>${d.dmgBase||0}%/tour${d.dmgGrowth?` (+${d.dmgGrowth}%/tour)`:''}${d.skipTurn?' · Tour annulé':''}${d.preventMove?' · Immobilisé':''}${d.forceAttack?' · Attaque forcée':''}</small></div><button class="btn" onclick="openAfflictionDef('${d.id}')">Modifier</button><button class="btn ghost" onclick="deleteAfflictionDef('${d.id}')" title="Supprimer">🗑️</button></div>`).join('');
+  return items.map(d=>`<div class="ability"><div class="icon">${iconBoxHtml(d,'9px')}</div><div class="ability-info"><b>${esc(d.name)}</b><small>${d.dmgBase||0}%/tour${d.dmgGrowth?` (+${d.dmgGrowth}%/tour)`:''}${d.skipTurn?' · Tour annulé':''}${d.preventMove?' · Immobilisé':''}${d.forceAttack?' · Attaque forcée':''}${d.untargetable?' · Intouchable (ciblé)':''}</small></div><button class="btn" onclick="openAfflictionDef('${d.id}')">Modifier</button><button class="btn ghost" onclick="deleteAfflictionDef('${d.id}')" title="Supprimer">🗑️</button></div>`).join('');
 }
 function openAfflictionDef(id){
   if(!isMJ())return;
@@ -5095,6 +5287,7 @@ function openAfflictionDef(id){
   <div class="field full"><label><input type="checkbox" id="af_skipturn" ${d.skipTurn?'checked':''}> Tour annulé tant que l'affliction est active</label></div>
   <div class="field full"><label><input type="checkbox" id="af_preventmove" ${d.preventMove?'checked':''}> Empêche le déplacement tant que l'affliction est active</label></div>
   <div class="field full"><label><input type="checkbox" id="af_forceattack" ${d.forceAttack?'checked':''}> Obligé d'attaquer celui qui a infligé l'affliction</label></div>
+  <div class="field full"><label><input type="checkbox" id="af_untargetable" ${d.untargetable?'checked':''}> Ne peut pas être attaqué directement (cible unique) tant que l'affliction est active — un sort de zone fait des dégâts mais annule l'affliction</label></div>
   </div>
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveAfflictionDef('${id||''}')">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
@@ -5111,6 +5304,7 @@ function saveAfflictionDef(id){
   target.skipTurn=document.getElementById('af_skipturn').checked;
   target.preventMove=document.getElementById('af_preventmove').checked;
   target.forceAttack=document.getElementById('af_forceattack').checked;
+  target.untargetable=document.getElementById('af_untargetable').checked;
   if(!id)S.afflictionDefs.push(target);
   saveState(); closeModal(); render();
 }
@@ -5458,9 +5652,10 @@ function myCharacterCard(c){
   const instancesHtml=instances.length
     ? instances.map(i=>{
       const afTxt=(i.afflictions&&i.afflictions.length)?(' · 🩸 '+i.afflictions.map(af=>{const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);return d?esc(d.name):'';}).filter(Boolean).join(', ')):'';
+      const bnTxt=(i.bonuses&&i.bonuses.length)?(' · ✨ '+i.bonuses.map(b=>{const d=(S.bonusDefs||[]).find(x=>x.id===b.defId);return d?esc(d.name)+'('+(b.left??'∞')+')':'';}).filter(Boolean).join(', ')):'';
       const sbTxt=(i.statBuffs&&i.statBuffs.length)?(' · 🧪 '+i.statBuffs.map(b=>`+${b.amount} ${esc(b.stat)}(${b.turnsLeft??'∞'})`).join(', ')):'';
       const seTxt=(i.statusEffects&&i.statusEffects.length)?(' · 🌀 '+i.statusEffects.map(se=>`${esc(se.name)}(${se.turnsLeft??'∞'})`).join(', ')):'';
-      return `<div class="row between" style="padding:8px;background:#20232a;border-radius:8px;margin-bottom:6px"><span>${esc(i.label)} — case (${i.x+1}, ${i.y+1})</span><span class="tiny">❤️ ${i.hp}/${i.hpMax} · 💧 ${i.mana}/${i.manaMax} · 🛡 ${i.shield}/${i.shieldMax}${afTxt}${seTxt}${sbTxt}</span></div>`;
+      return `<div class="row between" style="padding:8px;background:#20232a;border-radius:8px;margin-bottom:6px"><span>${esc(i.label)} — case (${i.x+1}, ${i.y+1})</span><span class="tiny">❤️ ${i.hp}/${i.hpMax} · 💧 ${i.mana}/${i.manaMax} · 🛡 ${i.shield}/${i.shieldMax}${afTxt}${bnTxt}${seTxt}${sbTxt}</span></div>`;
     }).join('')
     : `<p class="tiny muted">Ce personnage n'est pas actuellement sur la carte.</p>`;
   const bagListHtml=(c.bag&&c.bag.length)?c.bag.map(b=>{const it=equip(b.eqId);if(!it)return '';const q=b.qty||1;const durTxt=it.durabilityMax?` · 🔧 ${b.dur}/${it.durabilityMax}`:'';const isCons=it.itemType==='divers'&&it.diversCat==='consommable'&&(it.useAmount>0||it.useForce>0||it.useMagie>0);const btns=canAlloc?((targetSlotFor(c,it)?`<button class="btn" style="padding:4px 8px" onclick="equipFromBag('${c.id}','${b.uid}')">Équiper</button>`:'')+(isCons?`<button class="btn" style="padding:4px 8px" onclick="useConsumable('${c.id}','${b.eqId}')">Utiliser</button>`:'')):'';return `<div class="row between" style="padding:6px;background:#20232a;border-radius:8px;margin-bottom:4px;gap:8px"><span>${iconInlineHtml(it)} <b>${esc(it.name)}</b>${q>1?` ×${q}`:''} <small class="muted">(${fmtNum((it.poids||0)*q)} kg)</small><br><span class="tiny muted">${equipSummary(it)}${durTxt}</span></span><span class="row" style="gap:4px">${btns}</span></div>`;}).join(''):'<p class="tiny muted">Sac vide.</p>';
@@ -7271,6 +7466,7 @@ function snapForm(){
     if(el.type==='file'||/search|_orig|c_addbag|merch|weight|hpmax|manamax|^c_move$|bagweight/.test(el.id))return;
     o[el.id]=el.type==='checkbox'?(el.checked?'1':'0'):el.value;
   });
+  document.querySelectorAll('#modal .ac-check').forEach(el=>{o['ac:'+el.value]=el.checked?'1':'0';});
   document.querySelectorAll('#modal .cab-check').forEach(el=>{o['cab:'+el.value]=el.checked?'1':'0';});
   document.querySelectorAll('#modal .skill-active-check').forEach(el=>{o['sk:'+el.value]=el.checked?'1':'0';});
   const bio=document.getElementById('c_bio'); if(bio)o.c_bio=bio.innerHTML;
