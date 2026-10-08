@@ -4748,7 +4748,9 @@ function abilitiesPage(){
   </div>
   <div class="card"><h2>Deux modes de création</h2><div class="statgrid"><div class="stat"><label>🟢 Mode simple</label><strong>Visuel</strong><p class="tiny muted">Type, formule, statistique, défense, élément, zone et effet — indépendants pour chaque capacité.</p></div><div class="stat"><label>🔴 Mode avancé</label><strong>Macro</strong><p class="tiny muted">Aperçu de la logique, en lecture seule pour l'instant.</p></div></div><p class="muted">Le moteur gère le jet d100, le multiplicateur de réussite, la formule de dégâts, la défense, la résistance élémentaire, le bouclier puis les PV. Aucune règle D&D n'est imposée : tout est configurable.</p></div></div>`;
 }
-var abSel=[],bulkAbIds=null,bulkAbSnap=null,_abBulkApplying=false;
+var abSel=[],bulkAbIds=null,bulkAbSnap=null,bulkAbDesc=null,_abBulkApplying=false;
+function normHtml(h){const d=document.createElement('div');d.innerHTML=h||'';return d.innerHTML;}
+function descSnap(){commitDesc();const o={};Object.keys(_descDraft).forEach(k=>{o[k]=normHtml(_descDraft[k]);});o._skill=normHtml(rteHtml('a_skilldesc'));return o;}
 function abFiltered(){
   const q=abilitySearchQuery.trim().toLowerCase();
   let list=S.abilities;
@@ -4774,6 +4776,8 @@ function saveAbBulk(){
   const cur=snapForm(), diff={};
   Object.keys(cur).forEach(k=>{if(cur[k]!==(bulkAbSnap||{})[k])diff[k]=cur[k];});
   const ids=bulkAbIds.slice();
+  const d0=descSnap(), dd={};
+  Object.keys(d0).forEach(k=>{if((d0[k]||'')!==((bulkAbDesc||{})[k]||''))dd[k]=d0[k];});
   _abBulkApplying=true;
   try{
     ids.forEach(aid=>{
@@ -4784,9 +4788,12 @@ function saveAbBulk(){
         const el=document.getElementById(k); if(!el)return;
         if(el.type==='checkbox')el.checked=(v==='1'); else el.value=v;
       });
+      const mainV=('none' in dd)?dd.none:(('_skill' in dd)?dd._skill:null);
+      if(mainV!==null){const e1=document.getElementById('a_desc'),e2=document.getElementById('a_skilldesc');if(e1)e1.innerHTML=mainV;if(e2)e2.innerHTML=mainV;_descDraft.none=mainV;}
+      Object.keys(dd).forEach(k=>{if(k!=='none'&&k!=='_skill')_descDraft[k]=dd[k];});
       saveAbility(aid);
     });
-  }finally{_abBulkApplying=false;bulkAbIds=null;bulkAbSnap=null;}
+  }finally{_abBulkApplying=false;bulkAbIds=null;bulkAbSnap=null;bulkAbDesc=null;}
   abSel=[]; closeModal(); render();
   toast(`✅ ${Object.keys(diff).length} champ(s) appliqué(s) à ${ids.length} capacités.`);
 }
@@ -5002,7 +5009,7 @@ ${spriteAutoSelect('a_spriteauto',a.spriteAuto)}
   <p class="tiny muted">Le type et l'élément sont deux propriétés totalement indépendantes : un Soin peut être Neutre, Feu, etc. Une capacité de Transformation remplace le personnage et son jeton par la fiche choisie.</p>
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button>${charId&&char(charId)?.abilityOverrides?.[id]?`<button class="btn ghost" onclick="resetAbilityOverride('${id}','${charId}')">↺ Rétablir la capacité globale</button>`:''}<button class="btn primary" onclick="saveAbility('${id||''}'${charId?`,'${charId}'`:''})">Enregistrer</button></div>`;
   document.getElementById('modalBg').classList.add('open');
-  if(bulkAbIds&&!_abBulkApplying)bulkAbSnap=snapForm();
+  if(bulkAbIds&&!_abBulkApplying){bulkAbSnap=snapForm();bulkAbDesc=descSnap();}
 }
 function toggleConsThresh(){const f=document.getElementById('a_consthresh_field');if(f)f.style.display=isConsDef(document.getElementById('a_itemeq')?.value)?'':'none';}
 function toggleTransformDropdown(){const p=document.getElementById('a_transformchar_panel');if(p)p.style.display=p.style.display==='none'?'block':'none';}
