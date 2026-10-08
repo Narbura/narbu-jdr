@@ -3198,6 +3198,7 @@ function advanceTurn(){
   lastTurnCombatant=S.combat.order[S.combat.turn];
   if(canControlInstance(lastTurnCombatant))selectedToken=lastTurnCombatant;
 }
+function mvBlocked(t){return !!t.movementBlocked||(t.afflictions||[]).some(af=>{const d=(S.afflictionDefs||[]).find(x=>x.id===af.defId);return d&&d.preventMove;});}
 function nextTurn(){
   if(!isMJ()){toast('⛔ Seul le MJ peut avancer le tour.');return;}
   advanceTurn();saveState();render();
@@ -3304,7 +3305,7 @@ function setupMapInteractions(){
         toast('⏳ Ce n’est pas le tour de ce personnage.'); render(); return;
       }
       const c=inst(id);
-      if(c.movementBlocked){toast('🚫 Ce personnage est immobilisé.');render();return;}
+      if(mvBlocked(c)){toast('🚫 Ce personnage est immobilisé.');render();return;}
       if(effectiveMove(instTemplate(c))<=0&&characterTotalWeight(instTemplate(c))>0){toast('🚫 Trop lourd pour se déplacer !');render();return;}
       dragCandidate={id,startX:e.clientX,startY:e.clientY,origX:c.x,origY:c.y,moved:false};
       render(); return;
@@ -6858,7 +6859,7 @@ function moveSelectedTokenBy(dx,dy){
   const id=selectedToken, t=inst(id); if(!t)return;
   if(!canControlInstance(id)){toast('⛔ Vous ne contrôlez pas ce personnage.');return;}
   if(S.combat.active&&S.combat.order[S.combat.turn]!==id){toast('⏳ Ce n’est pas le tour de ce personnage.');return;}
-  if(t.movementBlocked){toast('🚫 Ce personnage est immobilisé.');return;}
+  if(mvBlocked(t)){toast('🚫 Ce personnage est immobilisé.');return;}
   if(effectiveMove(instTemplate(t))<=0&&characterTotalWeight(instTemplate(t))>0){toast('🚫 Trop lourd pour se déplacer !');return;}
   const sw=t.sizeW||1, sh=t.sizeH||1;
   const nx=t.x+dx, ny=t.y+dy;
