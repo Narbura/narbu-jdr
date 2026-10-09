@@ -4096,7 +4096,7 @@ function pzLoop(now){
     zs.forEach((z,i)=>{
       const img=getFxImg(z.animImage); if(!img||!img.complete||!img.naturalWidth)return pzLast='';
       const sh=pzShape(z); ctx.save();
-      if(sh.local){ctx.translate(sh.cx,sh.cy);ctx.rotate(sh.angle);sh.clip(ctx);fxDrawFrame(ctx,img,frames[i],z.animFrames||1,z.animRows||1,0,-sh.H/2,sh.range,sh.H);}
+      if(sh.local){ctx.translate(sh.cx,sh.cy);ctx.rotate(sh.angle);if(Math.cos(sh.angle)<0)ctx.scale(1,-1);sh.clip(ctx);fxDrawFrame(ctx,img,frames[i],z.animFrames||1,z.animRows||1,0,-sh.H/2,sh.range,sh.H);}
       else{if(sh.clip)sh.clip(ctx);fxDrawFrame(ctx,img,frames[i],z.animFrames||1,z.animRows||1,sh.x,sh.y,sh.w,sh.h);}
       ctx.restore();
     });
@@ -4127,7 +4127,7 @@ function persistentZonesHtml(){
       if(z.zoneImage&&!z.animImage){
         const clipId='pc'+Math.random().toString(36).slice(2,9), ang=angle*180/Math.PI;
         const sw0=z.area==='line'?c/2:(z.coneStart||1)*c/2, ew0=z.area==='line'?c/2:(z.coneEnd||3)*c/2, H=2*Math.max(sw0,ew0);
-        return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><defs><clipPath id="${clipId}"><polygon points="0,${-sw0} 0,${sw0} ${range},${ew0} ${range},${-ew0}"/></clipPath></defs><g transform="translate(${cx} ${cy}) rotate(${ang})"><image href="${esc(z.zoneImage)}" x="0" y="${-H/2}" width="${range}" height="${H}" preserveAspectRatio="none" clip-path="url(#${clipId})" opacity=".9"/></g><polygon points="${pts}" fill="none" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4"/></svg>`;
+        return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><defs><clipPath id="${clipId}"><polygon points="0,${-sw0} 0,${sw0} ${range},${ew0} ${range},${-ew0}"/></clipPath></defs><g transform="translate(${cx} ${cy}) rotate(${ang})${Math.cos(angle)<0?' scale(1 -1)':''}"><image href="${esc(z.zoneImage)}" x="0" y="${-H/2}" width="${range}" height="${H}" preserveAspectRatio="none" clip-path="url(#${clipId})" opacity=".9"/></g><polygon points="${pts}" fill="none" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4"/></svg>`;
       }
       const effect=(z.effect&&!z.animImage)?`<text x="${cx+dx*range/2}" y="${cy+dy*range/2}" font-size="${Math.max(24,c*0.8)}" text-anchor="middle" dominant-baseline="middle" opacity=".5">${esc(z.effect)}</text>`:'';
       return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="${z.animImage?'none':'#ff6a1f2e'}" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4"/>${effect}</svg>`;
