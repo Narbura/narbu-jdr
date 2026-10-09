@@ -3222,7 +3222,7 @@ function applyMapTransform(){const map=document.getElementById('map');if(map)map
 function setupMapInteractions(){
   const wrap=document.getElementById('mapWrap'); const map=document.getElementById('map');
   if(!wrap||!map)return;
-  ensureFxCanvas();
+  ensureFxCanvas(); ensurePzCanvas();
   const hint=document.getElementById('mapDropHint');
 
   wrap.ondragover=e=>{e.preventDefault();hint?.classList.add('show');};
@@ -3961,7 +3961,7 @@ function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride
     activeAbility=null; hoverCell=null; afterCast(a,casterInst); saveState(); render(); return;
   }
   const zTurns=((a.persDur||{})[degKey(label)])||a.duration||3;
-  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:effStat(casterTpl,casterInst,a.stat),casterLabel:casterInst.label,casterInstId:casterInst.id,turnsLeft:zTurns,effect:a.effect,zoneImage:a.zoneImage||null,affId:a.pzAffId||null,bonusId:a.pzBonusId||null,affThr:a.pzThr||50,affTurns:a.pzTurns||null};
+  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:effStat(casterTpl,casterInst,a.stat),casterLabel:casterInst.label,casterInstId:casterInst.id,turnsLeft:zTurns,effect:a.effect,zoneImage:a.zoneImage||null,affId:a.pzAffId||null,bonusId:a.pzBonusId||null,affThr:a.pzThr||50,affTurns:a.pzTurns||null,animImage:a.pzAnim||null,animFrames:Math.max(1,a.pzFrames||1),animRows:Math.max(1,a.pzRows||1),animDelays:a.pzAnim?parseFrameDelays(a.pzSpec,Math.max(1,a.pzFrames||1),a.pzDelay):null};
   if(a.area==='line'||a.area==='cone'){
     const axis=axisOverride||zoneAxis(a,start,originOverride,a.zoneRange||a.range||1);
     if(!axis){toast('Sélectionne d’abord un personnage.');return;}
@@ -4051,6 +4051,57 @@ function zoneStatus(z,nt){
   }
   addLog(lines.join('<br>'));
 }
+function parseFrameDelays(spec,frames,def){
+  const d=Array(frames).fill(Math.max(10,def||100));
+  String(spec||'').split(/[,;]/).forEach(p=>{const m=p.trim().match(/^(\d+)(?:\s*-\s*(\d+))?\s*:\s*(\d+)$/);if(!m)return;const a=+m[1],b=+(m[2]||m[1]),v=Math.max(10,+m[3]);for(let i=a;i<=b;i++)if(i>=1&&i<=frames)d[i-1]=v;});
+  return d;
+}
+let pzRaf=false,pzLast='';
+function pzShape(z){
+  const c=S.map.cell;
+  if(z.area==='line'||z.area==='cone'){
+    const {cx,cy,angle,range}=z, dx=Math.cos(angle), dy=Math.sin(angle), px=-dy, py=dx;
+    let poly;
+    if(z.area==='line'){const hw=c/2;poly=[[cx+px*hw,cy+py*hw],[cx-px*hw,cy-py*hw],[cx-px*hw+dx*range,cy-py*hw+dy*range],[cx+px*hw+dx*range,cy+py*hw+dy*range]];}
+    else{const sw=(z.coneStart||1)*c/2, ew=(z.coneEnd||3)*c/2;poly=[[cx+px*sw,cy+py*sw],[cx-px*sw,cy-py*sw],[cx+dx*range-px*ew,cy+dy*range-py*ew],[cx+dx*range+px*ew,cy+dy*range+py*ew]];}
+    const xs=poly.map(p=>p[0]), ys=poly.map(p=>p[1]), x=Math.min(...xs), y=Math.min(...ys);
+    return {x,y,w:Math.max(...xs)-x,h:Math.max(...ys)-y,clip:ctx=>{ctx.beginPath();poly.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.clip();}};
+  }
+  let x,y,w,h;
+  if(z.area==='self'){const a=z.areaSize||1;w=a*2+(z.casterSW||1);h=a*2+(z.casterSH||1);x=z.cx-a;y=z.cy-a;}
+  else{w=h=z.areaSize||1;x=z.x;y=z.y;}
+  x*=c;y*=c;w*=c;h*=c;
+  return {x,y,w,h,clip:z.area==='circle'?(ctx=>{ctx.beginPath();ctx.ellipse(x+w/2,y+h/2,w/2,h/2,0,0,Math.PI*2);ctx.clip();}):null};
+}
+function pzFrame(z,now){
+  const d=z.animDelays||[100], tot=d.reduce((a,b)=>a+b,0)||1; let t=now%tot;
+  for(let i=0;i<d.length;i++){if(t<d[i])return i;t-=d[i];}
+  return 0;
+}
+function ensurePzCanvas(){
+  const map=document.getElementById('map'); if(!map)return;
+  let cv=document.getElementById('pzCanvas');
+  if(!(S.persistentZones||[]).some(z=>z.animImage)){if(cv)cv.remove();return;}
+  if(!cv){cv=document.createElement('canvas');cv.id='pzCanvas';cv.style.cssText='position:absolute;left:0;top:0;pointer-events:none;z-index:13';map.appendChild(cv);}
+  cv.width=S.map.cols*S.map.cell; cv.height=S.map.rows*S.map.cell; pzLast='';
+  if(!pzRaf){pzRaf=true;requestAnimationFrame(pzLoop);}
+}
+function pzLoop(now){
+  const cv=document.getElementById('pzCanvas'), zs=(S.persistentZones||[]).filter(z=>z.animImage);
+  if(!cv||!zs.length){pzRaf=false;return;}
+  const frames=zs.map(z=>pzFrame(z,now)), sig=zs.map((z,i)=>z.id+':'+frames[i]).join('|');
+  if(sig!==pzLast){
+    pzLast=sig;
+    const ctx=cv.getContext('2d'); ctx.clearRect(0,0,cv.width,cv.height);
+    zs.forEach((z,i)=>{
+      const img=getFxImg(z.animImage); if(!img||!img.complete||!img.naturalWidth)return pzLast='';
+      const sh=pzShape(z); ctx.save(); if(sh.clip)sh.clip(ctx);
+      fxDrawFrame(ctx,img,frames[i],z.animFrames||1,z.animRows||1,sh.x,sh.y,sh.w,sh.h);
+      ctx.restore();
+    });
+  }
+  requestAnimationFrame(pzLoop);
+}
 function decayPersistentZones(cid,wrap){
   if(!S.persistentZones||!S.persistentZones.length)return;
   S.persistentZones=S.persistentZones.filter(z=>{
@@ -4072,12 +4123,12 @@ function persistentZonesHtml(){
       else{const sw=(z.coneStart||1)*c/2, ew=(z.coneEnd||3)*c/2;poly=[[cx+px*sw,cy+py*sw],[cx-px*sw,cy-py*sw],[cx+dx*range-px*ew,cy+dy*range-py*ew],[cx+dx*range+px*ew,cy+dy*range+py*ew]];}
       const pts=poly.map(p=>p.map(n=>n.toFixed(1)).join(',')).join(' ');
       const mapW=S.map.cols*c, mapH=S.map.rows*c;
-      if(z.zoneImage){
+      if(z.zoneImage&&!z.animImage){
         const patId='pat'+Math.random().toString(36).slice(2,9);
         return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><defs><pattern id="${patId}" patternUnits="userSpaceOnUse" width="${c}" height="${c}"><image href="${esc(z.zoneImage)}" x="0" y="0" width="${c}" height="${c}" preserveAspectRatio="xMidYMid slice"/></pattern></defs><polygon points="${pts}" fill="url(#${patId})" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4" opacity=".9"/></svg>`;
       }
-      const effect=z.effect?`<text x="${cx+dx*range/2}" y="${cy+dy*range/2}" font-size="${Math.max(24,c*0.8)}" text-anchor="middle" dominant-baseline="middle" opacity=".5">${esc(z.effect)}</text>`:'';
-      return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="#ff6a1f2e" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4"/>${effect}</svg>`;
+      const effect=(z.effect&&!z.animImage)?`<text x="${cx+dx*range/2}" y="${cy+dy*range/2}" font-size="${Math.max(24,c*0.8)}" text-anchor="middle" dominant-baseline="middle" opacity=".5">${esc(z.effect)}</text>`:'';
+      return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="${z.animImage?'none':'#ff6a1f2e'}" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4"/>${effect}</svg>`;
     }
     let x,y,w,h;
     if(z.area==='self'){
@@ -4086,11 +4137,11 @@ function persistentZonesHtml(){
       x=z.cx-(z.areaSize||1); y=z.cy-(z.areaSize||1);
     }else{w=h=z.areaSize||1;x=z.x;y=z.y;}
     const px=x*c, py=y*c, dw=w*c, dh=h*c;
-    if(z.zoneImage){
+    if(z.zoneImage&&!z.animImage){
       return `<div style="position:absolute;left:${px}px;top:${py}px;width:${dw}px;height:${dh}px;border:2px dashed #ff8c3c;z-index:12;pointer-events:none;background-image:url('${esc(z.zoneImage)}');background-size:${c}px ${c}px;background-repeat:repeat;opacity:.9;${z.area==='circle'?'border-radius:50%;':''}"></div>`;
     }
-    const effect=z.effect?`<span style="font-size:${Math.max(24,Math.min(w,h)*8)}px;opacity:.5">${esc(z.effect)}</span>`:'';
-    return `<div style="position:absolute;left:${px}px;top:${py}px;width:${dw}px;height:${dh}px;background:#ff6a1f2e;border:2px dashed #ff8c3c;z-index:12;display:grid;place-items:center;pointer-events:none">${effect}</div>`;
+    const effect=(z.effect&&!z.animImage)?`<span style="font-size:${Math.max(24,Math.min(w,h)*8)}px;opacity:.5">${esc(z.effect)}</span>`:'';
+    return `<div style="position:absolute;left:${px}px;top:${py}px;width:${dw}px;height:${dh}px;background:${z.animImage?'none':'#ff6a1f2e'};${z.area==='circle'?'border-radius:50%;':''}border:2px dashed #ff8c3c;z-index:12;display:grid;place-items:center;pointer-events:none">${effect}</div>`;
   }).join('');
 }
 /* ============================= DISSIPATION (MJ universel) ============================= */
@@ -4946,7 +4997,15 @@ function openAbility(id,charId){
   <div class="field" id="ability_passif_extra" style="display:${a.type==='Passif'?'':'none'}"><label>Effet de l'aura</label><select id="a_auraeffect">${opt('damage','Dégâts',a.auraEffect)}${opt('heal','Soin',a.auraEffect)}${opt('shield','Bouclier',a.auraEffect)}</select><p class="tiny muted">Aura auto-centrée sur le lanceur (zone = Carré ou Cercle uniquement), se déclenche à chaque début de son tour.</p></div>
   <div class="field" id="ability_buff_extra" style="display:${(a.type==='Buff'||a.type==='Persistant')?'':'none'}"><label>Durée (tours)</label><input id="a_duration" type="number" min="1" value="${a.type==='Buff'?(a.duration||''):(a.duration||3)}" placeholder="${a.type==='Buff'?'vide = permanent':''}"><p class="tiny muted">${a.type==='Persistant'?"Nombre de tours avant que la zone persistante ne s'estompe. Chaque token qui commence son tour dans la zone subit l'effet (calculé comme si le lanceur agissait à chaque fois).":"Cible unique ou zone (voir champ Zone ci-dessous). Effet auto à chaque début de tour de la/les cible(s) pendant N tours. Choisis toi-même la défense ciblée (dont « Aucune »)."}</p></div>
   <div class="field full" id="ability_buff_extra2" style="display:${a.type==='Buff'?'':'none'}"><label>🩸 Affliction appliquée</label><select id="a_buffaff">${opt('','— Aucune —',a.buffAfflictionId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.buffAfflictionId||'')).join('')}</select><label style="margin-top:8px">✨ Bonus appliqué</label><select id="a_buffbonus">${opt('','— Aucun —',a.buffBonusId||'')}${(S.bonusDefs||[]).map(d=>opt(d.id,d.name,a.buffBonusId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px;flex-wrap:wrap"><div class="field" style="max-width:110px"><label>CA − (défaut)</label><input id="a_buffca" type="number" min="0" value="${a.buffCaRed||0}"></div><div class="field" style="max-width:110px"><label>DM − (défaut)</label><input id="a_buffdm" type="number" min="0" value="${a.buffDmRed||0}"></div><div class="field" style="max-width:110px"><label>CA + (défaut)</label><input id="a_buffcaup" type="number" min="0" value="${a.buffCaUp||0}"></div><div class="field" style="max-width:110px"><label>DM + (défaut)</label><input id="a_buffdmup" type="number" min="0" value="${a.buffDmUp||0}"></div></div><label style="margin-top:8px">Réglage par degré de réussite / d'échec</label><div style="overflow:auto"><table class="tiny" style="border-collapse:collapse;width:100%"><tr><th style="text-align:left">Degré</th><th>Affliction</th><th>Bonus</th><th>Durée</th><th>CA −</th><th>DM −</th><th>CA +</th><th>DM +</th></tr>${DEGREES.map(([k,l])=>{const o=(a.defBy||{})[k]||{};const on=Array.isArray(a.buffAffDeg)?a.buffAffDeg.includes(k):['leg','rea','gra','cri','ult'].includes(k);const ip=f=>`<td><input id="a_db_${k}_${f}" type="number" min="0" value="${o[f]||''}" style="width:56px"></td>`;return `<tr><td>${l}</td><td style="text-align:center"><input type="checkbox" id="a_da_${k}" ${on?'checked':''}></td><td style="text-align:center"><input type="checkbox" id="a_ba_${k}" ${(Array.isArray(a.buffBonusDeg)?a.buffBonusDeg.includes(k):['leg','rea','gra','cri','ult'].includes(k))?'checked':''}></td><td><input id="a_dur${k}" type="number" min="1" value="${(a.durBy||{})[k]||''}" style="width:56px"></td>${ip('caRed')}${ip('dmRed')}${ip('caUp')}${ip('dmUp')}</tr>`;}).join('')}</table></div><p class="tiny muted">Case Affliction cochée = l'affliction s'applique à ce degré. Durée vide = champ Durée général (vide aussi = permanent jusqu'à dissipation). Si une ligne contient des valeurs de CA/DM, elles remplacent les valeurs par défaut pour ce degré ; ligne vide = valeurs par défaut (réussites seulement). Mets la formule à 0 si tu ne veux aucun dégât/soin par tour.</p></div>
-  <div class="field full" id="ability_pers_extra" style="display:${a.type==='Persistant'?'':'none'}"><label>⏱ Durée de la zone selon le jet (tours — vide = durée générale ; en cas d'échec la zone ne s'active pas)</label><div class="row" style="gap:6px;flex-wrap:wrap">${DEGREES.filter(([k])=>['leg','rea','gra','cri','ult'].includes(k)).map(([k,l])=>`<div class="field" style="max-width:120px"><label>${l}</label><input id="a_pd_${k}" type="number" min="1" value="${(a.persDur||{})[k]||''}"></div>`).join('')}</div><label style="margin-top:8px">🩸 Affliction appliquée aux personnages touchés</label><select id="a_pz_aff">${opt('','— Aucune —',a.pzAffId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.pzAffId||'')).join('')}</select><label style="margin-top:8px">✨ Bonus appliqué aux personnages touchés</label><select id="a_pz_bonus">${opt('','— Aucun —',a.pzBonusId||'')}${(S.bonusDefs||[]).map(d=>opt(d.id,d.name,a.pzBonusId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px;flex-wrap:wrap"><div class="field" style="max-width:200px"><label>Seuil (1-100) : s'applique si le d100 est au-dessus</label><input id="a_pz_thr" type="number" min="1" max="100" value="${a.pzThr||50}"></div><div class="field" style="max-width:200px"><label>Durée affliction/bonus (tours, vide = jusqu'au retrait)</label><input id="a_pz_turns" type="number" min="1" value="${a.pzTurns||''}"></div></div><p class="tiny muted">À chaque fois qu'un personnage subit dégâts/soin/bouclier de la zone, il lance 1d100 ; si le résultat dépasse le seuil, l'affliction/bonus s'applique.</p></div>
+  <div class="field full" id="ability_pers_extra" style="display:${a.type==='Persistant'?'':'none'}"><label>⏱ Durée de la zone selon le jet (tours — vide = durée générale ; en cas d'échec la zone ne s'active pas)</label><div class="row" style="gap:6px;flex-wrap:wrap">${DEGREES.filter(([k])=>['leg','rea','gra','cri','ult'].includes(k)).map(([k,l])=>`<div class="field" style="max-width:120px"><label>${l}</label><input id="a_pd_${k}" type="number" min="1" value="${(a.persDur||{})[k]||''}"></div>`).join('')}</div><label style="margin-top:8px">🩸 Affliction appliquée aux personnages touchés</label><select id="a_pz_aff">${opt('','— Aucune —',a.pzAffId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.pzAffId||'')).join('')}</select><label style="margin-top:8px">✨ Bonus appliqué aux personnages touchés</label><select id="a_pz_bonus">${opt('','— Aucun —',a.pzBonusId||'')}${(S.bonusDefs||[]).map(d=>opt(d.id,d.name,a.pzBonusId||'')).join('')}</select><div class="row" style="gap:10px;margin-top:8px;flex-wrap:wrap"><div class="field" style="max-width:200px"><label>Seuil (1-100) : s'applique si le d100 est au-dessus</label><input id="a_pz_thr" type="number" min="1" max="100" value="${a.pzThr||50}"></div><div class="field" style="max-width:200px"><label>Durée affliction/bonus (tours, vide = jusqu'au retrait)</label><input id="a_pz_turns" type="number" min="1" value="${a.pzTurns||''}"></div></div><p class="tiny muted">À chaque fois qu'un personnage subit dégâts/soin/bouclier de la zone, il lance 1d100 ; si le résultat dépasse le seuil, l'affliction/bonus s'applique.</p>
+  <label style="margin-top:12px">🎞 Animation de la zone (spritesheet — vide = image fixe / couleur habituelle)</label>
+  <div class="icon-dropzone" onclick="document.getElementById('a_pz_anim_file').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleIconDrop(event,'a_pz_anim','a_pz_anim_preview')"><div id="a_pz_anim_preview" class="icon-preview">${a.pzAnim?`<img src="${esc(a.pzAnim)}">`:'<span>🎞</span>'}</div><p class="tiny muted">Glisse une image ici, ou clique pour parcourir.</p><input type="file" id="a_pz_anim_file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="handleIconFileInput(event,'a_pz_anim','a_pz_anim_preview')"></div>
+  <input type="hidden" id="a_pz_anim" value="${esc(a.pzAnim||'')}">
+  ${a.pzAnim?`<button type="button" class="btn ghost" style="margin-top:6px" onclick="clearIconImage('a_pz_anim','a_pz_anim_preview','🎞')">↺ Retirer</button>`:''}
+  ${imagePickerHtml('a_pz_anim','a_pz_anim_preview')}
+  <div class="row" style="gap:10px;margin-top:6px;flex-wrap:wrap"><div class="field" style="max-width:160px"><label>Nombre de frames</label><input id="a_pz_frames" type="number" min="1" value="${a.pzFrames||1}"></div><div class="field" style="max-width:160px"><label>Nombre de lignes</label><input id="a_pz_rows" type="number" min="1" value="${a.pzRows||1}"></div><div class="field" style="max-width:200px"><label>Délai par défaut par frame (ms)</label><input id="a_pz_delay" type="number" min="10" value="${a.pzDelay||100}"></div></div>
+  <div class="field" style="margin-top:6px"><label>Délais personnalisés (ms) — ex : 1-6:100, 7:200, 8-10:10</label><input id="a_pz_spec" value="${esc(a.pzSpec||'')}" placeholder="1-6:100, 7:200, 8-10:10"></div>
+  <p class="tiny muted">Chaque nombre avant « : » est un numéro de frame (ou une plage) ; la valeur est le temps d'affichage de chaque frame concernée. Les frames non listées utilisent le délai par défaut (minimum 10 ms). L'animation tourne en boucle sur toute la zone.</p></div>
   <div class="field full" id="ability_objet_extra" style="display:${a.type==='Objet'?'':'none'}"><label>🎒 Objet divers consommé à chaque utilisation</label><select id="a_objeteffect" style="margin-bottom:6px">${opt('damage','Effet : dégâts',a.objetEffect||'damage')}${opt('heal','Effet : soin',a.objetEffect||'damage')}${opt('shield','Effet : bouclier',a.objetEffect||'damage')}${opt('mana','Effet : mana',a.objetEffect||'damage')}</select><select id="a_itemeq" onchange="toggleConsThresh()">${opt('','— Choisir —',a.itemEqId||'')}${(S.equipment||[]).filter(e=>e.itemType==='divers').map(e=>opt(e.id,e.name,a.itemEqId||'')).join('')}</select><div id="a_consthresh_field" style="display:${isConsDef(a.itemEqId)?'':'none'};margin-top:8px"><label>🎯 Le consommable fait effet si le jet est inférieur à (ex : 96 = effet pour 95 ou moins ; vide = toujours)</label><input id="a_consthresh" type="number" min="1" value="${a.consThreshold||''}"></div><label style="margin-top:8px">🩸 Affliction appliquée si réussite</label><select id="a_objaff">${opt('','— Aucune —',a.objAffId||'')}${(S.afflictionDefs||[]).map(d=>opt(d.id,d.name,a.objAffId||'')).join('')}</select><label style="margin-top:8px">✨ Bonus appliqué si réussite</label><select id="a_objbonus">${opt('','— Aucun —',a.objBonusId||'')}${(S.bonusDefs||[]).map(d=>opt(d.id,d.name,a.objBonusId||'')).join('')}</select><label style="margin-top:8px">Durée de l'affliction / du bonus (tours — vide = jusqu'au retrait par le MJ)</label><input id="a_objaffturns" type="number" min="1" value="${a.objAffTurns||''}"></div>
   <div id="ability_transfo_fields" style="display:${isTransfo?'contents':'none'}">
     <div class="field full"><label>Se transforme en</label>
@@ -5203,6 +5262,11 @@ function saveAbility(id,charId){
     target.pzAffId=target.type==='Persistant'?(document.getElementById('a_pz_aff')?.value||null):null;
     target.pzBonusId=target.type==='Persistant'?(document.getElementById('a_pz_bonus')?.value||null):null;
     target.pzThr=Math.max(1,Math.min(100,Math.floor(+document.getElementById('a_pz_thr')?.value||50)));
+    target.pzAnim=target.type==='Persistant'?(document.getElementById('a_pz_anim')?.value.trim()||null):null;
+    target.pzFrames=Math.max(1,Math.floor(+document.getElementById('a_pz_frames')?.value||1));
+    target.pzRows=Math.max(1,Math.floor(+document.getElementById('a_pz_rows')?.value||1));
+    target.pzDelay=Math.max(10,Math.floor(+document.getElementById('a_pz_delay')?.value||100));
+    target.pzSpec=(document.getElementById('a_pz_spec')?.value||'').trim();
     target.pzTurns=Math.floor(+document.getElementById('a_pz_turns')?.value||0)||null;
     target.buffBonusDeg=DEGREES.filter(([k])=>document.getElementById('a_ba_'+k)?.checked).map(([k])=>k);
     if(target.area==='me'){target.range=0;target.areaSize=1;target.gapClose=false;}
