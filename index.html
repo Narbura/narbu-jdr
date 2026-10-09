@@ -4064,8 +4064,8 @@ function pzShape(z){
     let poly;
     if(z.area==='line'){const hw=c/2;poly=[[cx+px*hw,cy+py*hw],[cx-px*hw,cy-py*hw],[cx-px*hw+dx*range,cy-py*hw+dy*range],[cx+px*hw+dx*range,cy+py*hw+dy*range]];}
     else{const sw=(z.coneStart||1)*c/2, ew=(z.coneEnd||3)*c/2;poly=[[cx+px*sw,cy+py*sw],[cx-px*sw,cy-py*sw],[cx+dx*range-px*ew,cy+dy*range-py*ew],[cx+dx*range+px*ew,cy+dy*range+py*ew]];}
-    const xs=poly.map(p=>p[0]), ys=poly.map(p=>p[1]), x=Math.min(...xs), y=Math.min(...ys);
-    return {x,y,w:Math.max(...xs)-x,h:Math.max(...ys)-y,clip:ctx=>{ctx.beginPath();poly.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.clip();}};
+    const s0=z.area==='line'?c/2:(z.coneStart||1)*c/2, e0=z.area==='line'?c/2:(z.coneEnd||3)*c/2;
+    return {local:true,cx,cy,angle,range,H:2*Math.max(s0,e0),clip:ctx=>{ctx.beginPath();ctx.moveTo(0,-s0);ctx.lineTo(0,s0);ctx.lineTo(range,e0);ctx.lineTo(range,-e0);ctx.closePath();ctx.clip();}};
   }
   let x,y,w,h;
   if(z.area==='self'){const a=z.areaSize||1;w=a*2+(z.casterSW||1);h=a*2+(z.casterSH||1);x=z.cx-a;y=z.cy-a;}
@@ -4095,8 +4095,9 @@ function pzLoop(now){
     const ctx=cv.getContext('2d'); ctx.clearRect(0,0,cv.width,cv.height);
     zs.forEach((z,i)=>{
       const img=getFxImg(z.animImage); if(!img||!img.complete||!img.naturalWidth)return pzLast='';
-      const sh=pzShape(z); ctx.save(); if(sh.clip)sh.clip(ctx);
-      fxDrawFrame(ctx,img,frames[i],z.animFrames||1,z.animRows||1,sh.x,sh.y,sh.w,sh.h);
+      const sh=pzShape(z); ctx.save();
+      if(sh.local){ctx.translate(sh.cx,sh.cy);ctx.rotate(sh.angle);sh.clip(ctx);fxDrawFrame(ctx,img,frames[i],z.animFrames||1,z.animRows||1,0,-sh.H/2,sh.range,sh.H);}
+      else{if(sh.clip)sh.clip(ctx);fxDrawFrame(ctx,img,frames[i],z.animFrames||1,z.animRows||1,sh.x,sh.y,sh.w,sh.h);}
       ctx.restore();
     });
   }
@@ -4124,8 +4125,9 @@ function persistentZonesHtml(){
       const pts=poly.map(p=>p.map(n=>n.toFixed(1)).join(',')).join(' ');
       const mapW=S.map.cols*c, mapH=S.map.rows*c;
       if(z.zoneImage&&!z.animImage){
-        const patId='pat'+Math.random().toString(36).slice(2,9);
-        return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><defs><pattern id="${patId}" patternUnits="userSpaceOnUse" width="${c}" height="${c}"><image href="${esc(z.zoneImage)}" x="0" y="0" width="${c}" height="${c}" preserveAspectRatio="xMidYMid slice"/></pattern></defs><polygon points="${pts}" fill="url(#${patId})" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4" opacity=".9"/></svg>`;
+        const clipId='pc'+Math.random().toString(36).slice(2,9), ang=angle*180/Math.PI;
+        const sw0=z.area==='line'?c/2:(z.coneStart||1)*c/2, ew0=z.area==='line'?c/2:(z.coneEnd||3)*c/2, H=2*Math.max(sw0,ew0);
+        return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><defs><clipPath id="${clipId}"><polygon points="0,${-sw0} 0,${sw0} ${range},${ew0} ${range},${-ew0}"/></clipPath></defs><g transform="translate(${cx} ${cy}) rotate(${ang})"><image href="${esc(z.zoneImage)}" x="0" y="${-H/2}" width="${range}" height="${H}" preserveAspectRatio="none" clip-path="url(#${clipId})" opacity=".9"/></g><polygon points="${pts}" fill="none" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4"/></svg>`;
       }
       const effect=(z.effect&&!z.animImage)?`<text x="${cx+dx*range/2}" y="${cy+dy*range/2}" font-size="${Math.max(24,c*0.8)}" text-anchor="middle" dominant-baseline="middle" opacity=".5">${esc(z.effect)}</text>`:'';
       return `<svg style="position:absolute;left:0;top:0;pointer-events:none;z-index:12" width="${mapW}" height="${mapH}"><polygon points="${pts}" fill="${z.animImage?'none':'#ff6a1f2e'}" stroke="#ff8c3c" stroke-width="2" stroke-dasharray="6,4"/>${effect}</svg>`;
