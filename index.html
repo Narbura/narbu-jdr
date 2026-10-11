@@ -4051,7 +4051,7 @@ function applyPersistentZones(nt,onlyDamage){
     }else{
       let dmg=raw;
       const def=z.defense!=='none'?(effectiveDef(tTpl,nt)[z.defense]||0):0;
-      const f0=dmg; dmg=Math.floor(dmg*(100+(z.powPct||0))/100);
+      const powPct0=Math.round((z.powPct||0)*100)/100; const f0=dmg; dmg=Math.floor(dmg*(100+(z.powPct||0))/100);
       const f1=dmg;
       const resist=(effectiveRes(tTpl,nt)[z.element]||0)/100;
       dmg=Math.max(0,Math.ceil(dmg*(1-resist)));
@@ -4059,7 +4059,7 @@ function applyPersistentZones(nt,onlyDamage){
       const absorbed=Math.min(nt.shield||0,dmg); nt.shield-=absorbed; const hpDmg=dmg-absorbed;
       const fd=FL(`<br>🧮 Dégâts bruts ${f0} → puissance ${esc(z.element)} +${Math.round((z.powPct||0)*100)/100}% = ${f1} → résistance ${Math.round(resist*100)}% = ${f2} → défense ${esc(z.defense)} −${def} = ${dmg}${absorbed?` → bouclier −${absorbed}`:''} → PV −${hpDmg}`);
       nt.hp=Math.max(0,nt.hp-hpDmg);
-      addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : -${hpDmg} PV${det}${def?` − défense ${def}`:''}${resist?` − résistance ${Math.round(resist*100)}%`:''}${fd}`);
+      addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : -${hpDmg} PV${det}${powPct0?` + puissance ${powPct0}%`:''}${resist?` − résistance ${Math.round(resist*100)}%`:''}${def?` − défense ${def}`:''}${fd}`);
       broadcastHud(nt.id,{hp:-hpDmg,shield:absorbed>0?-absorbed:0});
       {const l=[];breakUntargetable(nt,l);if(l.length)addLog(l.join('<br>'));}
       if(nt.hp<=0){addLog(`💀 <b>${esc(nt.label)} est KO</b>.`);handleInstanceDeath(nt,killer);}
