@@ -1517,16 +1517,19 @@ function rollWeaponElems(w,casterInst){
   });
   return out;
 }
+function FL(l){return '<!--F-->'+l+'<!--/F-->';}
 function weaponPhysDamage(wp,mult,statVal,dmgMult,lines,mag,el){
   if(!(wp>0))return 0;
-  const d=applyMult(Math.ceil(wp*mult*statVal/100),dmgMult);
+  const c0=Math.ceil(wp*mult*statVal/100), d=applyMult(c0,dmgMult);
   lines.push(mag?`🔮 ${esc(el)} (arme magique) : ${d}`:`⚔ Physique (arme) : ${d}`);
+  lines.push(FL(`🧮 Arme : ${wp} (jet) × ${mult} (réussite) × ${statVal}% (stat) = ${c0}${dmgMult?` → mult. ${esc(dmgMult)} = ${d}`:''}`));
   return d;
 }
 function elemBonusDamage(list,mult,statVal,dmgMult,tTpl,t,lines){
   return list.map(e=>{
-    const d=applyMult(Math.ceil(e.total*mult*statVal/100),dmgMult);
+    const c0=Math.ceil(e.total*mult*statVal/100), d=applyMult(c0,dmgMult);
     lines.push(`✨ + ${esc(e.el)} (arme) : ${d}`);
+    lines.push(FL(`🧮 ${esc(e.el)} (arme) : ${e.total} (jet) × ${mult} (réussite) × ${statVal}% (stat) = ${c0}${dmgMult?` → mult. ${esc(dmgMult)} = ${d}`:''}`));
     return {raw:d,el:e.el,pool:'DM'};
   });
 }
@@ -1545,19 +1548,22 @@ function effectivePow(c,t){
 function powInputsHtml(prefix,pow){return ELEMENT_RES_KEYS.map(k=>`<div class="field"><label>Puissance ${esc(k)} (%)</label><input id="${prefix}${k}" type="number" value="${(pow||{})[k]||0}"></div>`).join('');}
 function readPow(prefix){const o={};ELEMENT_RES_KEYS.forEach(k=>{const v=parseNum(document.getElementById(prefix+k)?.value);if(v)o[k]=v;});return o;}
 function finalizeDamage(parts,tTpl,t,att){
-  const groups={}, detail=[];
+  const groups={}, detail=[], full=[];
   parts.forEach(p=>{if(!(p.raw>0))return;const k=p.pool+'|'+p.el;const g=groups[k]=groups[k]||{pool:p.pool,el:p.el,raw:0};g.raw+=p.raw;});
   const d=effectiveDef(tTpl,t); let ca=0,dm=0,free=0;
   const ap=att?effectivePow(instTemplate(att),att):null;
   Object.values(groups).forEach(g=>{
-    if(ap&&ap[g.el]){const b0=g.raw;g.raw=Math.floor(g.raw*(100+ap[g.el])/100);detail.push(`⚡ Puissance ${esc(g.el)} +${Math.round(ap[g.el]*100)/100}% : ${b0} → ${g.raw}`);}
+    const b0=g.raw, pw=ap&&ap[g.el]?ap[g.el]:0;
+    if(ap&&ap[g.el]){g.raw=Math.floor(g.raw*(100+ap[g.el])/100);detail.push(`⚡ Puissance ${esc(g.el)} +${Math.round(ap[g.el]*100)/100}% : ${b0} → ${g.raw}`);}
     const res=(effectiveRes(tTpl,t)[g.el]||0)/100;
     g.v=Math.max(0,Math.ceil(g.raw*(1-res)));
     if(res)detail.push(`🛡 ${esc(g.el)} : ${g.raw} → ${g.v} (résistance ${Math.round(res*100)}%)`);
+    full.push(`🧮 ${esc(g.el)} [${g.pool==='CA'?'CA':g.pool==='DM'?'DM':'sans défense'}] : brut ${b0}${pw?` → puissance +${Math.round(pw*100)/100}% = ${g.raw}`:''}${res?` → résistance ${Math.round(res*100)}% = ${g.v}`:' (aucune résistance)'}`);
     if(g.pool==='CA')ca+=g.v;else if(g.pool==='DM')dm+=g.v;else free+=g.v;
   });
   const caR=Math.min(ca,d.CA||0), dmR=Math.min(dm,d.DM||0);
-  return {total:(ca-caR)+(dm-dmR)+free,detail,txt:(caR?` (−${caR} CA)`:'')+(dmR?` (−${dmR} DM)`:'')};
+  full.push(`🧮 Défense : CA ${ca} − ${d.CA||0} = ${ca-caR} · DM ${dm} − ${d.DM||0} = ${dm-dmR}${free?` · sans défense ${free}`:''} → total ${(ca-caR)+(dm-dmR)+free}`);
+  return {full,total:(ca-caR)+(dm-dmR)+free,detail,txt:(caR?` (−${caR} CA)`:'')+(dmR?` (−${dmR} DM)`:'')};
 }
 function rollWithWeapon(formula,weaponUsed,casterInst){
   const r=roll(formula);
@@ -1769,15 +1775,15 @@ function outcome(d){
 function addLog(html,compact,adv){if(_grp)return;let st=compact===true?html+'<!--CC-->':(compact?html+'<!--C-->'+compact:html);if(adv)st+='<!--A-->'+adv;S.chat.push(st);if(S.chat.length>120)S.chat.shift();queueChat(st);}
 function chatMode(){const m=localStorage.getItem('narbudr-chat-mode');if(m)return m;return localStorage.getItem('narbudr-chat-compact')==='1'?'simple':'detail';}
 function chatCompact(){return chatMode()==='simple';}
-function toggleChatCompact(){const m=chatMode();localStorage.setItem('narbudr-chat-mode',m==='detail'?'simple':m==='simple'?'advanced':'detail');render();}
-function chatModeLabel(){const m=chatMode();return m==='simple'?'Simple':m==='advanced'?'Avancé':'Détaillé';}
+function toggleChatCompact(){const m=chatMode();localStorage.setItem('narbudr-chat-mode',m==='detail'?'simple':m==='simple'?'advanced':m==='advanced'?'full':'detail');render();}
+function chatModeLabel(){const m=chatMode();return m==='simple'?'Simple':m==='advanced'?'Avancé':m==='full'?'Complet':'Détaillé';}
 function tokOf(t,sz){sz=sz||34;const c=instTemplate(t);return `<span title="${esc(t.label)}" style="font-size:${sz*0.8}px;line-height:1;vertical-align:middle">${c?iconInlineHtml(c,sz):esc(t.label)}</span>`;}
 function advCardHtml(ci,a,label,rows,sums){
   const ic=a.iconImage?`<img src="${esc(a.iconImage)}" style="width:16px;height:16px;vertical-align:middle;border-radius:3px">`:esc(a.icon||'');
   const r=rows.map(x=>`<div class="adv-row ${x.foe?'foe':''}"><span>${esc(x.txt)}</span><span class="adv-pill ${x.k}">${x.v}</span></div>`).join('');
   return `<div class="adv-title">${tokOf(ci,40)} lance ${esc(a.name)}</div><div class="adv-card"><div class="adv-head"><b>${esc(a.name)}</b><small>${esc(label)} ♦ ${esc(a.type)}</small></div>${r}</div>`+sums.map(x=>`<div class="adv-sum ${x.ok?'ok':''}">${x.txt}</div>`).join('');
 }
-function chatEntriesHtml(){const md=chatMode();const out=[];S.chat.slice().reverse().forEach(e=>{let s=String(e),adv=null;const ai=s.indexOf('<!--A-->');if(ai>=0){adv=s.slice(ai+8);s=s.slice(0,ai);}let v;if(md==='advanced'&&adv)v=adv;else if(s.includes('<!--CC-->'))v=s.replace('<!--CC-->','');else if(s.includes('<!--C-->')){const q=s.split('<!--C-->');v=md==='simple'?q[1]:q[0];}else v=md==='simple'?null:s;if(v)out.push((md==='advanced'&&adv)?'<div class="adv-entry">'+v+'</div>':'<div>'+v+'</div>');});return out.join('')||'<p class="muted tiny">Aucun événement pour l’instant.</p>';}
+function chatEntriesHtml(){const md=chatMode();const out=[];S.chat.slice().reverse().forEach(e=>{let s=String(e),adv=null;const ai=s.indexOf('<!--A-->');if(ai>=0){adv=s.slice(ai+8);s=s.slice(0,ai);}let v;if(md==='advanced'&&adv)v=adv;else if(s.includes('<!--CC-->'))v=s.replace('<!--CC-->','');else if(s.includes('<!--C-->')){const q=s.split('<!--C-->');v=md==='simple'?q[1]:q[0];}else v=md==='simple'?null:s;if(v&&md!=='full')v=v.replace(/(<br>)?<!--F-->[\s\S]*?<!--\/F-->/g,'');if(v)out.push((md==='advanced'&&adv)?'<div class="adv-entry">'+v+'</div>':'<div>'+v+'</div>');});return out.join('')||'<p class="muted tiny">Aucun événement pour l’instant.</p>';}
 const TB_ITEMS=[['fullscreen','⛶ Plein écran',false],['grid','▦ Grille',false],['hud','🎯 HUD',true],['ff','⚔ Tir allié',true],['free','🎯 Placement libre',true],['mk','🧩 MK',true],['combat','⚔ Boutons de combat',false],['chat','💬 Chat',false]];
 function tbHidden(){try{return JSON.parse(localStorage.getItem('narbudr-tb-hidden')||'[]');}catch(e){return [];}}
 function tbShow(k){return !tbHidden().includes(k);}
@@ -3091,6 +3097,7 @@ function triggerAuras(casterInst){
     targets.forEach(t=>{
       const tTpl=instTemplate(t);
       const amount=applyMult(Math.ceil(r.total*(effStat(casterTpl,casterInst,a.stat))/100),a.dmgMult);
+      {const sv=effStat(casterTpl,casterInst,a.stat),c0=Math.ceil(r.total*sv/100);lines.push(FL(`🧮 ${esc(t.label)} — aura : ${r.total} (jet) × ${sv}% (${esc(a.stat)}) = ${c0}${a.dmgMult?` → mult. ${esc(a.dmgMult)} = ${amount}`:''}`));}
       if(a.auraEffect==='heal'){
         t.hp=Math.min(t.hpMax,t.hp+amount);
         lines.push(`💚 ${esc(t.label)} : +${amount} PV`);
@@ -3101,9 +3108,12 @@ function triggerAuras(casterInst){
         broadcastHud(t.id,{shield:amount});
       }else{
         let dmg=amount;
-        const def=effectiveDef(tTpl,t)[a.defense]||0; dmg=Math.max(0,dmg-def);
-        dmg=Math.floor(dmg*(100+(effectivePow(casterTpl,casterInst)[a.element]||0))/100);
+        const def=effectiveDef(tTpl,t)[a.defense]||0, pw=effectivePow(casterTpl,casterInst)[a.element]||0;
+        dmg=Math.floor(dmg*(100+pw)/100);
+        const f1=dmg;
         const resist=(effectiveRes(tTpl,t)[a.element]||0)/100; dmg=Math.max(0,Math.ceil(dmg*(1-resist)));
+        const f2=dmg; dmg=Math.max(0,dmg-def);
+        lines.push(FL(`🧮 ${esc(t.label)} : bruts ${amount} → puissance ${esc(a.element)} +${Math.round(pw*100)/100}% = ${f1} → résistance ${Math.round(resist*100)}% = ${f2} → défense ${esc(a.defense)} −${def} = ${dmg}`));
         const absorbed=Math.min(t.shield||0,dmg); t.shield-=absorbed; const hpDmg=dmg-absorbed;
         t.hp=Math.max(0,t.hp-hpDmg);
         lines.push(`✨ ${esc(t.label)} : -${hpDmg} PV`);
@@ -3122,31 +3132,34 @@ function tickStatusEffects(inst_,fresh){
     if(se.marker){remaining.push(se);return;}
     if(!!se.fresh!==!!fresh){remaining.push(se);return;}
     const r=roll(se.formula);
-    const raw=applyMult(Math.max(0,Math.ceil(r.total*(se.mult||1)*(se.statValue||0)/100)),se.dmgMult);
+    const c0=Math.max(0,Math.ceil(r.total*(se.mult||1)*(se.statValue||0)/100));
+    const raw=applyMult(c0,se.dmgMult);
+    const fc=`<br>🧮 ${esc(se.formula)} = ${r.total} (jet) × ${se.mult||1} (réussite) × ${se.statValue||0}% (stat) = ${c0}${se.dmgMult?` → mult. ${esc(se.dmgMult)} = ${raw}`:''}`;
     if(se.element==='Soin'){
       inst_.hp=Math.min(inst_.hpMax,inst_.hp+raw);
-      addLog(`🌀 <b>${esc(inst_.label)}</b> — ${esc(se.name)} : +${raw} PV`);
+      addLog(`🌀 <b>${esc(inst_.label)}</b> — ${esc(se.name)} : +${raw} PV`+FL(fc));
       broadcastHud(inst_.id,{hp:raw});
     }else if(se.element==='Bouclier'){
       inst_.shield=(inst_.shield||0)+raw; if(inst_.shield>inst_.shieldMax)inst_.shieldMax=inst_.shield;
-      addLog(`🌀 <b>${esc(inst_.label)}</b> — ${esc(se.name)} : +${raw} bouclier`);
+      addLog(`🌀 <b>${esc(inst_.label)}</b> — ${esc(se.name)} : +${raw} bouclier`+FL(fc));
       broadcastHud(inst_.id,{shield:raw});
     }else if(se.element==='Récupération'){
       inst_.mana=Math.min(inst_.manaMax,inst_.mana+raw);
-      addLog(`🌀 <b>${esc(inst_.label)}</b> — ${esc(se.name)} : +${raw} mana`);
+      addLog(`🌀 <b>${esc(inst_.label)}</b> — ${esc(se.name)} : +${raw} mana`+FL(fc));
       broadcastHud(inst_.id,{mana:raw});
     }else{
       let dmg=raw;
       const def=se.defense!=='none'?(effectiveDef(tTpl,inst_)[se.defense]||0):0;
-      dmg=Math.max(0,dmg-def);
       dmg=Math.floor(dmg*(100+(se.powPct||0))/100);
+      const f1=dmg; let rs=0;
       if(se.element!=='Physique'&&se.element!=='Neutre'){
-        const resist=(effectiveRes(tTpl,inst_)[se.element]||0)/100;
+        const resist=(effectiveRes(tTpl,inst_)[se.element]||0)/100; rs=resist;
         dmg=Math.max(0,Math.ceil(dmg*(1-resist)));
       }
+      const f2=dmg; dmg=Math.max(0,dmg-def);
       const absorbed=Math.min(inst_.shield||0,dmg); inst_.shield-=absorbed; const hpDmg=dmg-absorbed;
       inst_.hp=Math.max(0,inst_.hp-hpDmg);
-      addLog(`🌀 <b>${esc(inst_.label)}</b> — ${esc(se.name)} : -${hpDmg} PV`);
+      addLog(`🌀 <b>${esc(inst_.label)}</b> — ${esc(se.name)} : -${hpDmg} PV`+FL(fc+`<br>🧮 bruts ${raw} → puissance ${esc(se.element)} +${Math.round((se.powPct||0)*100)/100}% = ${f1} → résistance ${Math.round(rs*100)}% = ${f2} → défense ${esc(se.defense)} −${def} = ${dmg}${absorbed?` → bouclier −${absorbed}`:''} → PV −${hpDmg}`));
       broadcastHud(inst_.id,{hp:-hpDmg,shield:absorbed>0?-absorbed:0});
       if(inst_.hp<=0){addLog(`💀 <b>${esc(inst_.label)} est KO</b>.`);handleInstanceDeath(inst_);}
     }
@@ -3607,12 +3620,13 @@ function resolveOpportunityAttack(attackerInst,targetInst){
   }
   const rw=rollWithWeapon(oa.formula,weaponUsed,attackerInst);
   let damage=Math.ceil(rw.abTotal*mult*(effStat(attackerTpl,attackerInst,statKey))/100);
+  lines.push(FL(`🧮 Attaque : ${rw.abTotal} (jet) × ${mult} (réussite) × ${effStat(attackerTpl,attackerInst,statKey)}% (${statKey}) = ${damage}`));
   const wMag=!!weaponUsed&&weaponUsed.weaponStat==='Magie';
   const wpPart=weaponPhysDamage(rw.wpTotal,mult,effStat(attackerTpl,attackerInst,statKey),'',lines,wMag,oa.element||'Neutre');
   const oe=rollWeaponElems(weaponUsed,attackerInst); oe.log.forEach(l=>lines.push(l));
   const ep=elemBonusDamage(oe.list,mult,effStat(attackerTpl,attackerInst,statKey),'',targetTpl,targetInst,lines);
   const fin=finalizeDamage([{raw:damage,el:oa.element||'Neutre',pool:isPhys?'CA':'DM'},(wMag?{raw:wpPart,el:oa.element||'Neutre',pool:'DM'}:{raw:wpPart,el:'Physique',pool:'CA'}),...ep],targetTpl,targetInst,attackerInst);
-  damage=fin.total; fin.detail.forEach(l=>lines.push(l));
+  damage=fin.total; fin.detail.forEach(l=>lines.push(l)); fin.full.forEach(l=>lines.push(FL(l)));
   const absorbed=Math.min(targetInst.shield||0,damage); targetInst.shield-=absorbed; const hpDamage=damage-absorbed;
   targetInst.hp=Math.max(0,targetInst.hp-hpDamage);
   lines.push(rw.logLine);
@@ -3830,11 +3844,12 @@ function resolveAbility(a,start,explicitTargetInstId){
     if(isAoE){raw=sharedRoll.abTotal;wpRaw=sharedRoll.wpTotal;elemRoll=sharedElems||{list:[]};}
     else{const rw=rollWithWeapon(a.formula,weaponUsed,casterInst);raw=rw.abTotal;wpRaw=rw.wpTotal;lines.push(rw.logLine);elemRoll=rollWeaponElems(weaponUsed,casterInst);elemRoll.log.forEach(l=>lines.push(l));}
     let damage=applyMult(Math.ceil(raw*mult*(effStat(casterTpl,casterInst,a.stat))/100),a.dmgMult);
+    {const sv=effStat(casterTpl,casterInst,a.stat),c0=Math.ceil(raw*mult*sv/100);lines.push(FL(`🧮 Capacité : ${raw} (jet) × ${mult} (réussite) × ${sv}% (${esc(a.stat)}) = ${c0}${a.dmgMult?` → mult. ${esc(a.dmgMult)} = ${damage}`:''}`));}
     const wMag=!!weaponUsed&&weaponUsed.weaponStat==='Magie';
     const wpPart=weaponPhysDamage(wpRaw,mult,effStat(casterTpl,casterInst,a.stat),a.dmgMult,lines,wMag,a.element);
     const elemParts=elemBonusDamage(elemRoll.list,mult,effStat(casterTpl,casterInst,a.stat),a.dmgMult,tTpl,t,lines);
     const fin=finalizeDamage([{raw:damage,el:a.element,pool:a.defense==='CA'?'CA':(a.defense==='DM'?'DM':null)},(wMag?{raw:wpPart,el:a.element,pool:a.defense==='CA'?'CA':(a.defense==='DM'?'DM':null)}:{raw:wpPart,el:'Physique',pool:'CA'}),...elemParts],tTpl,t,casterInst);
-    damage=fin.total; fin.detail.forEach(l=>lines.push(l));
+    damage=fin.total; fin.detail.forEach(l=>lines.push(l)); fin.full.forEach(l=>lines.push(FL(l)));
     if(_grp){_grp.dmg[t.id]=(_grp.dmg[t.id]||0)+damage;_grp.tg[t.id]=t;}
     const beforeShield=t.shield||0; const absorbed=Math.min(beforeShield,damage);
     t.shield-=absorbed; const hpDamage=damage-absorbed;
@@ -4036,13 +4051,15 @@ function applyPersistentZones(nt,onlyDamage){
     }else{
       let dmg=raw;
       const def=z.defense!=='none'?(effectiveDef(tTpl,nt)[z.defense]||0):0;
-      dmg=Math.max(0,dmg-def);
-      dmg=Math.floor(dmg*(100+(z.powPct||0))/100);
+      const f0=dmg; dmg=Math.floor(dmg*(100+(z.powPct||0))/100);
+      const f1=dmg;
       const resist=(effectiveRes(tTpl,nt)[z.element]||0)/100;
       dmg=Math.max(0,Math.ceil(dmg*(1-resist)));
+      const f2=dmg; dmg=Math.max(0,dmg-def);
       const absorbed=Math.min(nt.shield||0,dmg); nt.shield-=absorbed; const hpDmg=dmg-absorbed;
+      const fd=FL(`<br>🧮 Dégâts bruts ${f0} → puissance ${esc(z.element)} +${Math.round((z.powPct||0)*100)/100}% = ${f1} → résistance ${Math.round(resist*100)}% = ${f2} → défense ${esc(z.defense)} −${def} = ${dmg}${absorbed?` → bouclier −${absorbed}`:''} → PV −${hpDmg}`);
       nt.hp=Math.max(0,nt.hp-hpDmg);
-      addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : -${hpDmg} PV${det}${def?` − défense ${def}`:''}${resist?` − résistance ${Math.round(resist*100)}%`:''}`);
+      addLog(`🌫️ <b>${esc(nt.label)}</b> — ${esc(z.name)} : -${hpDmg} PV${det}${def?` − défense ${def}`:''}${resist?` − résistance ${Math.round(resist*100)}%`:''}${fd}`);
       broadcastHud(nt.id,{hp:-hpDmg,shield:absorbed>0?-absorbed:0});
       {const l=[];breakUntargetable(nt,l);if(l.length)addLog(l.join('<br>'));}
       if(nt.hp<=0){addLog(`💀 <b>${esc(nt.label)} est KO</b>.`);handleInstanceDeath(nt,killer);}
