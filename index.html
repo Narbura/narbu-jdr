@@ -398,6 +398,7 @@ function normalizeState(){
     delete c.res.Gel;
     ELEMENT_RES_KEYS.forEach(k=>{if(c.res[k]===undefined)c.res[k]=0;});
     if(c.hidden===undefined)c.hidden=(c.type==='enemy');
+    if(!c.pow)c.pow={};
     if(c.ownerId===undefined)c.ownerId=null;
     if(c.categoryId===undefined)c.categoryId=null;
     if(c.iconImage===undefined)c.iconImage=null;
@@ -453,6 +454,7 @@ function normalizeState(){
   }
   S.equipment.forEach(e=>{
     if(!e.res)e.res={};
+    if(!e.pow)e.pow={};
     ELEMENT_RES_KEYS.forEach(k=>{if(e.res[k]===undefined)e.res[k]=0;});
     if(e.iconImage===undefined)e.iconImage=null;
     if(e.image===undefined)e.image=null;
@@ -1346,7 +1348,7 @@ function applyBuffStatus(a,t,mult,ci,ctpl){
   const prev=(t.statusEffects||[]).find(x=>x.abilityId===a.id);
   t.statusEffects=(t.statusEffects||[]).filter(x=>x.abilityId!==a.id);
   const dmg=buffHasDmg(a);
-  const se={abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:dmg?a.formula:'0',stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:effStat(ctpl,ci,a.stat),mult,turnsLeft:buffDur(a,mult),marker:!dmg};
+  const se={powPct:(effectivePow(ctpl,ci)[a.element]||0),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,element:a.element,formula:dmg?a.formula:'0',stat:a.stat,defense:a.defense,dmgMult:a.dmgMult||'',statValue:effStat(ctpl,ci,a.stat),mult,turnsLeft:buffDur(a,mult),marker:!dmg};
   if(prev)se.turnsLeft=maxDur(prev.turnsLeft,se.turnsLeft);
   if(dmg)se.fresh=selfNow(ci,t);
   if(selfNow(ci,t))se.skipDec=true;
@@ -1530,11 +1532,25 @@ function elemBonusDamage(list,mult,statVal,dmgMult,tTpl,t,lines){
 }
 /* Toutes les sources d'un même élément sont additionnées, la résistance s'applique une seule fois par élément,
    puis la CA (groupe physique) et la DM (groupe élémentaire) ne sont déduites qu'une seule fois chacune. */
-function finalizeDamage(parts,tTpl,t){
+function effectivePow(c,t){
+  const out={}; ELEMENT_RES_KEYS.forEach(k=>out[k]=0);
+  if(!c)return out;
+  ELEMENT_RES_KEYS.forEach(k=>{out[k]+=(+((c.pow||{})[k]))||0;});
+  if((c.type==='player'||c.type==='enemy')&&c.equipmentSlots){
+    ['arme','amulette','anneau1','anneau2'].forEach(sl=>{const e=equip(c.equipmentSlots[sl]);if(e&&e.pow){const f=t?equipStatFactor(t,sl):1;ELEMENT_RES_KEYS.forEach(k=>{if(e.pow[k])out[k]+=e.pow[k]*f;});}});
+  }
+  bonusList(t).forEach(d=>ELEMENT_RES_KEYS.forEach(k=>{if(d.pow&&d.pow[k])out[k]+=(+d.pow[k])||0;}));
+  return out;
+}
+function powInputsHtml(prefix,pow){return ELEMENT_RES_KEYS.map(k=>`<div class="field"><label>Puissance ${esc(k)} (%)</label><input id="${prefix}${k}" type="number" value="${(pow||{})[k]||0}"></div>`).join('');}
+function readPow(prefix){const o={};ELEMENT_RES_KEYS.forEach(k=>{const v=parseNum(document.getElementById(prefix+k)?.value);if(v)o[k]=v;});return o;}
+function finalizeDamage(parts,tTpl,t,att){
   const groups={}, detail=[];
   parts.forEach(p=>{if(!(p.raw>0))return;const k=p.pool+'|'+p.el;const g=groups[k]=groups[k]||{pool:p.pool,el:p.el,raw:0};g.raw+=p.raw;});
   const d=effectiveDef(tTpl,t); let ca=0,dm=0,free=0;
+  const ap=att?effectivePow(instTemplate(att),att):null;
   Object.values(groups).forEach(g=>{
+    if(ap&&ap[g.el]){const b0=g.raw;g.raw=Math.floor(g.raw*(100+ap[g.el])/100);detail.push(`⚡ Puissance ${esc(g.el)} +${Math.round(ap[g.el]*100)/100}% : ${b0} → ${g.raw}`);}
     const res=(effectiveRes(tTpl,t)[g.el]||0)/100;
     g.v=Math.max(0,Math.ceil(g.raw*(1-res)));
     if(res)detail.push(`🛡 ${esc(g.el)} : ${g.raw} → ${g.v} (résistance ${Math.round(res*100)}%)`);
@@ -3086,6 +3102,7 @@ function triggerAuras(casterInst){
       }else{
         let dmg=amount;
         const def=effectiveDef(tTpl,t)[a.defense]||0; dmg=Math.max(0,dmg-def);
+        dmg=Math.floor(dmg*(100+(effectivePow(casterTpl,casterInst)[a.element]||0))/100);
         const resist=(effectiveRes(tTpl,t)[a.element]||0)/100; dmg=Math.max(0,Math.ceil(dmg*(1-resist)));
         const absorbed=Math.min(t.shield||0,dmg); t.shield-=absorbed; const hpDmg=dmg-absorbed;
         t.hp=Math.max(0,t.hp-hpDmg);
@@ -3122,6 +3139,7 @@ function tickStatusEffects(inst_,fresh){
       let dmg=raw;
       const def=se.defense!=='none'?(effectiveDef(tTpl,inst_)[se.defense]||0):0;
       dmg=Math.max(0,dmg-def);
+      dmg=Math.floor(dmg*(100+(se.powPct||0))/100);
       if(se.element!=='Physique'&&se.element!=='Neutre'){
         const resist=(effectiveRes(tTpl,inst_)[se.element]||0)/100;
         dmg=Math.max(0,Math.ceil(dmg*(1-resist)));
@@ -3593,7 +3611,7 @@ function resolveOpportunityAttack(attackerInst,targetInst){
   const wpPart=weaponPhysDamage(rw.wpTotal,mult,effStat(attackerTpl,attackerInst,statKey),'',lines,wMag,oa.element||'Neutre');
   const oe=rollWeaponElems(weaponUsed,attackerInst); oe.log.forEach(l=>lines.push(l));
   const ep=elemBonusDamage(oe.list,mult,effStat(attackerTpl,attackerInst,statKey),'',targetTpl,targetInst,lines);
-  const fin=finalizeDamage([{raw:damage,el:oa.element||'Neutre',pool:isPhys?'CA':'DM'},(wMag?{raw:wpPart,el:oa.element||'Neutre',pool:'DM'}:{raw:wpPart,el:'Physique',pool:'CA'}),...ep],targetTpl,targetInst);
+  const fin=finalizeDamage([{raw:damage,el:oa.element||'Neutre',pool:isPhys?'CA':'DM'},(wMag?{raw:wpPart,el:oa.element||'Neutre',pool:'DM'}:{raw:wpPart,el:'Physique',pool:'CA'}),...ep],targetTpl,targetInst,attackerInst);
   damage=fin.total; fin.detail.forEach(l=>lines.push(l));
   const absorbed=Math.min(targetInst.shield||0,damage); targetInst.shield-=absorbed; const hpDamage=damage-absorbed;
   targetInst.hp=Math.max(0,targetInst.hp-hpDamage);
@@ -3815,7 +3833,7 @@ function resolveAbility(a,start,explicitTargetInstId){
     const wMag=!!weaponUsed&&weaponUsed.weaponStat==='Magie';
     const wpPart=weaponPhysDamage(wpRaw,mult,effStat(casterTpl,casterInst,a.stat),a.dmgMult,lines,wMag,a.element);
     const elemParts=elemBonusDamage(elemRoll.list,mult,effStat(casterTpl,casterInst,a.stat),a.dmgMult,tTpl,t,lines);
-    const fin=finalizeDamage([{raw:damage,el:a.element,pool:a.defense==='CA'?'CA':(a.defense==='DM'?'DM':null)},(wMag?{raw:wpPart,el:a.element,pool:a.defense==='CA'?'CA':(a.defense==='DM'?'DM':null)}:{raw:wpPart,el:'Physique',pool:'CA'}),...elemParts],tTpl,t);
+    const fin=finalizeDamage([{raw:damage,el:a.element,pool:a.defense==='CA'?'CA':(a.defense==='DM'?'DM':null)},(wMag?{raw:wpPart,el:a.element,pool:a.defense==='CA'?'CA':(a.defense==='DM'?'DM':null)}:{raw:wpPart,el:'Physique',pool:'CA'}),...elemParts],tTpl,t,casterInst);
     damage=fin.total; fin.detail.forEach(l=>lines.push(l));
     if(_grp){_grp.dmg[t.id]=(_grp.dmg[t.id]||0)+damage;_grp.tg[t.id]=t;}
     const beforeShield=t.shield||0; const absorbed=Math.min(beforeShield,damage);
@@ -3962,7 +3980,7 @@ function resolvePersistentAbility(a,casterInst,start,originOverride,axisOverride
     activeAbility=null; hoverCell=null; afterCast(a,casterInst); saveState(); render(); return;
   }
   const zTurns=((a.persDur||{})[degKey(label)])||a.duration||3;
-  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:effStat(casterTpl,casterInst,a.stat),casterLabel:casterInst.label,casterInstId:casterInst.id,turnsLeft:zTurns,effect:a.effect,zoneImage:a.zoneImage||null,affId:a.pzAffId||null,bonusId:a.pzBonusId||null,affThr:a.pzThr||50,affTurns:a.pzTurns||null,animImage:a.pzAnim||null,animFrames:Math.max(1,a.pzFrames||1),animRows:Math.max(1,a.pzRows||1),animDelays:a.pzAnim?parseFrameDelays(a.pzSpec,Math.max(1,a.pzFrames||1),a.pzDelay):null};
+  const zone={id:'pz'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),abilityId:a.id,name:a.name,icon:a.icon,iconImage:a.iconImage,area:a.area,areaSize:a.areaSize||1,coneStart:a.coneStart,coneEnd:a.coneEnd,formula:a.formula,stat:a.stat,defense:a.defense,element:a.element,dmgMult:a.dmgMult||'',statValue:effStat(casterTpl,casterInst,a.stat),powPct:(effectivePow(casterTpl,casterInst)[a.element]||0),casterLabel:casterInst.label,casterInstId:casterInst.id,turnsLeft:zTurns,effect:a.effect,zoneImage:a.zoneImage||null,affId:a.pzAffId||null,bonusId:a.pzBonusId||null,affThr:a.pzThr||50,affTurns:a.pzTurns||null,animImage:a.pzAnim||null,animFrames:Math.max(1,a.pzFrames||1),animRows:Math.max(1,a.pzRows||1),animDelays:a.pzAnim?parseFrameDelays(a.pzSpec,Math.max(1,a.pzFrames||1),a.pzDelay):null};
   if(a.area==='line'||a.area==='cone'){
     const axis=axisOverride||zoneAxis(a,start,originOverride,a.zoneRange||a.range||1);
     if(!axis){toast('Sélectionne d’abord un personnage.');return;}
@@ -4019,6 +4037,7 @@ function applyPersistentZones(nt,onlyDamage){
       let dmg=raw;
       const def=z.defense!=='none'?(effectiveDef(tTpl,nt)[z.defense]||0):0;
       dmg=Math.max(0,dmg-def);
+      dmg=Math.floor(dmg*(100+(z.powPct||0))/100);
       const resist=(effectiveRes(tTpl,nt)[z.element]||0)/100;
       dmg=Math.max(0,Math.ceil(dmg*(1-resist)));
       const absorbed=Math.min(nt.shield||0,dmg); nt.shield-=absorbed; const hpDmg=dmg-absorbed;
@@ -4184,7 +4203,7 @@ function applyDissipation(targetInstId){
 /* ============================= GESTION DES AFFLICTIONS SUR UN JETON (MJ) ============================= */
 function bonusDefInfo(d){
   const a=Object.entries(d.stats||{}).filter(([k,v])=>v).map(([k,v])=>`${k} ${v>0?'+':''}${v}`);
-  if(d.ca)a.push(`CA ${d.ca>0?'+':''}${d.ca}`); if(d.dm)a.push(`DM ${d.dm>0?'+':''}${d.dm}`); if(d.extraTurn)a.push('2 tours par tour');
+  if(d.ca)a.push(`CA ${d.ca>0?'+':''}${d.ca}`); if(d.dm)a.push(`DM ${d.dm>0?'+':''}${d.dm}`); ELEMENT_RES_KEYS.forEach(k=>{if((d.pow||{})[k])a.push(`Puissance ${k} +${d.pow[k]}%`);}); if(d.extraTurn)a.push('2 tours par tour');
   return a.join(' · ')||'Aucun effet';
 }
 function bonusCardHtml(){
@@ -4218,6 +4237,7 @@ function openBonusDef(id){
   ${STAT_TESTS.map(k=>`<div class="field"><label>Bonus ${esc(k)}</label><input id="bn_st_${k}" type="number" value="${(d.stats||{})[k]||0}"></div>`).join('')}
   <div class="field"><label>Bonus Classe d'armure</label><input id="bn_ca" type="number" value="${d.ca||0}"></div>
   <div class="field"><label>Bonus Défense magique</label><input id="bn_dm" type="number" value="${d.dm||0}"></div>
+  ${powInputsHtml('bn_pw_',d.pow)}
   <div class="field full"><label><input type="checkbox" id="bn_extra" ${d.extraTurn?'checked':''}> Joue 2 tours au lieu d'un tant que le bonus est actif</label></div>
   </div>
   <div class="modal-actions"><button class="btn" onclick="closeModal()">Annuler</button><button class="btn primary" onclick="saveBonusDef('${id||''}')">Enregistrer</button></div>`;
@@ -4233,6 +4253,7 @@ function saveBonusDef(id){
   t.stats={}; STAT_TESTS.forEach(k=>{const v=parseNum(document.getElementById('bn_st_'+k).value);if(v)t.stats[k]=v;});
   t.ca=parseNum(document.getElementById('bn_ca').value); t.dm=parseNum(document.getElementById('bn_dm').value);
   t.extraTurn=document.getElementById('bn_extra').checked;
+  t.pow=readPow('bn_pw_');
   if(!id)S.bonusDefs.push(t);
   S.instances.forEach(i=>refreshBonusHp(i));
   saveState(); closeModal(); render();
@@ -4704,6 +4725,7 @@ function openCharacter(id){
   <div class="field"><label>Résistance Lumière (%)</label><input id="r_lumiere" type="number" value="${base.res.Lumière??0}"></div>
   <div class="field"><label>Résistance Ténèbres (%)</label><input id="r_tenebres" type="number" value="${base.res.Ténèbres??0}"></div>
   <div class="field"><label>Résistance Poison (%)</label><input id="r_poison" type="number" value="${base.res.Poison??0}"></div>
+  ${powInputsHtml('p_',base.pow)}
 </div></div>
   <div id="charTabEquip" style="display:none"><div class="form">
   <div id="char_player_only_fields" style="grid-column:1/-1;display:${base.type==='player'?'':'none'}">${moneyBagHtml}</div>
@@ -4767,6 +4789,7 @@ function saveCharacter(id){
     Ténèbres:parseNum(document.getElementById('r_tenebres').value),
     Poison:parseNum(document.getElementById('r_poison').value)
   };
+  c.pow=readPow('p_');
   c.oppAttack={formula:document.getElementById('oa_formula').value.trim(),type:document.getElementById('oa_type').value,element:document.getElementById('oa_element').value,impactImage:document.getElementById('oa_impact').value.trim()||null,impactFrames:Math.max(1,parseNum(document.getElementById('oa_impact_frames').value)||1),impactRows:Math.max(1,parseNum(document.getElementById('oa_impact_rows').value)||1),animFps:Math.max(1,Math.min(60,parseNum(document.getElementById('oa_animfps').value)||60)),spriteAuto:document.getElementById('oa_spriteauto').value||false};
   const skChecks=[...document.querySelectorAll('.skill-active-check')];
   if(skChecks.length)c.inactiveSkills=skChecks.filter(el=>!el.checked).map(el=>el.value);
@@ -5612,6 +5635,7 @@ function openEquipment(id){
     <label>Dégâts élémentaires de l'arme (formule par élément, ex : 2d20 — vide = aucun)</label>
     <div class="form">${ELEMENT_RES_KEYS.map(k=>`<div class="field"><label>${esc(k)}</label><input id="eq_ed_${k}" value="${esc((e.elemDamage||{})[k]||'')}" placeholder="ex : 2d20"></div>`).join('')}</div>
   </div>
+  <div class="field full" id="eq_pow_fields" style="display:${(isWeapon||(!isDivers&&(e.category==='anneau'||e.category==='amulette')))?'':'none'}"><label>⚡ Puissances élémentaires (% de dégâts en plus, ex : 10)</label><div class="form">${powInputsHtml('eq_pw_',e.pow)}</div></div>
   <div id="eq_armor_fields" style="display:${isWeapon?'none':'contents'}">
   <div class="field"><label>Bonus Classe d'armure</label><input id="eq_ca" type="number" value="${e.ca||0}"></div>
   <div class="field"><label>Bonus Défense magique</label><input id="eq_dm" type="number" value="${e.dm||0}"></div>
@@ -5649,6 +5673,7 @@ function toggleDurabilityField(){
   const cat=document.getElementById('eq_category')?.value||'';
   const show=type==='weapon'||(type==='armor'&&cat!=='anneau'&&cat!=='amulette');
   const f=document.getElementById('eq_durability_field'); if(f)f.style.display=show?'':'none';
+  const pf=document.getElementById('eq_pow_fields'); if(pf)pf.style.display=(type==='weapon'||(type==='armor'&&(cat==='anneau'||cat==='amulette')))?'':'none';
 }
 function saveEquipment(id){
   if(!isMJ())return;
@@ -5704,6 +5729,7 @@ function saveEquipment(id){
     };
   }
   if(target.itemType!=='weapon')target.elemDamage={};
+  target.pow=(target.itemType==='weapon'||(target.itemType==='armor'&&(target.category==='anneau'||target.category==='amulette')))?readPow('eq_pw_'):{};
   if(target.itemType==='divers'||target.category==='anneau'||target.category==='amulette')target.durabilityMax=0;
   if(!id)S.equipment.push(target);
   saveState(); closeModal(); render();
