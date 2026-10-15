@@ -7448,7 +7448,7 @@ function refreshMerchantModal(){
     }).join('')||'<p class="tiny muted">Ce commerçant ne vend rien.</p>';
   }else{
     body=(c.bag||[]).filter(b=>{const e=equip(b.eqId);return e&&(m.sell||[]).includes(sellKeyOf(e));}).map(b=>{
-      const e=equip(b.eqId), q=b.qty||1, unit=Math.ceil((e.price||0)/2);
+      const e=equip(b.eqId), q=b.qty||1, unit=sellUnit(e,b);
       return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b>${q>1?` ×${q}`:''}<small>${equipSummary(e)}${e.durabilityMax?` · 🔧 ${b.dur}/${e.durabilityMax}`:''}</small></div><div style="text-align:right"><div class="tiny">💰 ${fmtMoney(unit)} / unité</div><div class="row" style="gap:4px;justify-content:flex-end"><input id="ms_${b.uid}" type="number" min="1" max="${q}" value="1" style="width:55px" oninput="updateMerchTotal('ms_${b.uid}','mt_${b.uid}',${unit},${q})"><button class="btn primary" onclick="merchantSell('${b.uid}')">Vendre</button></div><div class="tiny" id="mt_${b.uid}" style="margin-top:2px;color:var(--gold)">Total : ${fmtMoney(unit)}</div></div></div>`;
     }).join('')||'<p class="tiny muted">Tu n’as rien à vendre à ce commerçant.</p>';
   }
@@ -7486,7 +7486,7 @@ function merchantSell(uid){
   const st=(c.bag||[]).find(b=>b.uid===uid), e=st&&equip(st.eqId);
   if(!e||!((tpl.merchant||{}).sell||[]).includes(sellKeyOf(e))){toast('⚠️ Le commerçant ne rachète pas cet objet.');refreshMerchantModal();return;}
   const q=Math.min(st.qty||1,Math.max(1,Math.floor(parseNum(document.getElementById('ms_'+uid)?.value)||1)));
-  const total=Math.ceil((e.price||0)/2)*q;
+  const total=sellUnit(e,st)*q;
   c.money=(c.money||0)+total; st.qty=(st.qty||1)-q;
   if(st.qty<=0)c.bag=c.bag.filter(b=>b!==st);
   addLog(`💰 <b>${esc(c.name)}</b> vend ${q>1?q+'× ':''}<b>${esc(e.name)}</b> à <b>${esc(tpl.name)}</b> (${fmtMoney(total)}).`);
@@ -7503,7 +7503,8 @@ function endMyTurn(){
 }
 /* ---- Forgeron : réparation ---- */
 let smithState=null;
-function repairCost(e){return Math.ceil((e.price||0)/2);}
+function repairCost(e,cur){const m=e.durabilityMax||0;if(!m)return 0;return Math.floor((e.price||0)*Math.max(0,m-(cur==null?m:cur))/m);}
+function sellUnit(e,b){let v=Math.ceil((e.price||0)/2);if(e.durabilityMax&&b&&b.dur!=null)v=Math.floor(v*b.dur/e.durabilityMax);return v;}
 function openSmithModal(instId){
   const t=inst(instId), tpl=t&&instTemplate(t); if(!tpl||tpl.type!=='blacksmith')return;
   const mine=S.characters.filter(c=>c.ownerId===currentUser?.id&&c.type==='player');
@@ -7513,7 +7514,7 @@ function openSmithModal(instId){
   document.getElementById('modalBg').classList.add('open');
 }
 function smithRow(e,cur,label,fn,ok){
-  return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b><small>${esc(label)} · 🔧 ${cur}/${e.durabilityMax}</small></div><div style="text-align:right"><div class="tiny">💰 ${fmtMoney(repairCost(e))}</div><button class="btn primary" ${ok?'':'disabled'} onclick="${fn}">Réparer</button></div></div>`;
+  return `<div class="ability"><div class="icon">${iconBoxHtml(e,'9px')}</div><div class="ability-info"><b>${esc(e.name)}</b><small>${esc(label)} · 🔧 ${cur}/${e.durabilityMax}</small></div><div style="text-align:right"><div class="tiny">💰 ${fmtMoney(repairCost(e,cur))}</div><button class="btn primary" ${ok?'':'disabled'} onclick="${fn}">Réparer</button></div></div>`;
 }
 function refreshSmithModal(){
   const tpl=char(smithState.tplId); if(!tpl)return;
@@ -7524,11 +7525,11 @@ function refreshSmithModal(){
   EQUIP_SLOTS.forEach(([k,label])=>{
     const e=equip(c.equipmentSlots?.[k]); if(!e||!e.durabilityMax)return;
     const cur=getEqDurability(c,k); if(cur>=e.durabilityMax)return;
-    rows+=smithRow(e,cur,label,`smithRepair('slot','${k}')`,(c.money||0)>=repairCost(e));
+    rows+=smithRow(e,cur,label,`smithRepair('slot','${k}')`,(c.money||0)>=repairCost(e,cur));
   });
   (c.bag||[]).forEach(b=>{
     const e=equip(b.eqId); if(!e||!e.durabilityMax||b.dur==null||b.dur>=e.durabilityMax)return;
-    rows+=smithRow(e,b.dur,'Sac'+((b.qty||1)>1?' ×'+b.qty:''),`smithRepair('bag','${b.uid}')`,(c.money||0)>=repairCost(e));
+    rows+=smithRow(e,b.dur,'Sac'+((b.qty||1)>1?' ×'+b.qty:''),`smithRepair('bag','${b.uid}')`,(c.money||0)>=repairCost(e,b.dur));
   });
   if(!rows)rows='<p class="tiny muted">Aucun équipement à réparer.</p>';
   document.getElementById('modal').innerHTML=`<div class="modal-header"><h2>🔧 ${esc(tpl.name)}</h2><button class="modal-close" onclick="closeModal()" title="Fermer">✕</button></div>${sel}<div class="stat" style="margin-bottom:10px"><label>💰 Ton argent</label><strong>${fmtMoney(c.money||0)}</strong></div>${rows}<div class="modal-actions"><button class="btn" onclick="closeModal()">Fermer</button></div>`;
@@ -7540,7 +7541,7 @@ function smithRepair(kind,key){
   if(kind==='slot')e=equip(c.equipmentSlots?.[key]);
   else{b=(c.bag||[]).find(x=>x.uid===key);e=b&&equip(b.eqId);}
   if(!e||!e.durabilityMax){refreshSmithModal();return;}
-  const cost=repairCost(e);
+  const cost=repairCost(e,kind==='slot'?getEqDurability(c,key):b.dur);
   if((c.money||0)<cost){toast('🚫 Pas assez d’argent.');return;}
   c.money-=cost;
   if(kind==='slot')repairEqDurability(c,key);
